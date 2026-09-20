@@ -134,6 +134,7 @@
           </label>
           <button id="tokens-today" type="button">Today</button>
         </div>
+        <p id="tokens-summary" class="summary"></p>
         <table id="tokens-table">
           <thead>
             <tr>
@@ -146,12 +147,14 @@
               <th>Follow up</th>
               <th>Payment</th>
               <th>Fee</th>
+              <th>Refund</th>
               <th>Time</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
         <p id="tokens-empty" class="empty">No tokens for this date.</p>
+        <p class="hint">Click a row to set or change the refund.</p>
       </section>
 
       <section class="page" id="page-patients" hidden>
@@ -183,6 +186,31 @@
           <button id="pg-next" type="button">Next</button>
         </div>
       </section>
+
+      <dialog id="refund-dialog" class="modal-dialog">
+        <form method="dialog" class="modal-card">
+          <header class="modal-head">
+            <div>
+              <h2>Refund</h2>
+              <p class="hint" id="refund-sub"></p>
+            </div>
+          </header>
+          <div class="modal-body">
+            <label>Refund tier
+              <select id="refund-tier">
+                <option value="0">None</option>
+                <option value="R1">R1 — ₹100</option>
+                <option value="R2">R2 — ₹200</option>
+                <option value="R">R — ₹300 (full)</option>
+              </select>
+            </label>
+          </div>
+          <footer class="modal-actions">
+            <button value="cancel" type="submit">Cancel</button>
+            <button value="save" type="submit" class="primary" id="refund-save">Save</button>
+          </footer>
+        </form>
+      </dialog>
 
       <dialog id="pat-id-confirm" class="modal-dialog">
         <form method="dialog" class="modal-card">
@@ -222,6 +250,7 @@
                   <th>Follow up</th>
                   <th>Payment</th>
                   <th>Fee</th>
+                  <th>Refund</th>
                   <th>Time</th>
                 </tr>
               </thead>

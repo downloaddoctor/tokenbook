@@ -112,10 +112,13 @@ Pat ID echo: after a successful addVisit, rec.personId is written back into f-pa
 register exposes startNewBill() -> clears name/mob/age (gender=M), hides suggests, focuses name, bumps next token; wired to #btn-new-bill click
 register submit -> db add -> PS.print(fv, cb); form is NOT reset (host stays on printed values); cb=PS.openDesigner() returns host to idle state after print dialog closes
 register.unmount -> PS.reset() (mirrors Print Layout teardown)
-tokens.mount -> date filter -> PatientDb.listByDay -> table (one row per visit: token, name, mob, age, gender, weight, followup, payment, fee, time)
+tokens.mount -> date filter -> PatientDb.listByDay -> table (one row per visit: token, name, mob, age, gender, weight, followup, payment, fee, refund, time)
+tokens row click (or Enter on the keyboard-highlighted row) -> #refund-dialog (select tier None/R1/R2/R) -> PatientDb.setVisitRefund -> toast + refresh. Follow-up visits show a red toast instead. Dialog: select autofocused, on change focus jumps to Save (right), Tab from Save reaches Cancel. refundLabel(tier) renders 'R1 (₹100)' etc.
+tokens keyboard nav: ArrowUp/Down move .active row, Home/End jump, Enter opens the refund dialog, Escape clears. Skipped when focus is in an input/select/textarea or when any <dialog open> is present.
+tokens day summary (#tokens-summary, .summary): "Visits: N (paid · free) · Collected ₹X · Cash ₹Y · UPI ₹Z · Refunded ₹W". Collected/Cash/UPI are net of refunds and only count paid visits; refund line only shows when > 0. Sits above the table, below the toolbar.
 patients.mount -> listPeople (paginated 50, sorted by updatedAt desc) + countPeople; empty search; searchPeopleByPrefix otherwise
 patients row -> ID, Name, Mobile, Age, Weight, Visits (visitCountsForPeople), Last visit (lastVisitAt||updatedAt)
-patients row click -> history modal -> visitsForPerson(personId) -> table (date, token, age, gender, weight, followup, payment, fee, time)
+patients row click -> history modal -> visitsForPerson(personId) -> table (date, token, age, gender, weight, followup, payment, fee, refund, time)
 patients modal close -> X button, backdrop click, or Escape
 people.updatedAt bumped by addVisit -> doubles as "last visit" for the patients list and its sort order
 printLayout.mount -> PS.mount(print-layout-ps-host,{autoShow:false,openDesignerOnReady:true,seedDefaultOnReady:true}) -> designer opens with seeded default layout when plugin empty
@@ -180,7 +183,7 @@ createdAt:string ISO (first save)
 updatedAt:string ISO (last save; = createdAt on insert)
 personId:number -> people.id
 
-CSV format: 12 columns (date|token|name|mob|age|gender|weight|followup|payment|fee|personId|createdAt). Legacy 8-column CSV (no weight/followup/payment/fee) is still accepted on read.
+CSV format: 13 columns (date|token|name|mob|age|gender|weight|followup|payment|fee|refundTier|personId|createdAt). Legacy 8-col (pre-v4) and 12-col (pre-v5) headers are still accepted on read.
 unique index day_token=[day,token] on visits; unique index name_mob=[name,mob] on people
 
 ## KNOWN-INVARIANTS

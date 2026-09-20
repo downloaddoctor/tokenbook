@@ -35,6 +35,13 @@ db.version(4).stores({
   people: '++id, name, mob, [name+mob], updatedAt',
   visits: '++id, mob, createdAt, day, [day+token], personId',
 });
+db.version(5).stores({
+  // v5 adds visits.refundTier ('0'|'R1'|'R2'|'R'). Post-visit edit set from
+  // the Tokens page; fee stays as originally charged. No backfill — old
+  // rows read as undefined (= no refund).
+  people: '++id, name, mob, [name+mob], updatedAt',
+  visits: '++id, mob, createdAt, day, [day+token], personId',
+});
 
 let _openPromise = null;
 function openDb() {
@@ -290,6 +297,33 @@ function listByDay(day) {
     .toArray();
 }
 
+// Refund tiers — amount is derived from the tier and NOT stored on the visit.
+// Fee stays at what was originally charged; refundAmount is computed on read.
+export const REFUND_TIERS = { '0': 0, R1: 100, R2: 200, R: 300 };
+export function refundAmountFor(tier) {
+  return REFUND_TIERS[String(tier || '0')] || 0;
+}
+
+// Post-visit edit: set (or clear) the refund tier on a single visit. Pass
+// '0' or null to clear. Fee is left untouched — see refundAmountFor().
+async function setVisitRefund(visitId, tier) {
+  const t = tier == null || tier === 0 || tier === '0' ? '0' : String(tier);
+  if (!(t in REFUND_TIERS)) {
+    const e = new Error('Unknown refund tier: ' + tier);
+    e.name = 'InvalidRefundTierError';
+    throw e;
+  }
+  const nowIso = new Date().toISOString();
+  return db.transaction('rw', db.visits, async () => {
+    const v = await db.visits.get(visitId);
+    if (!v) throw new Error('Visit not found: ' + visitId);
+    v.refundTier = t;
+    v.updatedAt = nowIso;
+    await db.visits.put(v);
+    return v;
+  });
+}
+
 // ---- people (patient registry) ----
 
 // List unique patients, most recently seen first. `updatedAt` is bumped by
@@ -503,6 +537,9 @@ export const PatientDb = {
   rebuildPeopleFromVisits,
   lastPaidVisitDaysFor: _lastPaidVisitDaysFor,
   daysBetween: _daysBetween,
+  setVisitRefund,
+  REFUND_TIERS,
+  refundAmountFor,
   replaceAll,
   exportAll,
 };

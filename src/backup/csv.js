@@ -14,6 +14,7 @@ export const CSV_COLS = [
   'followup',
   'payment',
   'fee',
+  'refundTier',
   'personId',
   'createdAt',
 ];
@@ -62,18 +63,30 @@ function parseCsvLine(line) {
   return out;
 }
 
-// Legacy v3-era header (no weight/followup/payment/fee). Accepted on read so
-// pre-v4 backups still restore; missing cols parse to null/0.
-const LEGACY_CSV_COLS = ['date', 'token', 'name', 'mob', 'age', 'gender', 'personId', 'createdAt'];
-
+// Legacy headers (pre-v4: no weight/followup/payment/fee; pre-v5: no
+// refundTier). Accepted on read so old backups still restore.
+const LEGACY_V3_CSV_COLS = ['date', 'token', 'name', 'mob', 'age', 'gender', 'personId', 'createdAt'];
+const LEGACY_V4_CSV_COLS = [
+  'date',
+  'token',
+  'name',
+  'mob',
+  'age',
+  'gender',
+  'weight',
+  'followup',
+  'payment',
+  'fee',
+  'personId',
+  'createdAt',
+];
 export function csvToData(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (!lines.length) throw new Error('Empty backup file.');
   const header = parseCsvLine(lines[0]);
-  const isCurrent =
-    header.length === CSV_COLS.length && header.every((h, i) => h === CSV_COLS[i]);
-  const isLegacy =
-    header.length === LEGACY_CSV_COLS.length && header.every((h, i) => h === LEGACY_CSV_COLS[i]);
+  const matches = (cols) => header.length === cols.length && header.every((h, i) => h === cols[i]);
+  const isCurrent = matches(CSV_COLS);
+  const isLegacy = matches(LEGACY_V4_CSV_COLS) || matches(LEGACY_V3_CSV_COLS);
   if (!isCurrent && !isLegacy) {
     throw new Error('Not a doctor-apt-list backup (unexpected header).');
   }
@@ -97,6 +110,8 @@ export function csvToData(text) {
     const payment = payRaw === '1' ? 1 : 0;
     const feeRaw = col.fee != null ? f[col.fee] : '';
     const fee = feeRaw === '' || feeRaw == null ? null : Number(feeRaw);
+    const refundRaw = col.refundTier != null ? String(f[col.refundTier] || '').trim() : '';
+    const refundTier = ['0', 'R1', 'R2', 'R'].includes(refundRaw) ? refundRaw : '0';
     const token = Number(f[col.token]);
     const day = f[col.date] || '';
     const createdAt = f[col.createdAt] || new Date().toISOString();
@@ -130,6 +145,7 @@ export function csvToData(text) {
       followup,
       payment,
       fee,
+      refundTier,
       token,
       day,
       date: day,
