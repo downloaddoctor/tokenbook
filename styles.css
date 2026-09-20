@@ -1,0 +1,675 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #fff;
+  --ink: #1a1d21;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #2563eb;
+  --accent-ink: #fff;
+  --danger: #b91c1c;
+  --ok: #047857;
+  --hover: #f3f4f6;
+  --accent-soft: #eef2ff;
+  --topbar-h: 52px;
+}
+* {
+  box-sizing: border-box;
+}
+/* Respect the HTML hidden attribute even where an element sets a display
+   value (e.g. #page-print-layout { display: flex } would otherwise show it). */
+[hidden] {
+  display: none !important;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  font:
+    14px/1.45 system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* topbar */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--topbar-h);
+  padding: 0 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .brand {
+  font-weight: 700;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  align-items: center;
+}
+.tabs .nav-tab {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tabs .nav-tab:hover {
+  background: var(--hover);
+}
+.tabs .nav-tab.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.kbd {
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 3px;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+/* kbd on a colored button: use inherited text color with a translucent border */
+.primary .kbd,
+button.primary .kbd {
+  color: inherit;
+  border-color: rgba(255, 255, 255, 0.55);
+  opacity: 0.9;
+}
+.tabs .nav-tab.active .kbd {
+  color: var(--accent-ink);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+/* status bar (fixed bottom, VS Code-ish) */
+#statusbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 28px;
+  padding: 0 12px;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+.statusbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  overflow: hidden;
+}
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+#statusbar .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#statusbar .status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+#statusbar .status.ok::before { background: var(--ok); }
+#statusbar .status.err::before { background: var(--danger); }
+#statusbar .status.ok { color: var(--ok); }
+#statusbar .status.err { color: var(--danger); }
+#statusbar button {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 4px;
+}
+#statusbar button:hover {
+  background: var(--hover);
+  border-color: var(--line);
+}
+
+main {
+  padding: 16px 20px 48px;
+  min-height: calc(100vh - var(--topbar-h));
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+/* forms */
+form {
+  display: grid;
+  gap: 12px;
+}
+form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+input[type='text'],
+input[type='tel'],
+input[type='number'],
+input[type='date'],
+input[type='search'],
+input[type='email'],
+input[type='url'],
+select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+}
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover {
+  background: var(--hover);
+}
+button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+button.primary:hover {
+  background: #1d4ed8;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.msg {
+  font-size: 13px;
+  min-height: 1.2em;
+}
+.msg.ok {
+  color: var(--ok);
+}
+.msg.err {
+  color: var(--danger);
+}
+
+/* split layout (billing, settings) */
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+.split-left { align-self: start; } /* form keeps natural height; card next to it grows */
+.split-left,
+.split-right {
+  min-width: 0;
+}
+.split-left {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.split-right {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ps-host {
+  width: 100%;
+  min-height: 520px;
+  background: #eef0f3;
+  position: relative;
+}
+.ps-host iframe {
+  width: 100% !important;
+  height: 520px !important;
+  border: 0;
+  display: block;
+  background: #fff;
+}
+
+/* Print Layout: designer iframe fills the viewport (main's own padding only, no page-head anymore). */
+#page-print-layout {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-h) - 28px - 32px);
+}
+.ps-host-full {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ps-host-full iframe {
+  height: 100% !important;
+  min-height: 0;
+}
+
+/* history modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal[hidden] { display: none !important; }
+.modal-card {
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  max-width: 720px;
+  width: min(92vw, 720px);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-head h2 { margin: 0 0 4px; font-size: 18px; }
+.modal-close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.modal-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.modal-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+.modal-card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.modal-card table th,
+.modal-card table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.modal-card table thead th {
+  position: sticky;
+  top: 0;
+  background: #fafbfc;
+  z-index: 1;
+}
+.row-click { cursor: pointer; }
+.row-click:hover { background: var(--accent-soft); }
+
+/* identity-change confirm */
+.modal-dialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+}
+.modal-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.modal-dialog .modal-card { width: min(92vw, 560px); }
+.modal-body {
+  padding: 16px 20px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.modal-body dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+.modal-body dt { color: var(--muted); }
+.modal-body dd { margin: 0; }
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--line);
+}
+.modal-actions button { padding: 8px 14px; }
+
+/* toolbar */
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.toolbar .hint {
+  margin-left: auto;
+}
+.inline {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.inline input,
+.inline select {
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.inline input[type='search'] {
+  min-width: 220px;
+}
+
+/* Search inputs: strip the platform's default chrome so they match the rest. */
+input[type='search'] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type='search']::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+th,
+td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #fafbfc;
+}
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+.empty {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 8px 0 12px;
+}
+
+.pager {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+/* toast: non-blocking, bottom-left, auto-dismiss */
+#toast-host {
+  position: fixed;
+  bottom: 40px;
+  left: 20px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, 90vw);
+}
+.toast {
+  pointer-events: auto;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 12px 14px 12px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.in { opacity: 1; transform: translateX(0); }
+.toast.ok { border-left-color: var(--ok); }
+.toast.err { border-left-color: var(--danger); }
+.toast .t-close {
+  flex: 0 0 auto;
+  order: 2; /* visually last, after the text */
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.toast .t-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.toast > span {
+  flex: 1 1 auto;
+  order: 1;
+  min-width: 0;
+  padding-right: 2px;
+}
+
+/* register form: 4-column grid. Row 1: Date(2) Token(1) Pat ID(1).
+   Name/Mobile span all 4. Row 4: Age(2) Gender(2).
+   .span-2 = 2 of 4 tracks; .span-4 = full row. */
+#patient-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+}
+#patient-form .span-2 { grid-column: span 2; }
+#patient-form .span-4 { grid-column: 1 / -1; }
+#patient-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 0;
+}
+#patient-form > label > input,
+#patient-form > label > select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+}
+#patient-form > label > input:focus,
+#patient-form > label > select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+#patient-form .form-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: row-reverse; /* visual: New Visit left, Save & Print right */
+  justify-content: flex-start; /* with row-reverse, flex-start = right edge */
+  gap: 8px;
+}
+#patient-form #form-msg {
+  grid-column: 1 / -1;
+}
+
+/* Stored name is normalized to uppercase in db.js; this keeps the input
+   visually consistent while typing (display-only). */
+#f-name { text-transform: uppercase; }
+
+/* autofill suggestion dropdowns (name + mobile) */
+.autofill-field {
+  position: relative;
+}
+.suggest-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 20;
+}
+.suggest-list li {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.suggest-list li:hover,
+.suggest-list li.hl {
+  background: #e0e7ff;
+}
+.suggest-list li .s-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* responsive */
+@media (max-width: 860px) {
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 12px;
+  }
+  .tabs {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .split,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+  .ps-host,
+  .ps-host iframe {
+    min-height: 420px;
+    height: 420px !important;
+  }
+}
