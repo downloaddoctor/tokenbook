@@ -3,7 +3,20 @@
 // names never need quoting.
 
 export const CSV_DELIM = '\u2016'; // ‖
-export const CSV_COLS = ['date', 'token', 'name', 'mob', 'age', 'gender', 'personId', 'createdAt'];
+export const CSV_COLS = [
+  'date',
+  'token',
+  'name',
+  'mob',
+  'age',
+  'gender',
+  'weight',
+  'followup',
+  'payment',
+  'fee',
+  'personId',
+  'createdAt',
+];
 
 function csvEscape(v) {
   const s = v == null ? '' : String(v);
@@ -49,11 +62,19 @@ function parseCsvLine(line) {
   return out;
 }
 
+// Legacy v3-era header (no weight/followup/payment/fee). Accepted on read so
+// pre-v4 backups still restore; missing cols parse to null/0.
+const LEGACY_CSV_COLS = ['date', 'token', 'name', 'mob', 'age', 'gender', 'personId', 'createdAt'];
+
 export function csvToData(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (!lines.length) throw new Error('Empty backup file.');
   const header = parseCsvLine(lines[0]);
-  if (header.length !== CSV_COLS.length || header.some((h, i) => h !== CSV_COLS[i])) {
+  const isCurrent =
+    header.length === CSV_COLS.length && header.every((h, i) => h === CSV_COLS[i]);
+  const isLegacy =
+    header.length === LEGACY_CSV_COLS.length && header.every((h, i) => h === LEGACY_CSV_COLS[i]);
+  if (!isCurrent && !isLegacy) {
     throw new Error('Not a doctor-apt-list backup (unexpected header).');
   }
   const col = Object.fromEntries(header.map((h, i) => [h, i]));
@@ -68,21 +89,53 @@ export function csvToData(text) {
     if (!name && !mob) continue;
     const age = Number(f[col.age]);
     const gender = f[col.gender] == null ? '' : String(f[col.gender]).trim();
+    const weightRaw = col.weight != null ? f[col.weight] : '';
+    const weight = weightRaw === '' || weightRaw == null ? null : Number(weightRaw);
+    const fuRaw = col.followup != null ? f[col.followup] : '';
+    const followup = fuRaw === '1' ? 1 : fuRaw === '0' ? 0 : fuRaw === '' ? null : Number(fuRaw) ? 1 : 0;
+    const payRaw = col.payment != null ? f[col.payment] : '';
+    const payment = payRaw === '1' ? 1 : 0;
+    const feeRaw = col.fee != null ? f[col.fee] : '';
+    const fee = feeRaw === '' || feeRaw == null ? null : Number(feeRaw);
     const token = Number(f[col.token]);
     const day = f[col.date] || '';
     const createdAt = f[col.createdAt] || new Date().toISOString();
     const key = name + '\u0000' + mob;
     let person = byKey.get(key);
     if (!person) {
-      person = { id: people.length + 1, name, mob, age, gender, createdAt, updatedAt: createdAt };
+      person = {
+        id: people.length + 1,
+        name,
+        mob,
+        age,
+        gender,
+        weight: weight != null ? weight : undefined,
+        createdAt,
+        updatedAt: createdAt,
+      };
       byKey.set(key, person);
       people.push(person);
     } else {
       person.age = age;
       if (gender) person.gender = gender;
+      if (weight != null) person.weight = weight;
       person.updatedAt = createdAt;
     }
-    visits.push({ name, mob, age, gender, token, day, date: day, createdAt, personId: person.id });
+    visits.push({
+      name,
+      mob,
+      age,
+      gender,
+      weight,
+      followup,
+      payment,
+      fee,
+      token,
+      day,
+      date: day,
+      createdAt,
+      personId: person.id,
+    });
   }
   return { schema: 'doctor-apt-list/patients', version: 2, people, visits };
 }

@@ -30,15 +30,15 @@
         <div class="split">
           <div class="split-left">
             <form id="patient-form" autocomplete="off">
-              <label class="span-2"
+              <label class="span-3up"
                 >Date
                 <input id="f-date" name="date" type="date" required />
               </label>
-              <label
+              <label class="span-3up"
                 >Token
                 <input id="f-token" name="token" type="number" required min="1" />
               </label>
-              <label
+              <label class="span-3up"
                 >Patient ID
                 <input
                   id="f-patient-id"
@@ -75,11 +75,11 @@
                   />
                 <ul id="mob-suggest" class="suggest-list" hidden></ul>
               </label>
-              <label class="span-2"
+              <label class="span-3up"
                 >Age
                 <input id="f-age" name="age" type="number" required min="0" max="150" />
               </label>
-              <label class="span-2"
+              <label class="span-3up"
                 >Gender
                 <select id="f-gender" name="gender">
                   <option value="M">Male</option>
@@ -87,6 +87,29 @@
                   <option value="O">Other</option>
                 </select>
               </label>
+              <label class="span-3up"
+                >Weight (kg)
+                <input id="f-weight" name="weight" type="number" required min="0" max="400" step="0.1" />
+              </label>
+              <label class="span-3up"
+                >Follow up
+                <select id="f-followup" name="followup" required>
+                  <option value="0">No — paid visit</option>
+                  <option value="1">Yes — free</option>
+                </select>
+              </label>
+              <label class="span-3up"
+                >Payment
+                <select id="f-payment" name="payment" required>
+                  <option value="0">Offline / Cash</option>
+                  <option value="1">UPI / Online</option>
+                </select>
+              </label>
+              <label class="span-3up"
+                >Fee
+                <input id="f-fee" name="fee" type="number" required min="0" step="1" value="300" />
+              </label>
+              <p id="followup-note" class="hint span-4" hidden></p>
               <div class="form-row">
                 <button id="btn-save-print" type="submit" class="primary">
                   Save &amp; Print<kbd class="kbd">Alt+S</kbd>
@@ -119,6 +142,10 @@
               <th>Mobile</th>
               <th>Age</th>
               <th>Gender</th>
+              <th>Wt</th>
+              <th>Follow up</th>
+              <th>Payment</th>
+              <th>Fee</th>
               <th>Time</th>
             </tr>
           </thead>
@@ -142,6 +169,7 @@
               <th>Name</th>
               <th>Mobile</th>
               <th>Age</th>
+              <th>Wt</th>
               <th>Visits</th>
               <th>Last visit</th>
             </tr>
@@ -190,6 +218,10 @@
                   <th>Token</th>
                   <th>Age</th>
                   <th>Gender</th>
+                  <th>Wt</th>
+                  <th>Follow up</th>
+                  <th>Payment</th>
+                  <th>Fee</th>
                   <th>Time</th>
                 </tr>
               </thead>

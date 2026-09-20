@@ -43,6 +43,7 @@ async function render() {
       p.name,
       p.mob,
       p.age,
+      p.weight != null ? p.weight : '',
       counts.get(p.id) || 0,
       lastAt ? new Date(lastAt).toLocaleString() : '',
     ];
@@ -63,7 +64,9 @@ async function openHistory(personId) {
   if (!p) p = await PatientDb.getPerson(personId);
   const visits = await PatientDb.visitsForPerson(personId);
   st.modalName.textContent = p ? p.name : `Patient #${personId}`;
-  st.modalMeta.textContent = p ? `${p.mob} · Age ${p.age} · ${p.gender || '—'}` : '';
+  st.modalMeta.textContent = p
+    ? `${p.mob} · Age ${p.age} · ${p.gender || '—'}${p.weight != null ? ' · ' + p.weight + ' kg' : ''}`
+    : '';
   st.modalBody.replaceChildren();
   for (const v of visits) {
     const tr = document.createElement('tr');
@@ -72,6 +75,10 @@ async function openHistory(personId) {
       v.token,
       v.age,
       v.gender || '',
+      v.weight != null ? v.weight : '',
+      v.followup ? 'Yes' : 'No',
+      v.payment ? 'UPI' : 'Cash',
+      v.fee != null ? v.fee : '',
       new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     ]) {
       const td = document.createElement('td');

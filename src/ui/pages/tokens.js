@@ -24,6 +24,10 @@ async function refresh() {
       r.mob,
       r.age,
       r.gender || '',
+      r.weight != null ? r.weight : '',
+      r.followup ? 'Yes' : 'No',
+      r.payment ? 'UPI' : 'Cash',
+      r.fee != null ? r.fee : '',
       new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     ]) {
       const td = document.createElement('td');

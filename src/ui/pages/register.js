@@ -15,6 +15,10 @@ function fieldValues() {
     mob: b.fMob.value.trim(),
     age: b.fAge.value.trim(),
     gender: b.fGender.value.trim(),
+    weight: b.fWeight ? b.fWeight.value.trim() : '',
+    followup: b.fFollowup ? b.fFollowup.value : '0',
+    payment: b.fPayment ? b.fPayment.value : '0',
+    fee: b.fFee ? b.fFee.value.trim() : '300',
     date: b.fDate.value.trim(),
     token: b.fToken.value.trim(),
   };
@@ -81,9 +85,11 @@ function pickPerson(p, focus = true) {
   b.fMob.value = p.mob || '';
   if (p.age != null && p.age !== '') b.fAge.value = String(p.age);
   b.fGender.value = p.gender || '';
+  if (b.fWeight) b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
   b.fPatientId.value = p.id != null ? String(p.id) : '';
   hideSuggests();
-  if (focus) b.fAge.focus();
+  if (focus) b.saveBtn && b.saveBtn.focus();
+  applyFollowupRule(p.id);
   refreshPreview();
 }
 
@@ -143,6 +149,30 @@ function onDocMouseDown(e) {
   hideSuggests();
 }
 
+// Re-evaluate the follow-up rule from the CURRENT form identity. Runs on
+// name/mob blur. Resolution mirrors addVisit: explicit Pat ID wins, else
+// match on (name, mob). If neither resolves, the patient is new -> force No.
+let identityTimer = null;
+function revalidateIdentity() {
+  clearTimeout(identityTimer);
+  identityTimer = setTimeout(async () => {
+    const name = b.fName.value.trim().toUpperCase();
+    const mob = b.fMob.value.trim();
+    const patId = Number(b.fPatientId.value.trim()) || null;
+    let personId = null;
+    if (patId) {
+      const p = await PatientDb.getPerson(patId).catch(() => null);
+      if (p && p.name === name && p.mob === mob) personId = p.id;
+    }
+    if (!personId && name && mob) {
+      const matches = await PatientDb.searchPeopleByName(name, 8).catch(() => []);
+      const hit = matches.find((p) => p.name === name && p.mob === mob);
+      if (hit) personId = hit.id;
+    }
+    applyFollowupRule(personId);
+  }, 180);
+}
+
 async function refreshNextToken() {
   const day = b.fDate.value || PatientDb.localDay();
   const t = await PatientDb.nextTokenForDay(day);
@@ -171,6 +201,14 @@ async function onTokenChange() {
   b.fMob.value = visit.mob || '';
   if (visit.age != null && visit.age !== '') b.fAge.value = String(visit.age);
   b.fGender.value = visit.gender || person?.gender || 'M';
+  if (b.fWeight) b.fWeight.value = visit.weight != null ? String(visit.weight) : '';
+  if (b.fFollowup) b.fFollowup.value = visit.followup ? '1' : '0';
+  if (b.fPayment) b.fPayment.value = visit.payment ? '1' : '0';
+  if (b.fFee && visit.fee != null) {
+    b.fFee.value = String(visit.fee);
+    if (visit.followup) lockFee(visit.fee);
+    else unlockFee();
+  }
   b.fPatientId.value = person ? String(person.id) : visit.personId != null ? String(visit.personId) : '';
   loadedVisitId = visit.id;
   hideSuggests();
@@ -178,12 +216,15 @@ async function onTokenChange() {
     `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.id + ')' : ''}.`,
     'ok'
   );
+  applyFollowupRule(person ? person.id : visit.personId);
   refreshPreview();
 }
 
 // Date change: if token has not been hand-edited, recompute the next token
 // for the new date. Otherwise leave the typed token alone.
 async function onDateChange() {
+  const patId = Number(b.fPatientId.value.trim()) || null;
+  if (patId) applyFollowupRule(patId);
   if (tokenEdited) return;
   await refreshNextToken();
 }
@@ -200,6 +241,96 @@ async function onTokenBlur() {
 // `kind` is 'ok' | 'err' | undefined. Errors use the same mechanism, styled red.
 function setMsg(text, kind) {
   toast(text, kind);
+}
+
+// Auto-followup rule: if the linked patient had a PAID visit within the
+// last 6 calendar days, mark this visit as a follow-up (free) and lock fee
+// to 0. Otherwise leave the user's toggle alone.
+let followupBusy = 0;
+async function applyFollowupRule(personId) {
+  const my = ++followupBusy;
+  const day = (b.fDate && b.fDate.value) || PatientDb.localDay();
+  if (!personId) {
+    // No resolved person -> first-time patient, force paid visit.
+    if (my !== followupBusy) return;
+    if (b.fFollowup) b.fFollowup.value = '0';
+    unlockFee();
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    setFollowupNote('');
+    return;
+  }
+  let last = null;
+  try {
+    last = await PatientDb.lastPaidVisitDaysFor(personId, day);
+  } catch (_) {
+    last = null;
+  }
+  if (my !== followupBusy) return;
+  if (last && last.days != null && last.days >= 0 && last.days <= 6) {
+    // Inside window -> free follow-up.
+    if (b.fFollowup) b.fFollowup.value = '1';
+    lockFee(0);
+    const left = 6 - last.days;
+    setFollowupNote(
+      `Free follow-up — last paid visit ${last.days === 0 ? 'today' : last.days + ' day(s) ago'}. Window closes in ${left} day(s).`
+    );
+  } else if (last && last.days != null && last.days > 6) {
+    // Past window -> force paid visit, unlock the fee, note the gap.
+    if (b.fFollowup) b.fFollowup.value = '0';
+    unlockFee();
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    setFollowupNote(
+      `Paid visit — last paid visit was ${last.days} day(s) ago (outside the 6-day follow-up window).`
+    );
+  } else {
+    // No prior paid visit at all -> first-time patient, force paid visit.
+    if (b.fFollowup) b.fFollowup.value = '0';
+    unlockFee();
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    setFollowupNote('');
+  }
+}
+
+function setFollowupNote(text) {
+  const el = document.getElementById('followup-note');
+  if (!el) return;
+  el.textContent = text || '';
+  el.hidden = !text;
+}
+
+function lockFee(v) {
+  if (!b.fFee) return;
+  b.fFee.value = String(v);
+  b.fFee.readOnly = true;
+  b.fFee.dataset.locked = '1';
+}
+
+function unlockFee() {
+  if (!b.fFee) return;
+  delete b.fFee.dataset.locked;
+  b.fFee.readOnly = false;
+}
+
+// Keep Fee in sync with the Follow-up select unless the user has taken over
+// the field (readOnly set by lockFee, or manually edited).
+function syncFeeFromFollowup() {
+  if (!b.fFee || !b.fFollowup) return;
+  if (b.fFee.dataset.locked === '1') return;
+  if (b.fFollowup.value === '1') {
+    if (!b.fFee.value || Number(b.fFee.value) !== 0) b.fFee.value = '0';
+  } else if (Number(b.fFee.value) === 0) {
+    b.fFee.value = '300';
+  }
+}
+
+function onFollowupChange() {
+  if (b.fFollowup.value === '1') lockFee(0);
+  else {
+    unlockFee();
+    if (!b.fFee.value || Number(b.fFee.value) === 0) b.fFee.value = '300';
+  }
+  setFollowupNote('');
+  refreshPreview();
 }
 
 // Pat ID change: look up the person and populate the form. Empty = leave
@@ -223,8 +354,10 @@ async function onPatIdChange() {
   b.fMob.value = p.mob || '';
   if (p.age != null && p.age !== '') b.fAge.value = String(p.age);
   b.fGender.value = p.gender || 'M';
+  if (b.fWeight) b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
   hideSuggests();
   setMsg('');
+  applyFollowupRule(p.id);
   refreshPreview();
 }
 
@@ -235,6 +368,12 @@ export function startNewBill() {
   b.fMob.value = '';
   b.fAge.value = '';
   b.fGender.value = 'M';
+  if (b.fWeight) b.fWeight.value = '';
+  if (b.fFollowup) b.fFollowup.value = '0';
+  if (b.fPayment) b.fPayment.value = '0';
+  unlockFee();
+  if (b.fFee) b.fFee.value = '300';
+  setFollowupNote('');
   b.fPatientId.value = '';
   tokenEdited = false;
   loadedVisitId = null;
@@ -309,8 +448,21 @@ async function submitBill() {
   const mob = b.fMob.value.trim();
   const age = Number(b.fAge.value);
   const gender = b.fGender.value;
-  if (!name || !mob || !Number.isFinite(age)) {
-    setMsg('Please fill name, mobile, age.', 'err');
+  const weightRaw = b.fWeight ? b.fWeight.value.trim() : '';
+  const feeRaw = b.fFee ? b.fFee.value.trim() : '';
+  const dateRaw = b.fDate ? b.fDate.value.trim() : '';
+  const tokenRaw = b.fToken ? b.fToken.value.trim() : '';
+  const missing = [];
+  if (!name) missing.push('name');
+  if (!mob) missing.push('mobile');
+  if (!Number.isFinite(age)) missing.push('age');
+  if (!gender) missing.push('gender');
+  if (weightRaw === '' || !Number.isFinite(Number(weightRaw))) missing.push('weight');
+  if (!dateRaw) missing.push('date');
+  if (!tokenRaw || !Number.isInteger(Number(tokenRaw))) missing.push('token');
+  if (feeRaw === '' || !Number.isFinite(Number(feeRaw))) missing.push('fee');
+  if (missing.length) {
+    setMsg('Please fill: ' + missing.join(', ') + '.', 'err');
     return;
   }
 
@@ -319,8 +471,12 @@ async function submitBill() {
     return;
   }
 
-  const day = b.fDate.value.trim() || PatientDb.localDay();
+  const day = dateRaw || PatientDb.localDay();
   let patId = Number(b.fPatientId.value.trim()) || null;
+  const weight = Number(weightRaw);
+  const followup = b.fFollowup && b.fFollowup.value === '1' ? 1 : 0;
+  const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
+  const fee = Number(feeRaw);
 
   // If a patient is linked and the user has edited their identity, ask how
   // to proceed before writing anything.
@@ -333,10 +489,24 @@ async function submitBill() {
     }
   }
 
-  let token = Number(b.fToken.value) || (await PatientDb.nextTokenForDay(day));
+  const visitInput = {
+    name,
+    mob,
+    age,
+    gender,
+    weight,
+    followup,
+    payment,
+    fee,
+    token: Number(b.fToken.value) || undefined,
+    date: day,
+    patId,
+  };
+  let token = visitInput.token || (await PatientDb.nextTokenForDay(day));
+  visitInput.token = token;
   let result;
   try {
-    result = await PatientDb.addVisit({ name, mob, age, gender, token, date: day, patId });
+    result = await PatientDb.addVisit(visitInput);
   } catch (err) {
     if (err && err.name === 'DuplicateIdentityError') {
       setMsg(err.message, 'err');
@@ -344,7 +514,8 @@ async function submitBill() {
     }
     if (err && err.name === 'ConstraintError') {
       token = await PatientDb.nextTokenForDay(day);
-      result = await PatientDb.addVisit({ name, mob, age, gender, token, date: day, patId });
+      visitInput.token = token;
+      result = await PatientDb.addVisit(visitInput);
     } else {
       throw err;
     }
@@ -355,6 +526,16 @@ async function submitBill() {
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
   hideSuggests();
 
+  // Reflect the resolved billing back into the form (auto-followup may have
+  // flipped the flag or zeroed the fee on the server side).
+  if (b.fFollowup) b.fFollowup.value = rec.followup ? '1' : '0';
+  if (b.fPayment) b.fPayment.value = rec.payment ? '1' : '0';
+  if (b.fFee && rec.fee != null) {
+    b.fFee.value = String(rec.fee);
+    if (rec.followup) lockFee(rec.fee);
+  }
+  if (b.fWeight && rec.weight != null) b.fWeight.value = String(rec.weight);
+
   PatientBackup.markDirty();
 
   PS.print(
@@ -363,6 +544,10 @@ async function submitBill() {
       mob: rec.mob,
       age: String(rec.age),
       gender: rec.gender || '',
+      weight: rec.weight != null ? String(rec.weight) : '',
+      followup: rec.followup ? 'Yes' : 'No',
+      payment: rec.payment ? 'UPI' : 'Cash',
+      fee: rec.fee != null ? String(rec.fee) : '',
       date: rec.date,
       token: String(rec.token),
     },
@@ -370,7 +555,8 @@ async function submitBill() {
   );
   setMsg(
     (created ? 'Saved. Token ' : 'Updated. Token ') +
-      rec.token,
+      rec.token +
+      (rec.followup ? ' (free follow-up)' : ' — ₹' + (rec.fee != null ? rec.fee : '')),
     'ok'
   );
 }
@@ -382,6 +568,10 @@ export function mount() {
     fMob: document.getElementById('f-mob'),
     fAge: document.getElementById('f-age'),
     fGender: document.getElementById('f-gender'),
+    fWeight: document.getElementById('f-weight'),
+    fFollowup: document.getElementById('f-followup'),
+    fPayment: document.getElementById('f-payment'),
+    fFee: document.getElementById('f-fee'),
     fPatientId: document.getElementById('f-patient-id'),
     fDate: document.getElementById('f-date'),
     fToken: document.getElementById('f-token'),
@@ -403,6 +593,16 @@ export function mount() {
   off.on(b.fToken, 'blur', onTokenBlur);
   off.on(b.fDate, 'change', onDateChange);
   off.on(b.fDate, 'input', onDateChange);
+  if (b.fFollowup) off.on(b.fFollowup, 'change', onFollowupChange);
+  if (b.fFee)
+    off.on(b.fFee, 'input', () => {
+      // Manual edit clears the lock so syncFeeFromFollowup won't fight the user.
+      if (b.fFee.dataset.locked === '1') unlockFee();
+    });
+  off.on(b.fName, 'blur', revalidateIdentity);
+  off.on(b.fMob, 'blur', revalidateIdentity);
+  off.on(b.fName, 'change', revalidateIdentity);
+  off.on(b.fMob, 'change', revalidateIdentity);
   // Alt+S -> Save & Print (only while this page is mounted). Ctrl/Shift are
   // deliberately required to be unset so we don't shadow browser combos.
   off.on(window, 'keydown', (e) => {

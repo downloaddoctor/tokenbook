@@ -28,6 +28,13 @@ db.version(3).stores({
   people: '++id, name, mob, [name+mob], updatedAt',
   visits: '++id, mob, createdAt, day, [day+token], personId',
 });
+db.version(4).stores({
+  // v4 adds billing fields on visits (weight, followup, payment, fee) and
+  // people.weight. No new indexes, no backfill — old rows keep these
+  // undefined until the next visit.
+  people: '++id, name, mob, [name+mob], updatedAt',
+  visits: '++id, mob, createdAt, day, [day+token], personId',
+});
 
 let _openPromise = null;
 function openDb() {
@@ -100,12 +107,87 @@ function searchPeopleByName(prefix, limit = 8) {
 // different person sharing (name, mob), throw — the unique index must hold.
 //
 // Returns { rec, created }: created=false means an existing visit was updated.
-function addVisit({ name, mob, age, gender, token, date, patId }) {
+// Find the most recent visit for `personId` and return {visit, days} where
+// days = calendar days between that visit's day and `day` (0 = same day).
+// Used by the follow-up rule (window anchors on the last PAID visit).
+async function _lastVisitDaysFor(personId, day) {
+  if (!personId) return null;
+  const rows = await db.visits.where('personId').equals(personId).toArray();
+  if (!rows.length) return null;
+  let best = null;
+  for (const v of rows) {
+    if (!best || (v.day || '') > (best.day || '')) best = v;
+    else if ((v.day || '') === (best.day || '') && (v.token || 0) > (best.token || 0)) best = v;
+  }
+  if (!best) return null;
+  return { visit: best, days: _daysBetween(best.day, day) };
+}
+
+// Whole-day difference between two 'YYYY-MM-DD' strings (b - a). Both must
+// parse as local calendar dates; returns null on bad input.
+function _daysBetween(a, b) {
+  if (!a || !b) return null;
+  const da = new Date(a + 'T00:00:00');
+  const db2 = new Date(b + 'T00:00:00');
+  if (isNaN(da) || isNaN(db2)) return null;
+  return Math.round((db2 - da) / 86400000);
+}
+
+// Walk back through a person's visits (newest first) and return the last
+// visit whose `followup` is falsy (i.e. a PAID visit). Returns {visit, days}
+// where days = calendar days between that paid visit and `day`. If the most
+// recent visit is within 6 days AND that paid visit is the anchor, the caller
+// marks this visit as a follow-up.
+async function _lastPaidVisitDaysFor(personId, day) {
+  if (!personId) return null;
+  const rows = await db.visits.where('personId').equals(personId).toArray();
+  if (!rows.length) return null;
+  rows.sort((a, b) => {
+    const ad = a.day || '';
+    const bd = b.day || '';
+    if (ad !== bd) return bd.localeCompare(ad);
+    return (b.token || 0) - (a.token || 0);
+  });
+  for (const v of rows) {
+    if (!v.followup) return { visit: v, days: _daysBetween(v.day, day) };
+  }
+  return null;
+}
+
+// Compute fee + auto-followup for a candidate visit. Rules:
+//   - explicit followup flag (0/1) wins for the followup bit
+//   - if the patient had a PAID visit within the last 6 days (calendar),
+//     followup is forced to 1 unless the caller passed followup=0 explicitly
+//     AND no paid visit exists in the window
+//   - fee = 0 when followup=1, else the given fee (default 300)
+// Returns {followup, fee, anchoredOn: {visitId|null, days|null}}.
+async function _resolveBilling({ personId, day, followup, fee }) {
+  const baseFee = Number.isFinite(Number(fee)) && Number(fee) > 0 ? Number(fee) : 300;
+  const explicit = followup === 0 || followup === 1 ? followup : null;
+  let anchoredOn = null;
+  let auto = false;
+  if (explicit !== 0) {
+    const last = await _lastPaidVisitDaysFor(personId, day);
+    if (last && last.days != null && last.days >= 0 && last.days <= 6) {
+      auto = true;
+      anchoredOn = { visitId: last.visit.id, days: last.days, day: last.visit.day };
+    }
+  }
+  const fu = explicit != null ? explicit : auto ? 1 : 0;
+  const outFee = fu === 1 ? 0 : baseFee;
+  return { followup: fu, fee: outFee, anchoredOn };
+}
+
+function addVisit({ name, mob, age, gender, token, date, patId, weight, followup, payment, fee }) {
   name = String(name).trim().toUpperCase();
   mob = String(mob).trim();
   age = Number(age);
   gender = gender == null ? '' : String(gender).trim();
   token = Number(token);
+  weight = weight == null || weight === '' ? null : Number(weight);
+  if (weight != null && !Number.isFinite(weight)) weight = null;
+  payment = payment === 0 || payment === 1 ? payment : 0;
+  followup = followup === 0 || followup === 1 ? followup : null;
   const now = new Date();
   const nowIso = now.toISOString();
   const day = date || localDay(now); // form's date drives the visit key
@@ -138,6 +220,7 @@ function addVisit({ name, mob, age, gender, token, date, patId }) {
       person.mob = mob;
       person.age = age;
       if (gender) person.gender = gender;
+      if (weight != null) person.weight = weight;
       person.updatedAt = nowIso;
       person.lastVisitAt = nowIso;
       await db.people.put(person);
@@ -148,11 +231,18 @@ function addVisit({ name, mob, age, gender, token, date, patId }) {
         mob,
         age,
         gender,
+        weight: weight != null ? weight : undefined,
         createdAt: nowIso,
         updatedAt: nowIso,
         lastVisitAt: nowIso,
       });
     }
+
+    // Resolve followup + fee AFTER personId is known (auto-followup needs the
+    // person's prior paid-visit history).
+    const billing = await _resolveBilling({ personId, day, followup, fee });
+    followup = billing.followup;
+    fee = billing.fee;
 
     // ---- visit upsert on (day, token) ----
     const existing = await db.visits.where('[day+token]').equals([day, token]).first();
@@ -161,6 +251,10 @@ function addVisit({ name, mob, age, gender, token, date, patId }) {
       existing.mob = mob;
       existing.age = age;
       existing.gender = gender;
+      existing.weight = weight;
+      existing.followup = followup;
+      existing.payment = payment;
+      existing.fee = fee;
       existing.date = day;
       existing.personId = personId;
       existing.updatedAt = nowIso;
@@ -173,6 +267,10 @@ function addVisit({ name, mob, age, gender, token, date, patId }) {
       mob,
       age,
       gender,
+      weight,
+      followup,
+      payment,
+      fee,
       token,
       day,
       date: day,
@@ -290,6 +388,7 @@ async function rebuildPeopleFromVisits() {
       p.mob = g.last.mob != null ? g.last.mob : p.mob;
       p.age = g.last.age;
       if (g.last.gender) p.gender = g.last.gender;
+      if (g.last.weight != null) p.weight = g.last.weight;
       p.createdAt = g.first.createdAt || p.createdAt;
       p.updatedAt = g.last.createdAt || p.updatedAt;
       p.lastVisitAt = g.last.createdAt || p.lastVisitAt;
@@ -402,6 +501,8 @@ export const PatientDb = {
   visitsForPerson,
   findVisitByDayToken,
   rebuildPeopleFromVisits,
+  lastPaidVisitDaysFor: _lastPaidVisitDaysFor,
+  daysBetween: _daysBetween,
   replaceAll,
   exportAll,
 };

@@ -31,14 +31,12 @@ src/ui/app.js async IIFE -> router.wire() + topbar button wiring -> PatientDb.op
 ## MODULES
 
 src/core/db.js (Dexie)
-DB doctor-apt-list v3, two stores:
-  people: one row per unique (name, mob) identity; index name_mob unique; holds latest age + gender
-  visits: one row per token; denormalized name/mob/age/gender snapshot + personId -> people
-exports: openDb, localDay, nextTokenForDay, findOrCreatePerson, searchPeopleByMob, searchPeopleByName, addVisit, listByDay, listAll, countAll, listPeople, countPeople, getPerson, searchPeopleByPrefix, visitCountsForPeople, visitsForPerson, replaceAll, exportAll
-v1 -> v2 upgrade: none (app not in production; Dexie declares v2 only)
-v2 -> v3 upgrade: schema unchanged; adds people.lastVisitAt (no backfill — undefined until next visit)
+followup auto-rule: on submit, addVisit resolves followup/fee AFTER personId is known. If the person's most recent PAID (followup falsy) visit is within 6 calendar days of this visit's day, followup is forced to 1 and fee=0. Explicit followup=0 in the form opts out. fee defaults to 300 when followup=0.I've made 20+ edits. Two final changes: update the AGENTS.md `SCHEMA` section, and sanity-check with a lint pass.
+
+⟦replace
 names are stored uppercase: db.js uppercases `name` on every write path (addVisit, findOrCreatePerson, replaceAll, CSV/legacy import). register.js uppercases on submit + on autofill. #f-name has CSS text-transform:uppercase for display. Searches uppercase the query (searchPeopleByName, searchPeopleByPrefix). mob is left as typed (digits).
 visits are the source of truth. people is a derived cache: createdAt=earliest visit, name/mob/age/gender/updatedAt/lastVisitAt=latest visit. Writes to people only from addVisit and rebuildPeopleFromVisits.
+addVisit billing resolution (after personId known): _resolveBilling({personId, day, followup, fee}) -> {followup, fee}. followup=0 in form opts out of auto; otherwise if _lastPaidVisitDaysFor(personId, day).days <= 6, force followup=1. fee = 0 when followup=1, else form fee or 300.
 addVisit person identity resolution:
   1. patId given and found -> use it; update name/mob/age/gender/lastVisitAt
   2. no patId, (name,mob) matches -> reuse; bump lastVisitAt/updatedAt
@@ -54,8 +52,9 @@ register message uses created flag: "Saved. Token N." (new) vs "Updated. Token N
 people.updatedAt -> bumped on any person touch (currently every addVisit); kept for compat + sort
 addVisit -> appends a visit row (new token each visit) linked via personId
 src/backup/csv.js
-pure functions: visitsToCsv, csvToData, parseBackup, CSV_DELIM, CSV_COLS
-format: flat CSV, one row per visit; delimiter U+2016 (‖); cols date,token,name,mob,age,gender,personId,createdAt
+pure functions: visitsToCsv, csvToData, parseBackup, CSV_DELIM, CSV_COLS, LEGACY_CSV_COLS
+format: flat CSV, one row per visit; delimiter U+2016 (‖); cols date,token,name,mob,age,gender,weight,followup,payment,fee,personId,createdAt
+legacy: 8-col header (no weight/followup/payment/fee) still accepted on read; missing fields parse to null/0
 src/backup/meta.js
 openMeta/metaGet/metaSet/metaDel over IDB apt-list-backup-meta (store kv)
 src/backup/backup.js
@@ -98,18 +97,24 @@ page modules import only: core/db.js, print/ps.js, backup/backup.js (register), 
 register.mount -> PS.mount(register-ps-host, {autoShow:false, openDesignerOnReady:true, seedDefaultOnReady:true}) — designer is the idle state (same mount pattern as Print Layout)
 register form 'input' -> refreshPreview -> PS.preview(fv) — swaps host from designer into live preview while typing
 register has editable f-date/f-token inputs (pre-filled by refreshNextToken, user can override before submit)
+register form layout: 12-track grid. Date(6)/Token(3)/PatID(3); Name/Mobile full row (.span-4); Age/Gender/Weight in one 3-up row (.span-3up); Follow up/Payment/Fee in the next 3-up row; #followup-note spans full width. At <=640px the 3-up cells collapse to 2-per-row.
 register has Pat ID input (after Gender): typed id -> getPerson -> populate name/mob/age/gender; autofill pick fills it; New Bill clears it; empty falls back to (name,mob) matching at addVisit
-register submit passes patId; DuplicateIdentityError -> shows message and aborts (no new person created)
+register submit passes patId + weight/followup/payment/fee; DuplicateIdentityError -> shows message and aborts (no new person created)
+register submit reads addVisit result and reflects resolved billing back into form (f-followup, f-fee lock, f-payment, f-weight) before printing
+register follow-up UX: f-followup (No/Yes), f-payment (Offline-Cash/UPI-Online), f-fee (default 300). applyFollowupRule(personId) queries PatientDb.lastPaidVisitDaysFor -> personId null OR last paid > 6 days ago => followup forced to 0 (unlock fee, default 300); last paid <= 6 days ago => followup forced to 1, lock fee to 0, #followup-note. Called on pickPerson, onPatIdChange, onDateChange, onTokenChange (after load), and on name/mob blur+change (revalidateIdentity, debounced). startNewBill clears state and lands on the personId=null branch.
+followup select change -> onFollowupChange: Yes locks fee 0, No unlocks + restores default 300 (unless user has manually edited)
+register print payload carries weight/followup/payment/fee (friendly strings) for paperstamp layout items
+register submit message: "Saved. Token N (free follow-up)" | "Saved. Token N — ₹300"
 register submit guard: onSubmit sets `submitting` + disables btn-save-print; submitBill is the worker (must NOT re-check `submitting`) — double-guarding makes the button a no-op
 register identity-change confirm: if patId set and form name/mob differ from person -> <dialog id=pat-id-confirm> asks Update (keep patId, update person) | Use as new (drop patId, dedup on name+mob) | Cancel (abort). Esc = Cancel. Fails open (returns 'update') if dialog markup missing.
 Pat ID echo: after a successful addVisit, rec.personId is written back into f-pat-id (so a just-created patient carries an explicit id on next Save)
 register exposes startNewBill() -> clears name/mob/age (gender=M), hides suggests, focuses name, bumps next token; wired to #btn-new-bill click
 register submit -> db add -> PS.print(fv, cb); form is NOT reset (host stays on printed values); cb=PS.openDesigner() returns host to idle state after print dialog closes
 register.unmount -> PS.reset() (mirrors Print Layout teardown)
-tokens.mount -> date filter -> PatientDb.listByDay -> table (one row per visit)
+tokens.mount -> date filter -> PatientDb.listByDay -> table (one row per visit: token, name, mob, age, gender, weight, followup, payment, fee, time)
 patients.mount -> listPeople (paginated 50, sorted by updatedAt desc) + countPeople; empty search; searchPeopleByPrefix otherwise
-patients row -> ID, Name, Mobile, Age, Visits (visitCountsForPeople), Last visit (updatedAt)
-patients row click -> history modal -> visitsForPerson(personId) -> table (date, token, age-at-visit, gender-at-visit, time)
+patients row -> ID, Name, Mobile, Age, Weight, Visits (visitCountsForPeople), Last visit (lastVisitAt||updatedAt)
+patients row click -> history modal -> visitsForPerson(personId) -> table (date, token, age, gender, weight, followup, payment, fee, time)
 patients modal close -> X button, backdrop click, or Escape
 people.updatedAt bumped by addVisit -> doubles as "last visit" for the patients list and its sort order
 printLayout.mount -> PS.mount(print-layout-ps-host,{autoShow:false,openDesignerOnReady:true,seedDefaultOnReady:true}) -> designer opens with seeded default layout when plugin empty
@@ -163,13 +168,24 @@ updatedAt:string ISO
 visits record:
 id:number (auto)
 name/mob/age/gender: snapshot at issue time (historical)
+weight:number|null (kg, snapshot)
+followup:0|1 (1 = free visit; 0 = paid)
+payment:0|1 (0 = offline/cash, 1 = upi/online)
+fee:number (0 when followup=1, else 300 by default)
 token:number (per-day, starts at 1, unique per day)
 day:string YYYY-MM-DD local (form's date; the key for upsert)
 date:string YYYY-MM-DD local (mirrors day; kept for print field)
 createdAt:string ISO (first save)
 updatedAt:string ISO (last save; = createdAt on insert)
 personId:number -> people.id
+
+CSV format: 12 columns (date|token|name|mob|age|gender|weight|followup|payment|fee|personId|createdAt). Legacy 8-column CSV (no weight/followup/payment/fee) is still accepted on read.
 unique index day_token=[day,token] on visits; unique index name_mob=[name,mob] on people
+
+## KNOWN-INVARIANTS
+
+followup rule anchored on the person's most recent PAID (followup=0) visit, not the most recent visit — repeats stay free inside the 6-day calendar window
+fee is authoritative on the visit row (server-resolved); register only reflects the resolved value back into the form
 
 ## ENV
 
