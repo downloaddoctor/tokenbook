@@ -131,7 +131,7 @@ function restoreConfirm(folderName) {
       const bSeed = document.createElement('button');
       bSeed.type = 'button';
       bSeed.textContent = 'Seed';
-      bSeed.title = 'Generate ~500 patients / ~5000 visits over 60 days';
+      bSeed.title = 'Generate ~500 patients / ~6000-12000 visits over 60 days (70-200/day)';
       bSeed.addEventListener('click', async () => {
         bSeed.disabled = true;
         try {
