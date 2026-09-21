@@ -144,7 +144,7 @@ export async function seed({
       const followup = since != null && since >= 0 && since <= 6 ? 1 : 0;
       v.followup = followup;
       v.fee = followup ? 0 : 300;
-      v.refundTier = !followup && randInt(20) === 0 ? ['R1', 'R2', 'R'][randInt(3)] : '0';
+      v.refundTier = !followup && randInt(20) === 0 ? 1 + randInt(3) : 0;
       if (!followup) lastPaidOffset = v._offset;
     }
   }

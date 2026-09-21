@@ -22,6 +22,17 @@ export const CSV_DELIM = '|'; // 1 byte
 export const OP_VISIT = 1;
 export const OP_REFUND = 2;
 
+// Refund tier is a small non-negative integer N; the refunded amount is
+// N * 100. 0 (or blank) = no refund. Legacy 'R1'/'R2'/'R' read as 1/2/3.
+export function normalizeRefundTier(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '' || s === '0') return 0;
+  const legacy = { R1: 1, R2: 2, R: 3 };
+  if (legacy[s] != null) return legacy[s];
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 // Log line columns. Full rows — every op=1 line carries the complete visit.
 export const LOG_COLS = [
   'op',
@@ -96,7 +107,7 @@ export function visitInputToLogLine(entry) {
     followup: entry.followup != null ? entry.followup : '',
     payment: entry.payment != null ? entry.payment : '',
     fee: entry.fee != null ? entry.fee : '',
-    refundTier: entry.refundTier != null ? entry.refundTier : '0',
+    refundTier: normalizeRefundTier(entry.refundTier),
     createdAt: toEpoch(entry.createdAt),
     updatedAt: toEpoch(entry.updatedAt),
   };
@@ -118,7 +129,7 @@ export function refundInputToLogLine(entry) {
     followup: '',
     payment: '',
     fee: '',
-    refundTier: entry.refundTier != null ? entry.refundTier : '0',
+    refundTier: normalizeRefundTier(entry.refundTier),
     createdAt: toEpoch(entry.createdAt),
     updatedAt: toEpoch(entry.updatedAt),
   };
@@ -139,7 +150,7 @@ export function journalResultToCsvLine(result) {
     followup: rec.followup,
     payment: rec.payment,
     fee: rec.fee,
-    refundTier: rec.refundTier != null ? rec.refundTier : '0',
+    refundTier: normalizeRefundTier(rec.refundTier),
     personId: rec.personId,
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
@@ -236,8 +247,7 @@ export function csvToData(text) {
     const payment = payRaw === '1' ? 1 : 0;
     const feeRaw = col.fee != null ? f[col.fee] : '';
     const fee = feeRaw === '' || feeRaw == null ? null : Number(feeRaw);
-    const refundRaw = col.refundTier != null ? String(f[col.refundTier] || '').trim() : '';
-    const refundTier = ['0', 'R1', 'R2', 'R'].includes(refundRaw) ? refundRaw : '0';
+    const refundTier = col.refundTier != null ? normalizeRefundTier(f[col.refundTier]) : 0;
     const token = Number(f[col.token]);
     const day = f[col.date] || '';
     const createdAt = f[col.createdAt] || new Date().toISOString();
@@ -286,18 +296,16 @@ function parseLogLines(header, lines) {
     const token = Number(f[col.token]);
     const date = f[col.date] || '';
     if (op === OP_REFUND) {
-      const tier = String(f[col.refundTier] || '').trim();
       ops.push({
         op: OP_REFUND,
         date,
         token,
-        refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
+        refundTier: normalizeRefundTier(f[col.refundTier]),
         updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
       });
       continue;
     }
     const patIdRaw = f[col.patId];
-    const tier = String(f[col.refundTier] || '').trim();
     ops.push({
       op: OP_VISIT,
       date,
@@ -313,7 +321,7 @@ function parseLogLines(header, lines) {
       updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
       payment: f[col.payment] === '1' ? 1 : 0,
       fee: numOrNull(f[col.fee]),
-      refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
+      refundTier: col.refundTier != null ? normalizeRefundTier(f[col.refundTier]) : 0,
     });
   }
   return ops;
@@ -337,8 +345,8 @@ function snapshotToLog(data) {
       payment: v.payment,
       fee: v.fee,
     });
-    const tier = String(v.refundTier || '0').trim();
-    if (tier && tier !== '0' && ['R1', 'R2', 'R'].includes(tier)) {
+    const tier = normalizeRefundTier(v.refundTier);
+    if (tier > 0) {
       ops.push({ op: OP_REFUND, date: v.day || v.date || '', token: Number(v.token), refundTier: tier });
     }
   }

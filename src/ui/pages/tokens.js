@@ -30,10 +30,8 @@ function clearActiveRow() {
 }
 
 function refundLabel(tier) {
-  const t = String(tier || '0');
-  if (t === '0') return '';
-  const amt = PatientDb.REFUND_TIERS[t];
-  return amt != null ? `${t} (₹${amt})` : t;
+  const amt = PatientDb.refundAmountFor(tier);
+  return amt > 0 ? `₹${amt}` : '';
 }
 
 function ymd(d) {

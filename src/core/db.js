@@ -217,10 +217,8 @@ function addVisit(input) {
   if (weight != null && !Number.isFinite(weight)) weight = null;
   payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
   followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
-  // refundTier is the stored tier tag ('0'|'R1'|'R2'|'R'); the refund AMOUNT
-  // is derived (refundAmountFor) and never stored. Tiers are UI-facing labels;
-  // the visit just carries the tag. Default is '0' (no refund).
-  refundTier = ['0', 'R1', 'R2', 'R'].includes(String(refundTier)) ? String(refundTier) : '0';
+  // refundTier is a non-negative integer N; amount = N * 100 (0 = none).
+  refundTier = _normalizeRefundTier(refundTier);
   const now = new Date();
   const nowIso = now.toISOString();
   const day = date || localDay(now); // form's date drives the visit key
@@ -261,9 +259,7 @@ function addVisit(input) {
         followup: preserve.followup != null ? preserve.followup : followup != null ? followup : 0,
         payment,
         fee: preserve.fee != null ? Number(preserve.fee) : fee == null ? 0 : Number(fee),
-        refundTier: ['0', 'R1', 'R2', 'R'].includes(String(preserve.refundTier))
-          ? String(preserve.refundTier)
-          : '0',
+        refundTier: _normalizeRefundTier(preserve.refundTier),
         token,
         day,
         date: day,
@@ -500,24 +496,25 @@ function listByDay(day) {
     .toArray();
 }
 
-// Refund tiers — amount is derived from the tier and NOT stored on the visit.
-// Fee stays at what was originally charged; refundAmount is computed on read.
-export const REFUND_TIERS = { '0': 0, R1: 100, R2: 200, R: 300 };
+// Refund tier is a non-negative integer N; amount = N * 100 (0 = none).
+// Legacy 'R1'/'R2'/'R' read as 1/2/3 so old backups still restore.
+export const REFUND_TIER_STEP = 100;
+export function _normalizeRefundTier(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '' || s === '0') return 0;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
 export function refundAmountFor(tier) {
-  return REFUND_TIERS[String(tier || '0')] || 0;
+  return _normalizeRefundTier(tier) * REFUND_TIER_STEP;
 }
 
 // Post-visit edit: set (or clear) the refund tier on a single visit. Pass
-// '0' or null to clear. Fee is left untouched — see refundAmountFor().
+// 0 or null to clear. Fee is left untouched — see refundAmountFor().
 // Routes through _writeVisit so a refund change is logged the same way an
 // addVisit is (one append, one people projection touch).
 async function setVisitRefund(visitId, tier, whenIso) {
-  const t = tier == null || tier === 0 || tier === '0' ? '0' : String(tier);
-  if (!(t in REFUND_TIERS)) {
-    const e = new Error('Unknown refund tier: ' + tier);
-    e.name = 'InvalidRefundTierError';
-    throw e;
-  }
+  const t = _normalizeRefundTier(tier);
   const nowIso = whenIso || new Date().toISOString();
   return db.transaction('rw', db.people, db.visits, async () => {
     const v = await db.visits.get(visitId);
@@ -819,8 +816,6 @@ export const PatientDb = {
   daysBetween: _daysBetween,
   setVisitRefund,
   setJournal,
-  replayLog,
-  REFUND_TIERS,
   refundAmountFor,
   replaceAll,
   exportAll,

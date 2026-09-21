@@ -79,7 +79,7 @@ async function openHistory(personId) {
       v.followup ? 'Yes' : 'No',
       v.payment ? 'UPI' : 'Cash',
       v.fee != null ? v.fee : '',
-      v.refundTier && v.refundTier !== '0' ? v.refundTier : '',
+      v.refundTier ? String(v.refundTier) : '',
       new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     ]) {
       const td = document.createElement('td');
