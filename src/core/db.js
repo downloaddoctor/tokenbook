@@ -13,7 +13,7 @@
 
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
-import { csvHeaderLine, visitInputToLogLine } from '../backup/csv.js';
+import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../backup/csv.js';
 
 const DB_NAME = 'doctor-apt-list';
 
@@ -218,7 +218,7 @@ function addVisit(input) {
   payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
   followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
   // refundTier is a non-negative integer N; amount = N * 100 (0 = none).
-  refundTier = _normalizeRefundTier(refundTier);
+  refundTier = normalizeRefundTier(refundTier);
   const now = new Date();
   const nowIso = now.toISOString();
   const day = date || localDay(now); // form's date drives the visit key
@@ -259,7 +259,7 @@ function addVisit(input) {
         followup: preserve.followup != null ? preserve.followup : followup != null ? followup : 0,
         payment,
         fee: preserve.fee != null ? Number(preserve.fee) : fee == null ? 0 : Number(fee),
-        refundTier: _normalizeRefundTier(preserve.refundTier),
+        refundTier: normalizeRefundTier(preserve.refundTier),
         token,
         day,
         date: day,
@@ -497,16 +497,10 @@ function listByDay(day) {
 }
 
 // Refund tier is a non-negative integer N; amount = N * 100 (0 = none).
-// Legacy 'R1'/'R2'/'R' read as 1/2/3 so old backups still restore.
+// Wire decoding (including legacy R1/R2/R) lives in csv.js::normalizeRefundTier.
 export const REFUND_TIER_STEP = 100;
-export function _normalizeRefundTier(v) {
-  const s = String(v == null ? '' : v).trim();
-  if (s === '' || s === '0') return 0;
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-}
 export function refundAmountFor(tier) {
-  return _normalizeRefundTier(tier) * REFUND_TIER_STEP;
+  return normalizeRefundTier(tier) * REFUND_TIER_STEP;
 }
 
 // Post-visit edit: set (or clear) the refund tier on a single visit. Pass
@@ -514,13 +508,13 @@ export function refundAmountFor(tier) {
 // Routes through _writeVisit so a refund change is logged the same way an
 // addVisit is (one append, one people projection touch).
 async function setVisitRefund(visitId, tier, whenIso) {
-  const t = _normalizeRefundTier(tier);
+  const t = normalizeRefundTier(tier);
   const nowIso = whenIso || new Date().toISOString();
   return db.transaction('rw', db.people, db.visits, async () => {
     const v = await db.visits.get(visitId);
     if (!v) throw new Error('Visit not found: ' + visitId);
     const rec = {
-      name: v.name,
+      name: name,
       mob: v.mob,
       age: v.age,
       gender: v.gender,
@@ -712,48 +706,6 @@ async function replayLog(ops) {
   }
 }
 
-// Thin alias kept for callers that still pass {visits}/{records} payloads.
-async function replaceAll(data) {
-  if (Array.isArray(data)) return replayLog(data);
-  const ops = [];
-  if (Array.isArray(data.records)) {
-    for (const r of data.records) {
-      ops.push({
-        op: 1,
-        date: r.day || r.date || '',
-        token: Number(r.token),
-        patId: null,
-        name: r.name,
-        mob: r.mob,
-        age: r.age,
-        gender: r.gender,
-        weight: null,
-        followup: 0,
-        payment: 0,
-        fee: null,
-      });
-    }
-  } else if (Array.isArray(data.visits)) {
-    for (const v of data.visits) {
-      ops.push({
-        op: 1,
-        date: v.day || v.date || '',
-        token: Number(v.token),
-        patId: v.personId != null ? Number(v.personId) : null,
-        name: v.name,
-        mob: v.mob,
-        age: v.age,
-        gender: v.gender,
-        weight: v.weight,
-        followup: v.followup ? 1 : 0,
-        payment: v.payment ? 1 : 0,
-        fee: v.fee,
-      });
-    }
-  }
-  return replayLog(ops);
-}
-
 // Serialize the current DB as a fresh log (header + one line per visit, plus
 // one line per non-'0' refundTier). Used by downloadCsv when File System
 // Access isn't available and by dev tooling. Not used by the append-only
@@ -817,6 +769,5 @@ export const PatientDb = {
   setVisitRefund,
   setJournal,
   refundAmountFor,
-  replaceAll,
   exportAll,
 };
