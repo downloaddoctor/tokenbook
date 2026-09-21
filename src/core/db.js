@@ -229,7 +229,7 @@ function _emitJournal(entry) {
 // the people projection. Save and restore cannot diverge.
 function addVisit(input) {
   const { preserve } = input;
-  let { name, mob, age, gender, token, date, patId, weight, followup, payment, fee } = input;
+  let { name, mob, age, gender, token, date, patId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
   name = String(name).trim().toUpperCase();
   mob = String(mob).trim();
   age = Number(age);
@@ -239,6 +239,10 @@ function addVisit(input) {
   if (weight != null && !Number.isFinite(weight)) weight = null;
   payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
   followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
+  // refundTier is the stored tier tag ('0'|'R1'|'R2'|'R'); the refund AMOUNT
+  // is derived (refundAmountFor) and never stored. Tiers are UI-facing labels;
+  // the visit just carries the tag. Default is '0' (no refund).
+  refundTier = ['0', 'R1', 'R2', 'R'].includes(String(refundTier)) ? String(refundTier) : '0';
   const now = new Date();
   const nowIso = now.toISOString();
   const day = date || localDay(now); // form's date drives the visit key
@@ -352,11 +356,12 @@ function addVisit(input) {
       followup,
       payment,
       fee,
+      refundTier,
       token,
       day,
       date: day,
-      createdAt: nowIso,
-      updatedAt: nowIso,
+      createdAt: createdAt || nowIso,
+      updatedAt: updatedAt || createdAt || nowIso,
       personId,
     };
     const result = await _writeVisit(rec, nowIso);
@@ -364,7 +369,7 @@ function addVisit(input) {
       op: 1,
       date: day,
       token,
-      patId,
+      patId: personId,
       name,
       mob,
       age,
@@ -373,6 +378,9 @@ function addVisit(input) {
       followup: rec.followup,
       payment,
       fee: rec.fee,
+      refundTier: rec.refundTier,
+      createdAt: rec.createdAt,
+      updatedAt: rec.updatedAt,
     });
     return result;
   });
@@ -418,14 +426,14 @@ async function _writeVisit(rec, nowIso) {
     if (reassignedAway) {
       await _recomputePerson(prevPersonId);
       prevPerson = await db.people.get(prevPersonId); // null if orphan-deleted
-      await _bumpPersonOnGain(personId, visitCreatedAt, nowIso);
+      await _bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso);
     } else {
-      await _touchPerson(personId, nowIso);
+      await _touchPerson(personId, rec, visitCreatedAt, nowIso);
     }
   } else {
     stored = { ...rec };
     stored.id = await db.visits.add(stored);
-    await _bumpPersonOnGain(personId, stored.createdAt || nowIso, nowIso);
+    await _bumpPersonOnGain(personId, stored, stored.createdAt || nowIso, nowIso);
     created = true;
   }
 
@@ -437,25 +445,43 @@ async function _writeVisit(rec, nowIso) {
 // reassigned TO them). `visitCreatedAt` is the newly-owned visit's own
 // createdAt, which becomes lastVisitAt if it is newer than the current one
 // (it almost always is — visits are created in order).
-async function _bumpPersonOnGain(personId, visitCreatedAt, nowIso) {
+async function _bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso) {
   const p = await db.people.get(personId);
   if (!p) return;
   p.visits = (Number.isFinite(p.visits) ? p.visits : 0) + 1;
-  if (!p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '')) {
+  const isNewest = !p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '');
+  if (isNewest) {
     p.lastVisitAt = visitCreatedAt;
+    // The projection mirrors the person's NEWEST visit's identity snapshot.
+    // Without this, restore would freeze the projection at the first visit.
+    _applyIdentity(p, rec);
   }
   p.updatedAt = nowIso;
   await db.people.put(p);
 }
 
-// O(1) touch when a person's own visit was edited in place: nothing about
-// the visit set changed, so only updatedAt moves. lastVisitAt must NOT be
-// bumped to now — it reflects when the patient actually came.
-async function _touchPerson(personId, nowIso) {
+// O(1) touch when a person's own visit was edited in place. lastVisitAt must
+// NOT be bumped to now — it reflects when the patient actually came. Identity
+// is refreshed only when the edited visit is still the person's newest.
+async function _touchPerson(personId, rec, visitCreatedAt, nowIso) {
   const p = await db.people.get(personId);
   if (!p) return;
+  const isNewest = !p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '');
+  if (isNewest) _applyIdentity(p, rec);
   p.updatedAt = nowIso;
   await db.people.put(p);
+}
+
+// Mirror a visit's identity snapshot onto the person row. `name/mob/age/
+// gender/weight` are the "latest known" values per schema; only called when
+// the source visit is the person's newest.
+function _applyIdentity(p, rec) {
+  if (!p || !rec) return;
+  p.name = String(rec.name || p.name || '').trim().toUpperCase();
+  if (rec.mob != null) p.mob = rec.mob;
+  if (rec.age != null) p.age = rec.age;
+  if (rec.gender) p.gender = rec.gender;
+  if (rec.weight != null) p.weight = rec.weight;
 }
 
 // Re-derive a person's projection from their current visits:
@@ -508,14 +534,14 @@ export function refundAmountFor(tier) {
 // '0' or null to clear. Fee is left untouched — see refundAmountFor().
 // Routes through _writeVisit so a refund change is logged the same way an
 // addVisit is (one append, one people projection touch).
-async function setVisitRefund(visitId, tier) {
+async function setVisitRefund(visitId, tier, whenIso) {
   const t = tier == null || tier === 0 || tier === '0' ? '0' : String(tier);
   if (!(t in REFUND_TIERS)) {
     const e = new Error('Unknown refund tier: ' + tier);
     e.name = 'InvalidRefundTierError';
     throw e;
   }
-  const nowIso = new Date().toISOString();
+  const nowIso = whenIso || new Date().toISOString();
   return db.transaction('rw', db.people, db.visits, async () => {
     const v = await db.visits.get(visitId);
     if (!v) throw new Error('Visit not found: ' + visitId);
@@ -537,7 +563,7 @@ async function setVisitRefund(visitId, tier) {
       personId: v.personId,
     };
     const result = await _writeVisit(rec, nowIso);
-    _emitJournal({ op: 2, date: v.day || v.date, token: v.token, refundTier: t });
+    _emitJournal({ op: 2, date: v.day || v.date, token: v.token, refundTier: t, updatedAt: nowIso });
     return result.rec;
   });
 }
@@ -552,11 +578,15 @@ async function setVisitRefund(visitId, tier) {
 // order, and a same-day edit that only touches updatedAt never re-orders the
 // list under them.
 function listPeople({ offset = 0, limit = 50 } = {}) {
-  return db.people
-    .toCollection()
-    .reverse()
-    .sortBy((p) => p.lastVisitAt || p.updatedAt || '')
-    .then((rows) => rows.slice(offset, offset + limit));
+  // Dexie's Collection.sortBy() only accepts a keyPath string/array, not a
+  // comparator — so fetch all rows and sort in JS on the derived
+  // lastVisitAt||updatedAt key.
+  return db.people.toArray().then((rows) => {
+    rows.sort((a, b) =>
+      (b.lastVisitAt || b.updatedAt || '').localeCompare(a.lastVisitAt || a.updatedAt || '')
+    );
+    return rows.slice(offset, offset + limit);
+  });
 }
 
 function countPeople() {
@@ -640,37 +670,69 @@ async function replayLog(ops) {
   const savedJournal = _journal;
   _journal = null;
   try {
-    await db.transaction('rw', db.people, db.visits, async () => {
+    // Single rw transaction for the whole replay. Nested addVisit /
+    // setVisitRefund transactions join this one, so the entire restore is one
+    // atomic commit — N transactions collapse to 1, and a failure leaves
+    // nothing half-restored.
+    return await db.transaction('rw', db.people, db.visits, async () => {
       await db.people.clear();
       await db.visits.clear();
-    });
-    let n = 0;
-    for (const op of ops) {
-      if (op.op === 2) {
-        // Refund edit: find the visit by (date, token), set the tier.
-        const visit = await db.visits
-          .where('[day+token]')
-          .equals([op.date, Number(op.token)])
-          .first();
-        if (visit) await setVisitRefund(visit.id, op.refundTier);
-      } else {
-        await addVisit({
-          name: op.name,
-          mob: op.mob,
-          age: op.age,
-          gender: op.gender,
-          weight: op.weight,
-          followup: op.followup,
-          payment: op.payment,
-          fee: op.fee,
-          token: op.token,
-          date: op.date,
-          patId: op.patId,
-        });
+      let n = 0;
+      for (const op of ops) {
+        if (op.op === 2) {
+          // Refund edit: find the visit by (date, token), set the tier.
+          const visit = await db.visits
+            .where('[day+token]')
+            .equals([op.date, Number(op.token)])
+            .first();
+          if (visit) await setVisitRefund(visit.id, op.refundTier, op.updatedAt);
+        } else if (op.patId != null) {
+          // Preserve path: the log carries the resolved personId plus the
+          // final billing fields and timestamps, so replay is a verbatim
+          // restore — no identity lookup, no billing scan, ids preserved,
+          // O(N) instead of O(N x V).
+          await addVisit({
+            name: op.name,
+            mob: op.mob,
+            age: op.age,
+            gender: op.gender,
+            weight: op.weight,
+            payment: op.payment,
+            token: op.token,
+            date: op.date,
+            patId: op.patId,
+            preserve: {
+              personId: op.patId,
+              followup: op.followup,
+              fee: op.fee,
+              refundTier: op.refundTier,
+              createdAt: op.createdAt,
+              updatedAt: op.updatedAt,
+            },
+          });
+        } else {
+          // Legacy log without resolved ids: fall back to the live path.
+          await addVisit({
+            name: op.name,
+            mob: op.mob,
+            age: op.age,
+            gender: op.gender,
+            weight: op.weight,
+            followup: op.followup,
+            payment: op.payment,
+            fee: op.fee,
+            refundTier: op.refundTier,
+            token: op.token,
+            date: op.date,
+            patId: null,
+            createdAt: op.createdAt,
+            updatedAt: op.updatedAt,
+          });
+        }
+        n++;
       }
-      n++;
-    }
-    return n;
+      return n;
+    });
   } finally {
     _journal = savedJournal;
   }
@@ -746,6 +808,8 @@ async function exportAll() {
         payment: v.payment,
         fee: v.fee,
         refundTier: v.refundTier,
+        createdAt: v.createdAt,
+        updatedAt: v.updatedAt,
       })
     );
     count++;
@@ -780,6 +844,7 @@ export const PatientDb = {
   setJournal,
   replayLog,
   REFUND_TIERS,
+  refundAmountFor,
   replaceAll,
   exportAll,
 };

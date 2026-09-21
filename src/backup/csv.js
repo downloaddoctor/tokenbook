@@ -1,8 +1,39 @@
 // Pure CSV encode/decode + backup payload parsing. No IO.
-// Format: flat CSV, one row per visit, delimiter U+2016 (‖) so ordinary
-// names never need quoting.
+// Format: flat CSV, delimiter U+2016 (‖) so ordinary names never need quoting.
+//
+// Two formats live here:
+//   LOG_COLS   — the append-only logbook: one line per write, op-tagged.
+//                Restore replays each line through addVisit / setVisitRefund.
+//   CSV_COLS   — the legacy snapshot dump. Still readable via csvToData so
+//                old backups restore; no longer written.
 
 export const CSV_DELIM = '\u2016'; // ‖
+
+// Logbook op tags. op=1 = visit add, op=2 = refund edit.
+export const OP_VISIT = 1;
+export const OP_REFUND = 2;
+
+// Log line columns. Everything needed to replay addVisit / setVisitRefund,
+// including the original timestamps so restore preserves them verbatim.
+export const LOG_COLS = [
+  'op',
+  'date',
+  'token',
+  'patId',
+  'name',
+  'mob',
+  'age',
+  'gender',
+  'weight',
+  'followup',
+  'payment',
+  'fee',
+  'refundTier',
+  'createdAt',
+  'updatedAt',
+];
+
+// Legacy snapshot columns (pre-logbook whole-file dump). Read-only now.
 export const CSV_COLS = [
   'date',
   'token',
@@ -28,8 +59,48 @@ export const CSV_COLS = [
   'prevPersonLastVisitAt',
 ];
 
-// Build one CSV line from a _writeVisit result. Used by the append-only
-// logbook writer — one line per write, no header rewrite.
+// Encode one op=1 journal entry (the INPUT addVisit was called with).
+export function visitInputToLogLine(entry) {
+  return LOG_COLS.map((k) => csvEscape(logValue(entry, k))).join(CSV_DELIM);
+}
+
+// Encode one op=2 refund edit. Only date/token/refundTier carry meaning;
+// timestamps are stamped from the entry so an edit's time survives restore.
+export function refundInputToLogLine(entry) {
+  const row = {
+    op: OP_REFUND,
+    date: entry.date,
+    token: entry.token,
+    patId: '',
+    name: '',
+    mob: '',
+    age: '',
+    gender: '',
+    weight: '',
+    followup: '',
+    payment: '',
+    fee: '',
+    refundTier: entry.refundTier != null ? entry.refundTier : '0',
+    createdAt: entry.createdAt != null ? entry.createdAt : '',
+    updatedAt: entry.updatedAt != null ? entry.updatedAt : '',
+  };
+  return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
+}
+
+function logValue(entry, key) {
+  switch (key) {
+    case 'op':
+      return entry.op != null ? entry.op : OP_VISIT;
+    case 'patId':
+      return entry.patId != null ? entry.patId : '';
+    case 'refundTier':
+      return entry.refundTier != null ? entry.refundTier : '0';
+    default:
+      return entry[key] != null ? entry[key] : '';
+  }
+}
+
+// Legacy snapshot line builder. Kept for tooling; not used by the logbook.
 export function journalResultToCsvLine(result) {
   const { rec, person, prevPerson } = result;
   const row = {
@@ -56,8 +127,9 @@ export function journalResultToCsvLine(result) {
   return CSV_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
 }
 
+// Header for the logbook (what exportAll / append writers emit).
 export function csvHeaderLine() {
-  return CSV_COLS.join(CSV_DELIM);
+  return LOG_COLS.join(CSV_DELIM);
 }
 
 function csvEscape(v) {
@@ -169,6 +241,94 @@ export function csvToData(text) {
   return { schema: 'doctor-apt-list/patients', version: 2, visits };
 }
 
+// Decode a logbook file (header + op-lines) into replay ops. Accepts the
+// current LOG_COLS header, and falls back to the legacy snapshot format so
+// old backups still restore through the same replay path.
+export function csvToLog(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
+  if (!lines.length) throw new Error('Empty backup file.');
+  const header = parseCsvLine(lines[0]);
+  const matches = (cols) => header.length === cols.length && header.every((h, i) => h === cols[i]);
+  if (matches(LOG_COLS)) return parseLogLines(header, lines);
+  // Legacy snapshot dump: convert each row into an op=1 visit.
+  return snapshotToLog(csvToData(text));
+}
+
+function parseLogLines(header, lines) {
+  const col = Object.fromEntries(header.map((h, i) => [h, i]));
+  const ops = [];
+  for (let i = 1; i < lines.length; i++) {
+    const f = parseCsvLine(lines[i]);
+    if (f.length < header.length) continue;
+    const op = Number(f[col.op]) === OP_REFUND ? OP_REFUND : OP_VISIT;
+    const token = Number(f[col.token]);
+    const date = f[col.date] || '';
+    if (op === OP_REFUND) {
+      const tier = String(f[col.refundTier] || '').trim();
+      ops.push({
+        op: OP_REFUND,
+        date,
+        token,
+        refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
+        updatedAt: col.updatedAt != null && f[col.updatedAt] ? f[col.updatedAt] : null,
+      });
+      continue;
+    }
+    const patIdRaw = f[col.patId];
+    const tier = String(f[col.refundTier] || '').trim();
+    ops.push({
+      op: OP_VISIT,
+      date,
+      token,
+      patId: patIdRaw === '' || patIdRaw == null ? null : Number(patIdRaw),
+      name: String(f[col.name] || '').trim(),
+      mob: String(f[col.mob] || '').trim(),
+      age: numOrNull(f[col.age]),
+      gender: String(f[col.gender] || '').trim(),
+      weight: numOrNull(f[col.weight]),
+      followup: f[col.followup] === '' ? null : f[col.followup] === '1' ? 1 : 0,
+      createdAt: col.createdAt != null && f[col.createdAt] ? f[col.createdAt] : null,
+      updatedAt: col.updatedAt != null && f[col.updatedAt] ? f[col.updatedAt] : null,
+      payment: f[col.payment] === '1' ? 1 : 0,
+      fee: numOrNull(f[col.fee]),
+      refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
+    });
+  }
+  return ops;
+}
+
+// Legacy snapshot -> replay ops. Preserves personId as patId so ids survive.
+function snapshotToLog(data) {
+  const ops = [];
+  for (const v of data.visits || []) {
+    ops.push({
+      op: OP_VISIT,
+      date: v.day || v.date || '',
+      token: Number(v.token),
+      patId: v.personId != null ? Number(v.personId) : null,
+      name: v.name,
+      mob: v.mob,
+      age: v.age,
+      gender: v.gender,
+      weight: v.weight,
+      followup: v.followup,
+      payment: v.payment,
+      fee: v.fee,
+    });
+    const tier = String(v.refundTier || '0').trim();
+    if (tier && tier !== '0' && ['R1', 'R2', 'R'].includes(tier)) {
+      ops.push({ op: OP_REFUND, date: v.day || v.date || '', token: Number(v.token), refundTier: tier });
+    }
+  }
+  return ops;
+}
+
+function numOrNull(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Accepts .csv (default) or legacy .json/{ payload.
 export function parseBackup(text, filename = '') {
   const t = text.trim();
@@ -177,12 +337,9 @@ export function parseBackup(text, filename = '') {
     if (!data || data.schema !== 'doctor-apt-list/patients') {
       throw new Error('Not a doctor-apt-list backup file.');
     }
-    if (Array.isArray(data.visits)) {
-      // people is ignored — replaceAll rebuilds it from visits.
-      return { version: 2, visits: data.visits };
-    }
-    if (Array.isArray(data.records)) return { version: 1, records: data.records };
+    if (Array.isArray(data.visits)) return snapshotToLog({ visits: data.visits });
+    if (Array.isArray(data.records)) return snapshotToLog({ visits: data.records });
     throw new Error('Unrecognized backup contents.');
   }
-  return csvToData(text);
+  return csvToLog(text);
 }

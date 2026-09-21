@@ -131,17 +131,26 @@ function restoreConfirm(folderName) {
       const bSeed = document.createElement('button');
       bSeed.type = 'button';
       bSeed.textContent = 'Seed';
-      bSeed.title = 'Generate ~500 patients / ~6000-12000 visits over 60 days (70-200/day)';
+      bSeed.title = 'Generate 100,000 visits over 90 days from a pool of 20,000 patients';
       bSeed.addEventListener('click', async () => {
         bSeed.disabled = true;
+        bClear.disabled = true;
+        const TOTAL = 100000;
         try {
-          const r = await seed();
-          toast(`Seeded ${r.people} patients, ${r.visits} visits.`, 'ok');
+          const r = await seed({
+            total: TOTAL,
+            onProgress: (n, t) => toast(`Seeding ${n.toLocaleString()}/${t.toLocaleString()} entries…`),
+          });
+          toast(
+            `Seeded ${r.people.toLocaleString()} patients, ${r.visits.toLocaleString()} visits in ${(r.ms / 1000).toFixed(1)}s.`,
+            'ok'
+          );
           router.activateTab(router.currentTab, true);
         } catch (e) {
           toast('Seed failed: ' + e.message, 'err');
         } finally {
           bSeed.disabled = false;
+          bClear.disabled = false;
         }
       });
       const bClear = document.createElement('button');

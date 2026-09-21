@@ -43,6 +43,13 @@ let _lastError = '';
 let _pending = [];
 // True when latest.csv needs a header line prepended (fresh file / truncate).
 let _needsHeader = false;
+// Last calendar day we flushed on. When it changes, latest.csv is compacted
+// before the day's first append so the file tracks unique visits, not events.
+// Persisted (best-effort) so a restart across midnight still triggers it.
+let _lastFlushDay = '';
+try {
+  _lastFlushDay = localStorage.getItem('aptList.lastFlushDay') || '';
+} catch {}
 
 // ---------- status line ----------
 
@@ -145,6 +152,51 @@ async function readNewestSnapshot(dir) {
   return await f.text();
 }
 
+// Compaction: fold the event log to one op=1 line per (date, token) carrying
+// the final state. Later edits (op=2 refunds, re-saves) collapse into the
+// winning op=1 line, so the file size tracks unique visits, not events.
+function compactOps(ops) {
+  const byKey = new Map();
+  for (const op of ops) {
+    const key = op.date + '|' + op.token;
+    if (op.op === OP_REFUND) {
+      const cur = byKey.get(key);
+      if (cur) cur.refundTier = op.refundTier;
+      // Orphan op=2 (no matching op=1 in this file) is dropped — the visit
+      // isn't in this file anyway.
+    } else {
+      const prev = byKey.get(key);
+      // A re-save without a refund must not clear a previously applied one.
+      const refundTier =
+        op.refundTier && op.refundTier !== '0'
+          ? op.refundTier
+          : prev && prev.refundTier
+            ? prev.refundTier
+            : '0';
+      byKey.set(key, { ...op, refundTier });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+// Rewrite latest.csv compacted, keeping the header. Best-effort: a parse or
+// write failure leaves the file as-is (append-only stays intact).
+async function compactLatest(dir) {
+  const text = await readLatest(dir);
+  if (!text) return;
+  let ops;
+  try {
+    ops = csvToLog(text);
+  } catch {
+    return;
+  }
+  const compacted = compactOps(ops);
+  const lines = [csvHeaderLine()];
+  for (const op of compacted) lines.push(visitInputToLogLine(op));
+  await writeText(dir, LATEST, lines.join('\n') + '\n');
+  _needsHeader = false;
+}
+
 function formatLogEntry(entry) {
   if (entry.op === OP_REFUND) return refundInputToLogLine(entry);
   return visitInputToLogLine(entry);
@@ -229,7 +281,14 @@ async function pickOrBackup() {
 // next flush appends one formatted line per entry to latest.csv.
 function markDirty(entry) {
   if (!_dir) return;
-  if (entry) _pending.push(entry);
+  if (entry) {
+    // Dedupe within the pending window: same op + same (date, token) is a
+    // last-write-wins update, so replace in place rather than append twice.
+    const key = entry.op + '|' + entry.date + '|' + entry.token;
+    const idx = _pending.findIndex((e) => e.op + '|' + e.date + '|' + e.token === key);
+    if (idx >= 0) _pending[idx] = entry;
+    else _pending.push(entry);
+  }
   _dirty = true;
   if (_timer) clearTimeout(_timer);
   _timer = setTimeout(() => {
@@ -259,6 +318,15 @@ async function flush() {
 
     const exists = await fileExists(_dir, LATEST);
     if (!exists) _needsHeader = true;
+
+    // Day rollover: compact once when the calendar day changes so the file
+    // stops carrying superseded events. First-ever flush just records the day.
+    const today = PatientDb.localDay();
+    try { localStorage.setItem('aptList.lastFlushDay', today); } catch {}
+    if (_lastFlushDay && _lastFlushDay !== today && exists) {
+      await compactLatest(_dir);
+    }
+    _lastFlushDay = today;
 
     let payload = '';
     if (_needsHeader) payload += csvHeaderLine() + '\n';
