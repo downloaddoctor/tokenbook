@@ -42,6 +42,14 @@ db.version(5).stores({
   people: '++id, name, mob, [name+mob], updatedAt',
   visits: '++id, mob, createdAt, day, [day+token], personId',
 });
+db.version(6).stores({
+  // v6 adds people.visits (count of that person's visits). Maintained by
+  // addVisit + rebuildPeopleFromVisits; read by visitCountsForPeople so the
+  // Patients page doesn't scan the visits store per page. No backfill — old
+  // rows read as undefined; use rebuildPeopleFromVisits() to populate.
+  people: '++id, name, mob, [name+mob], updatedAt',
+  visits: '++id, mob, createdAt, day, [day+token], personId',
+});
 
 let _openPromise = null;
 function openDb() {
@@ -228,8 +236,10 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       person.age = age;
       if (gender) person.gender = gender;
       if (weight != null) person.weight = weight;
-      person.updatedAt = nowIso;
-      person.lastVisitAt = nowIso;
+      // updatedAt / lastVisitAt / visits are set by the visit-write paths
+      // below, so a visit that is later reassigned away doesn't stamp this
+      // person with a visit they never keep.
+      if (!Number.isFinite(person.visits)) person.visits = 0;
       await db.people.put(person);
       personId = person.id;
     } else {
@@ -239,9 +249,9 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
         age,
         gender,
         weight: weight != null ? weight : undefined,
+        visits: 0,
         createdAt: nowIso,
         updatedAt: nowIso,
-        lastVisitAt: nowIso,
       });
     }
 
@@ -254,6 +264,12 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
     // ---- visit upsert on (day, token) ----
     const existing = await db.visits.where('[day+token]').equals([day, token]).first();
     if (existing) {
+      const prevPersonId = existing.personId;
+      const reassigned = prevPersonId != null && prevPersonId !== personId;
+      // Write the visit FIRST, then fix up the people counters. If the visit
+      // is being reassigned to another person, the old owner's count must
+      // drop and their lastVisitAt must be recomputed from their remaining
+      // visits (not from this one, which is moving away).
       existing.name = name;
       existing.mob = mob;
       existing.age = age;
@@ -266,6 +282,11 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       existing.personId = personId;
       existing.updatedAt = nowIso;
       await db.visits.put(existing);
+      // Recompute both sides: the old owner (may become orphan -> deleted)
+      // and the new owner. Same-person case: prevPersonId === personId, so
+      // only the single recompute runs.
+      if (reassigned) await _recomputePerson(prevPersonId);
+      await _recomputePerson(personId);
       return { rec: existing, created: false };
     }
 
@@ -286,8 +307,41 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       personId,
     };
     rec.id = await db.visits.add(rec);
+    await _recomputePerson(personId);
     return { rec, created: true };
   });
+}
+
+// Re-derive a person's projection from their current visits:
+//   visits       = count of their visits
+//   lastVisitAt  = max(createdAt) over those visits  <- "when the patient
+//                  actually came", NOT when the row was touched
+//   name/mob/age/gender/weight = snapshot of the newest visit
+//   updatedAt    = now (row-touch timestamp; used only for sort)
+// If the person has no visits left, the row is deleted (orphan).
+// Must be called AFTER any visit write that could change who owns which
+// visits, and it queries by the (already-updated) personId index.
+async function _recomputePerson(personId) {
+  const p = await db.people.get(personId);
+  if (!p) return;
+  const visits = await db.visits.where('personId').equals(personId).toArray();
+  if (!visits.length) {
+    await db.people.delete(personId);
+    return;
+  }
+  let newest = visits[0];
+  for (const v of visits) {
+    if ((v.createdAt || '') > (newest.createdAt || '')) newest = v;
+  }
+  p.visits = visits.length;
+  p.lastVisitAt = newest.createdAt || undefined;
+  p.name = String(newest.name || p.name || '').trim().toUpperCase();
+  p.mob = newest.mob != null ? newest.mob : p.mob;
+  p.age = newest.age;
+  if (newest.gender) p.gender = newest.gender;
+  if (newest.weight != null) p.weight = newest.weight;
+  p.updatedAt = new Date().toISOString();
+  await db.people.put(p);
 }
 
 function listByDay(day) {
@@ -359,13 +413,25 @@ async function searchPeopleByPrefix(q, limit = 50) {
   return out.slice(0, limit);
 }
 
-// Number of visits per person, keyed by personId. Uses the personId index;
-// one indexed read for the whole page of ids.
+// Number of visits per person, keyed by personId. Reads people.visits (v6+)
+// so this is O(ids) instead of scanning the visits store. Falls back to a
+// live count for any person whose counter is missing (pre-v6 rows).
 async function visitCountsForPeople(ids) {
   const m = new Map();
   if (!ids || !ids.length) return m;
-  const rows = await db.visits.where('personId').anyOf(ids).toArray();
-  for (const r of rows) m.set(r.personId, (m.get(r.personId) || 0) + 1);
+  const people = await db.people.bulkGet(ids);
+  const missing = [];
+  people.forEach((p, i) => {
+    if (!p) return;
+    if (Number.isFinite(p.visits)) m.set(p.id, p.visits);
+    else missing.push(p.id);
+  });
+  if (missing.length) {
+    const rows = await db.visits.where('personId').anyOf(missing).toArray();
+    for (const r of rows) m.set(r.personId, (m.get(r.personId) || 0) + 1);
+    // Ensure ids with zero visits are still present.
+    for (const id of missing) if (!m.has(id)) m.set(id, 0);
+  }
   return m;
 }
 
@@ -403,15 +469,16 @@ function countAll() {
 async function rebuildPeopleFromVisits() {
   return db.transaction('rw', db.people, db.visits, async () => {
     const all = await db.visits.toArray();
-    const groups = new Map(); // personId -> { first, last }
+    const groups = new Map(); // personId -> { first, last, count }
     for (const v of all) {
       if (v.personId == null) continue;
       const ts = v.createdAt || '';
       let g = groups.get(v.personId);
       if (!g) {
-        groups.set(v.personId, { first: v, last: v });
+        groups.set(v.personId, { first: v, last: v, count: 1 });
         continue;
       }
+      g.count++;
       if (ts < (g.first.createdAt || '')) g.first = v;
       if (ts > (g.last.createdAt || '')) g.last = v;
     }
@@ -426,7 +493,16 @@ async function rebuildPeopleFromVisits() {
       p.createdAt = g.first.createdAt || p.createdAt;
       p.updatedAt = g.last.createdAt || p.updatedAt;
       p.lastVisitAt = g.last.createdAt || p.lastVisitAt;
+      p.visits = g.count;
       await db.people.put(p);
+    }
+    // Any person with no visits left in the visits store gets counter 0.
+    const allPeople = await db.people.toArray();
+    for (const p of allPeople) {
+      if (!groups.has(p.id)) {
+        p.visits = 0;
+        await db.people.put(p);
+      }
     }
   });
 }

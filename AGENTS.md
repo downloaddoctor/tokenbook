@@ -31,12 +31,21 @@ src/ui/app.js async IIFE -> router.wire() + topbar button wiring -> PatientDb.op
 ## MODULES
 
 src/core/db.js (Dexie)
-followup auto-rule: on submit, addVisit resolves followup/fee AFTER personId is known. If the person's most recent PAID (followup falsy) visit is within 6 calendar days of this visit's day, followup is forced to 1 and fee=0. Explicit followup=0 in the form opts out. fee defaults to 300 when followup=0.I've made 20+ edits. Two final changes: update the AGENTS.md `SCHEMA` section, and sanity-check with a lint pass.
-
-⟦replace
+DB doctor-apt-list v6, two stores:
+  people: one row per unique (name, mob) identity; index name_mob unique; holds latest age/gender/weight + lastVisitAt + visits count
+  visits: one row per token; snapshot name/mob/age/gender/weight + billing (followup, payment, fee, refundTier) + personId -> people
+exports: openDb, localDay, nextTokenForDay, findOrCreatePerson, searchPeopleByMob, searchPeopleByName, addVisit, listByDay, listAll, countAll, listPeople, countPeople, getPerson, searchPeopleByPrefix, visitCountsForPeople, visitsForPerson, findVisitByDayToken, rebuildPeopleFromVisits, lastPaidVisitDaysFor, daysBetween, setVisitRefund, REFUND_TIERS, refundAmountFor, replaceAll, exportAll
+v1 -> v2 upgrade: none (app not in production; Dexie declares v2 only)
+v2 -> v3 upgrade: schema unchanged; adds people.lastVisitAt (no backfill)
+v3 -> v4 upgrade: schema unchanged; adds visits.weight/followup/payment/fee + people.weight (no backfill)
+v4 -> v5 upgrade: schema unchanged; adds visits.refundTier ('0'|'R1'|'R2'|'R', no backfill). Set post-visit from Tokens page; fee unchanged by refund
+v5 -> v6 upgrade: schema unchanged; adds people.visits (visit count per person). Maintained by _recomputePerson, called after every visit write that could change ownership (new insert, reassign-away, reassign-to, same-person update). visitCountsForPeople reads it with a per-page fallback to a visits-store scan for pre-v6 rows (undefined counter).
+people projection: _recomputePerson(personId) re-derives name/mob/age/gender/weight/visits/lastVisitAt from that person's current visits. lastVisitAt = max(createdAt), i.e. when the patient actually came, NOT when the row was touched. updatedAt = now (row-touch timestamp, sort key only). If zero visits remain, the person row is DELETED (orphan cleanup). Called after every visit write that can change ownership.
+followup auto-rule: addVisit resolves followup/fee AFTER personId is known. _resolveBilling({personId, day, followup, fee}) -> {followup, fee}. Explicit followup=0 in the form opts out; otherwise if the person's most recent PAID (followup falsy) visit is within 6 calendar days, force followup=1. fee = 0 when followup=1, else form fee or 300.
+refund: setVisitRefund(visitId, tier) is a post-visit edit; fee stays as charged, refundAmountFor(tier) derives the amount (R1=100, R2=200, R=300)
+lastVisitAt vs updatedAt: lastVisitAt = when the patient last actually visited (max visit createdAt). updatedAt = when the row was last written. A same-person edit to an old visit bumps updatedAt but does NOT change lastVisitAt.
 names are stored uppercase: db.js uppercases `name` on every write path (addVisit, findOrCreatePerson, replaceAll, CSV/legacy import). register.js uppercases on submit + on autofill. #f-name has CSS text-transform:uppercase for display. Searches uppercase the query (searchPeopleByName, searchPeopleByPrefix). mob is left as typed (digits).
-visits are the source of truth. people is a derived cache: createdAt=earliest visit, name/mob/age/gender/updatedAt/lastVisitAt=latest visit. Writes to people only from addVisit and rebuildPeopleFromVisits.
-addVisit billing resolution (after personId known): _resolveBilling({personId, day, followup, fee}) -> {followup, fee}. followup=0 in form opts out of auto; otherwise if _lastPaidVisitDaysFor(personId, day).days <= 6, force followup=1. fee = 0 when followup=1, else form fee or 300.
+visits are the source of truth. people is a derived cache: createdAt=earliest visit, name/mob/age/gender/weight/updatedAt/lastVisitAt/visits=aggregated from the visit stream. Writes to people only from addVisit and rebuildPeopleFromVisits.
 addVisit person identity resolution:
   1. patId given and found -> use it; update name/mob/age/gender/lastVisitAt
   2. no patId, (name,mob) matches -> reuse; bump lastVisitAt/updatedAt
@@ -52,9 +61,9 @@ register message uses created flag: "Saved. Token N." (new) vs "Updated. Token N
 people.updatedAt -> bumped on any person touch (currently every addVisit); kept for compat + sort
 addVisit -> appends a visit row (new token each visit) linked via personId
 src/backup/csv.js
-pure functions: visitsToCsv, csvToData, parseBackup, CSV_DELIM, CSV_COLS, LEGACY_CSV_COLS
-format: flat CSV, one row per visit; delimiter U+2016 (‖); cols date,token,name,mob,age,gender,weight,followup,payment,fee,personId,createdAt
-legacy: 8-col header (no weight/followup/payment/fee) still accepted on read; missing fields parse to null/0
+pure functions: visitsToCsv, csvToData, parseBackup, CSV_DELIM, CSV_COLS, LEGACY_V3_CSV_COLS, LEGACY_V4_CSV_COLS
+format: flat CSV, one row per visit; delimiter U+2016 (‖); cols date,token,name,mob,age,gender,weight,followup,payment,fee,refundTier,personId,createdAt
+legacy: 8-col (pre-v4) and 12-col (pre-v5) headers still accepted on read; missing fields parse to null/'0'
 src/backup/meta.js
 openMeta/metaGet/metaSet/metaDel over IDB apt-list-backup-meta (store kv)
 src/backup/backup.js
@@ -117,7 +126,7 @@ tokens row click (or Enter on the keyboard-highlighted row) -> #refund-dialog (s
 tokens keyboard nav: ArrowUp/Down move .active row, Home/End jump, Enter opens the refund dialog, Escape clears. Skipped when focus is in an input/select/textarea or when any <dialog open> is present.
 tokens day summary (#tokens-summary, .summary): "Visits: N (paid · free) · Collected ₹X · Cash ₹Y · UPI ₹Z · Refunded ₹W". Collected/Cash/UPI are net of refunds and only count paid visits; refund line only shows when > 0. Sits above the table, below the toolbar.
 patients.mount -> listPeople (paginated 50, sorted by updatedAt desc) + countPeople; empty search; searchPeopleByPrefix otherwise
-patients row -> ID, Name, Mobile, Age, Weight, Visits (visitCountsForPeople), Last visit (lastVisitAt||updatedAt)
+patients row -> ID, Name, Mobile, Age, Weight, Visits (visitCountsForPeople, reads people.visits with pre-v6 fallback), Last visit (lastVisitAt||updatedAt)
 patients row click -> history modal -> visitsForPerson(personId) -> table (date, token, age, gender, weight, followup, payment, fee, refund, time)
 patients modal close -> X button, backdrop click, or Escape
 people.updatedAt bumped by addVisit -> doubles as "last visit" for the patients list and its sort order
@@ -167,8 +176,11 @@ name:string
 mob:string
 age:number (latest known)
 gender:string M|F|O (latest known; '' if unknown)
+weight:number|null (latest known, kg)
+visits:number (count of that person's visits; v6+; undefined = pre-v6)
+lastVisitAt:string ISO (max createdAt of this person's visits — when they actually came, not when the row was written)
 createdAt:string ISO
-updatedAt:string ISO
+updatedAt:string ISO (row-touch time, sort key only)
 visits record:
 id:number (auto)
 name/mob/age/gender: snapshot at issue time (historical)
@@ -183,13 +195,13 @@ createdAt:string ISO (first save)
 updatedAt:string ISO (last save; = createdAt on insert)
 personId:number -> people.id
 
+refundTier:string '0'|'R1'|'R2'|'R' (0 = no refund; R1/R2/R = refund tiers, amount derived by refundAmountFor())
+createdAt:string ISO (first save)
+updatedAt:string ISO (last save; = createdAt on insert)
+personId:number -> people.id
+
 CSV format: 13 columns (date|token|name|mob|age|gender|weight|followup|payment|fee|refundTier|personId|createdAt). Legacy 8-col (pre-v4) and 12-col (pre-v5) headers are still accepted on read.
-unique index day_token=[day,token] on visits; unique index name_mob=[name,mob] on people
-
-## KNOWN-INVARIANTS
-
-followup rule anchored on the person's most recent PAID (followup=0) visit, not the most recent visit — repeats stay free inside the 6-day calendar window
-fee is authoritative on the visit row (server-resolved); register only reflects the resolved value back into the form
+unique index day_token=[day,token] on visits; unique index name_mob=[name,mob] on people.
 
 ## ENV
 
@@ -209,11 +221,15 @@ browser APIs: ES modules, IndexedDB, File System Access API (optional), Blob/URL
 
 ## KNOWN-INVARIANTS
 
+followup rule anchored on the person's most recent PAID (followup=0) visit, not the most recent visit — repeats stay free inside the 6-day calendar window
+fee is authoritative on the visit row (server-resolved); register only reflects the resolved value back into the form
+refund is a post-visit edit on the ORIGINAL paid visit (visits.refundTier); fee is never modified — net = fee - refundAmountFor(tier)
+people.visits is authoritative for the Patients list count; if it is undefined (pre-v6 row) visitCountsForPeople falls back to a scan of that page only
 single PC, single browser profile (IndexedDB is per-origin per-profile)
 token uniqueness enforced by unique index day_token; on ConstraintError app retries once
 person uniqueness enforced by unique index name_mob; addVisit reuses existing person -> one identity per (name, mob), many visits/tokens
 people.id is the stable patient id (surfaced as ID in Patients, editable via Pat ID on Register); visits link back via personId
-people.updatedAt is bumped on every addVisit; people.lastVisitAt set only by addVisit (pre-v3 rows undefined)
+people.updatedAt = row-touch time (sort key). people.lastVisitAt = max(createdAt) over the person's visits (recomputed by _recomputePerson after every visit write). people.visits = count of the person's visits from the same walk. Orphan people (0 visits) are deleted on recompute.
 Patients "Last visit" column shows lastVisitAt (falls back to updatedAt); list sorts by updatedAt desc
 addVisit identity: patId > (name,mob) match > create; rename to an existing other person's (name,mob) throws DuplicateIdentityError (register shows it, aborts save)
 Patients page = people registry (one row per person); Tokens page = per-visit log for a day

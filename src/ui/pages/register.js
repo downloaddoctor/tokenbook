@@ -440,6 +440,78 @@ function askIdentityChange(person, current) {
   });
 }
 
+// Variant prompt: the form's identity matches an EXISTING patient (not the
+// currently linked one). "Update" would collide, so only offer Reassign or
+// Cancel. Reuses the same dialog element; falls back to 'reassign' if the
+// markup is missing so behavior degrades gracefully.
+function askReassign(linked, other, current) {
+  return new Promise((resolve) => {
+    const dlg = document.getElementById('pat-id-confirm');
+    const title = document.getElementById('pat-id-confirm-title');
+    const sub = document.getElementById('pat-id-confirm-sub');
+    const body = document.getElementById('pat-id-confirm-body');
+    const actions = document.getElementById('pat-id-confirm-actions');
+    if (!dlg || !sub || !body || !actions) return resolve('reassign');
+    if (title) title.textContent = 'Reassign to existing patient?';
+    // Replace action buttons for this variant: Cancel + Reassign.
+    actions.replaceChildren();
+    const cancel = document.createElement('button');
+    cancel.type = 'submit';
+    cancel.value = 'cancel';
+    cancel.textContent = 'Cancel';
+    const ok = document.createElement('button');
+    ok.type = 'submit';
+    ok.value = 'reassign';
+    ok.className = 'primary';
+    ok.textContent = 'Reassign';
+    actions.append(cancel, ok);
+    sub.textContent = `Currently linked to patient #${linked.id}. A different patient already has this name + mobile.`;
+    body.replaceChildren();
+    const dl = document.createElement('dl');
+    const row = (label, from, to) => {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      const f = from == null || from === '' ? '—' : String(from);
+      const t = to == null || to === '' ? '—' : String(to);
+      dd.textContent = f === t ? f : `${f} → ${t}`;
+      dl.append(dt, dd);
+    };
+    row('Linked', `#${linked.id} ${linked.name}`, '');
+    row('Reassign to', `#${other.id} ${other.name}`, '');
+    row('Mobile', other.mob, '');
+    body.appendChild(dl);
+    const restore = () => {
+      if (title) title.textContent = 'Update patient?';
+      actions.replaceChildren();
+      const c = document.createElement('button');
+      c.type = 'submit';
+      c.value = 'cancel';
+      c.textContent = 'Cancel';
+      const n = document.createElement('button');
+      n.type = 'submit';
+      n.value = 'new';
+      n.textContent = 'Use as new patient';
+      const u = document.createElement('button');
+      u.type = 'submit';
+      u.value = 'update';
+      u.className = 'primary';
+      u.textContent = 'Update patient';
+      actions.append(c, n, u);
+    };
+    const onClose = () => {
+      dlg.removeEventListener('close', onClose);
+      const v = dlg.returnValue;
+      restore();
+      if (v === 'reassign') resolve('reassign');
+      else resolve('cancel');
+    };
+    dlg.returnValue = '';
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+  });
+}
+
 // Worker for onSubmit. The guard/disable lives on onSubmit — do not
 // re-check `submitting` here, or the outer call would make this a no-op.
 async function submitBill() {
@@ -483,9 +555,20 @@ async function submitBill() {
   if (patId) {
     const p = await PatientDb.getPerson(patId);
     if (p && (p.name !== name || p.mob !== mob)) {
-      const choice = await askIdentityChange(p, { name, mob, age, gender });
-      if (choice === 'cancel') return;
-      if (choice === 'new') patId = null;
+      // If the new (name, mob) belongs to a DIFFERENT existing patient, then
+      // "Update" (rename A to the new identity) would collide. Only offer
+      // "Use as new" (reassign the visit to that patient) or Cancel.
+      const clash = await PatientDb.searchPeopleByPrefix(name, 200);
+      const other = clash.find((x) => x.name === name && x.mob === mob && x.id !== patId);
+      if (other) {
+        const choice = await askReassign(p, other, { name, mob, age, gender });
+        if (choice === 'cancel') return;
+        patId = null; // reassign to `other` via the (name, mob) match
+      } else {
+        const choice = await askIdentityChange(p, { name, mob, age, gender });
+        if (choice === 'cancel') return;
+        if (choice === 'new') patId = null;
+      }
     }
   }
 
