@@ -18,32 +18,7 @@ import { csvHeaderLine, visitInputToLogLine } from '../backup/csv.js';
 const DB_NAME = 'doctor-apt-list';
 
 const db = new Dexie(DB_NAME);
-db.version(2).stores({
-  people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, day, [day+token], personId',
-});
-db.version(3).stores({
-  // Schema is identical to v2; v3 only adds the lastVisitAt field. No index
-  // change, no backfill — existing rows keep lastVisitAt undefined until their
-  // next visit.
-  people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, day, [day+token], personId',
-});
-db.version(4).stores({
-  // v4 adds billing fields on visits (weight, followup, payment, fee) and
-  // people.weight. No new indexes, no backfill — old rows keep these
-  // undefined until the next visit.
-  people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, day, [day+token], personId',
-});
-db.version(5).stores({
-  // v5 adds visits.refundTier ('0'|'R1'|'R2'|'R'). Post-visit edit set from
-  // the Tokens page; fee stays as originally charged. No backfill — old
-  // rows read as undefined (= no refund).
-  people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, day, [day+token], personId',
-});
-db.version(6).stores({
+db.version(1).stores({
   // v6 adds people.visits (count of that person's visits). Maintained
   // incrementally by _writeVisit; read by visitCountsForPeople so the
   // Patients page doesn't scan the visits store per page. No backfill —
@@ -230,10 +205,13 @@ function _emitJournal(entry) {
 function addVisit(input) {
   const { preserve } = input;
   let { name, mob, age, gender, token, date, patId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
-  name = String(name).trim().toUpperCase();
-  mob = String(mob).trim();
-  age = Number(age);
-  gender = gender == null ? '' : String(gender).trim();
+  // Normalize: blank/missing becomes null (so it never coerces to 0 or ''),
+  // real values are trimmed/typed. Both the live and restore paths supply
+  // full values; the null branch is defensive.
+  name = name == null ? null : String(name).trim().toUpperCase();
+  mob = mob == null ? null : String(mob).trim();
+  age = age == null || age === '' ? null : Number(age);
+  gender = gender == null ? null : String(gender).trim();
   token = Number(token);
   weight = weight == null || weight === '' ? null : Number(weight);
   if (weight != null && !Number.isFinite(weight)) weight = null;
@@ -304,7 +282,6 @@ function addVisit(input) {
     if (!person) {
       person = await db.people.where('[name+mob]').equals([name, mob]).first();
     }
-
     if (person) {
       // Guard: if the identity is changing, no other person may already hold
       // the target (name, mob) — the unique index would reject the put, but

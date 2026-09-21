@@ -1,20 +1,28 @@
 // Pure CSV encode/decode + backup payload parsing. No IO.
-// Format: flat CSV, delimiter U+2016 (‖) so ordinary names never need quoting.
+// Format: flat CSV, 1-byte delimiter '|' so the log stays small and
+// greppable. csvEscape quotes any value that happens to contain the
+// delimiter (names/mobs never do in practice, so no quoting in the common
+// case).
 //
 // Two formats live here:
 //   LOG_COLS   — the append-only logbook: one line per write, op-tagged.
 //                Restore replays each line through addVisit / setVisitRefund.
+//                Every op=1 line is SELF-DESCRIBING (full identity), so a
+//                line never depends on earlier lines.
 //   CSV_COLS   — the legacy snapshot dump. Still readable via csvToData so
 //                old backups restore; no longer written.
+//
+// Space choices (all reversible at this file boundary):
+//   * delimiter is 1 byte, not U+2016 (3 bytes)
+//   * timestamps are epoch-seconds, not 24-char ISO strings
 
-export const CSV_DELIM = '\u2016'; // ‖
+export const CSV_DELIM = '|'; // 1 byte
 
 // Logbook op tags. op=1 = visit add, op=2 = refund edit.
 export const OP_VISIT = 1;
 export const OP_REFUND = 2;
 
-// Log line columns. Everything needed to replay addVisit / setVisitRefund,
-// including the original timestamps so restore preserves them verbatim.
+// Log line columns. Full rows — every op=1 line carries the complete visit.
 export const LOG_COLS = [
   'op',
   'date',
@@ -32,6 +40,20 @@ export const LOG_COLS = [
   'createdAt',
   'updatedAt',
 ];
+
+// ISO <-> epoch-SECONDS at the file boundary. The DB keeps ISO strings; only
+// the log file uses seconds.
+export function toEpoch(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'number') return Math.floor(v / 1000);
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.floor(t / 1000) : '';
+}
+export function fromEpoch(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? new Date(n * 1000).toISOString() : null;
+}
 
 // Legacy snapshot columns (pre-logbook whole-file dump). Read-only now.
 export const CSV_COLS = [
@@ -59,13 +81,29 @@ export const CSV_COLS = [
   'prevPersonLastVisitAt',
 ];
 
-// Encode one op=1 journal entry (the INPUT addVisit was called with).
+// Encode one op=1 journal entry. Full self-describing row.
 export function visitInputToLogLine(entry) {
-  return LOG_COLS.map((k) => csvEscape(logValue(entry, k))).join(CSV_DELIM);
+  const row = {
+    op: entry.op != null ? entry.op : OP_VISIT,
+    date: entry.date != null ? entry.date : '',
+    token: entry.token != null ? entry.token : '',
+    patId: entry.patId != null ? entry.patId : '',
+    name: entry.name != null ? entry.name : '',
+    mob: entry.mob != null ? entry.mob : '',
+    age: entry.age != null ? entry.age : '',
+    gender: entry.gender != null ? entry.gender : '',
+    weight: entry.weight != null ? entry.weight : '',
+    followup: entry.followup != null ? entry.followup : '',
+    payment: entry.payment != null ? entry.payment : '',
+    fee: entry.fee != null ? entry.fee : '',
+    refundTier: entry.refundTier != null ? entry.refundTier : '0',
+    createdAt: toEpoch(entry.createdAt),
+    updatedAt: toEpoch(entry.updatedAt),
+  };
+  return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
 }
 
-// Encode one op=2 refund edit. Only date/token/refundTier carry meaning;
-// timestamps are stamped from the entry so an edit's time survives restore.
+// Encode one op=2 refund edit. Only date/token/refundTier carry meaning.
 export function refundInputToLogLine(entry) {
   const row = {
     op: OP_REFUND,
@@ -81,23 +119,10 @@ export function refundInputToLogLine(entry) {
     payment: '',
     fee: '',
     refundTier: entry.refundTier != null ? entry.refundTier : '0',
-    createdAt: entry.createdAt != null ? entry.createdAt : '',
-    updatedAt: entry.updatedAt != null ? entry.updatedAt : '',
+    createdAt: toEpoch(entry.createdAt),
+    updatedAt: toEpoch(entry.updatedAt),
   };
   return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
-}
-
-function logValue(entry, key) {
-  switch (key) {
-    case 'op':
-      return entry.op != null ? entry.op : OP_VISIT;
-    case 'patId':
-      return entry.patId != null ? entry.patId : '';
-    case 'refundTier':
-      return entry.refundTier != null ? entry.refundTier : '0';
-    default:
-      return entry[key] != null ? entry[key] : '';
-  }
 }
 
 // Legacy snapshot line builder. Kept for tooling; not used by the logbook.
@@ -139,10 +164,6 @@ function csvEscape(v) {
   }
   return s;
 }
-
-// Removed — the logbook writes one line per write, not whole-file dumps.
-// Kept as a stub in case something still imports it during the transition.
-export const visitsToCsv = null;
 
 function parseCsvLine(line) {
   const out = [];
@@ -256,6 +277,7 @@ export function csvToLog(text) {
 
 function parseLogLines(header, lines) {
   const col = Object.fromEntries(header.map((h, i) => [h, i]));
+  const has = (k) => col[k] != null;
   const ops = [];
   for (let i = 1; i < lines.length; i++) {
     const f = parseCsvLine(lines[i]);
@@ -270,7 +292,7 @@ function parseLogLines(header, lines) {
         date,
         token,
         refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
-        updatedAt: col.updatedAt != null && f[col.updatedAt] ? f[col.updatedAt] : null,
+        updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
       });
       continue;
     }
@@ -287,8 +309,8 @@ function parseLogLines(header, lines) {
       gender: String(f[col.gender] || '').trim(),
       weight: numOrNull(f[col.weight]),
       followup: f[col.followup] === '' ? null : f[col.followup] === '1' ? 1 : 0,
-      createdAt: col.createdAt != null && f[col.createdAt] ? f[col.createdAt] : null,
-      updatedAt: col.updatedAt != null && f[col.updatedAt] ? f[col.updatedAt] : null,
+      createdAt: fromEpoch(has('createdAt') ? f[col.createdAt] : ''),
+      updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
       payment: f[col.payment] === '1' ? 1 : 0,
       fee: numOrNull(f[col.fee]),
       refundTier: ['0', 'R1', 'R2', 'R'].includes(tier) ? tier : '0',
