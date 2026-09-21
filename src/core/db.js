@@ -262,14 +262,18 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
     fee = billing.fee;
 
     // ---- visit upsert on (day, token) ----
+    // The people projection (visits count, lastVisitAt, updatedAt) is
+    // maintained INCREMENTALLY here. Only the reassign-away branch needs to
+    // scan the old owner's visits — every other case is O(1).
     const existing = await db.visits.where('[day+token]').equals([day, token]).first();
     if (existing) {
       const prevPersonId = existing.personId;
-      const reassigned = prevPersonId != null && prevPersonId !== personId;
-      // Write the visit FIRST, then fix up the people counters. If the visit
-      // is being reassigned to another person, the old owner's count must
-      // drop and their lastVisitAt must be recomputed from their remaining
-      // visits (not from this one, which is moving away).
+      const reassignedAway = prevPersonId != null && prevPersonId !== personId;
+
+      // Snapshot the visit's own createdAt before overwriting (used below to
+      // stamp the new owner's lastVisitAt when this visit moves people).
+      const visitCreatedAt = existing.createdAt || nowIso;
+
       existing.name = name;
       existing.mob = mob;
       existing.age = age;
@@ -282,11 +286,17 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       existing.personId = personId;
       existing.updatedAt = nowIso;
       await db.visits.put(existing);
-      // Recompute both sides: the old owner (may become orphan -> deleted)
-      // and the new owner. Same-person case: prevPersonId === personId, so
-      // only the single recompute runs.
-      if (reassigned) await _recomputePerson(prevPersonId);
-      await _recomputePerson(personId);
+
+      if (reassignedAway) {
+        // Old owner loses this visit: rescan only them (may become orphan).
+        await _recomputePerson(prevPersonId);
+        // New owner gains this visit: O(1) bump with this visit's createdAt.
+        await _bumpPersonOnGain(personId, visitCreatedAt, nowIso);
+      } else {
+        // Same-person edit: nothing about the set changed. Bump updatedAt
+        // only; lastVisitAt stays at the visit's createdAt.
+        await _touchPerson(personId, nowIso);
+      }
       return { rec: existing, created: false };
     }
 
@@ -307,9 +317,35 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       personId,
     };
     rec.id = await db.visits.add(rec);
-    await _recomputePerson(personId);
+    // Brand-new visit: O(1) bump with the new visit's createdAt (= now).
+    await _bumpPersonOnGain(personId, nowIso, nowIso);
     return { rec, created: true };
   });
+}
+
+// O(1) field bump when a person GAINS a visit (new visit, or a visit was
+// reassigned TO them). `visitCreatedAt` is the newly-owned visit's own
+// createdAt, which becomes lastVisitAt if it is newer than the current one
+// (it almost always is — visits are created in order).
+async function _bumpPersonOnGain(personId, visitCreatedAt, nowIso) {
+  const p = await db.people.get(personId);
+  if (!p) return;
+  p.visits = (Number.isFinite(p.visits) ? p.visits : 0) + 1;
+  if (!p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '')) {
+    p.lastVisitAt = visitCreatedAt;
+  }
+  p.updatedAt = nowIso;
+  await db.people.put(p);
+}
+
+// O(1) touch when a person's own visit was edited in place: nothing about
+// the visit set changed, so only updatedAt moves. lastVisitAt must NOT be
+// bumped to now — it reflects when the patient actually came.
+async function _touchPerson(personId, nowIso) {
+  const p = await db.people.get(personId);
+  if (!p) return;
+  p.updatedAt = nowIso;
+  await db.people.put(p);
 }
 
 // Re-derive a person's projection from their current visits:

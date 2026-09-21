@@ -39,8 +39,14 @@ v1 -> v2 upgrade: none (app not in production; Dexie declares v2 only)
 v2 -> v3 upgrade: schema unchanged; adds people.lastVisitAt (no backfill)
 v3 -> v4 upgrade: schema unchanged; adds visits.weight/followup/payment/fee + people.weight (no backfill)
 v4 -> v5 upgrade: schema unchanged; adds visits.refundTier ('0'|'R1'|'R2'|'R', no backfill). Set post-visit from Tokens page; fee unchanged by refund
-v5 -> v6 upgrade: schema unchanged; adds people.visits (visit count per person). Maintained by _recomputePerson, called after every visit write that could change ownership (new insert, reassign-away, reassign-to, same-person update). visitCountsForPeople reads it with a per-page fallback to a visits-store scan for pre-v6 rows (undefined counter).
-people projection: _recomputePerson(personId) re-derives name/mob/age/gender/weight/visits/lastVisitAt from that person's current visits. lastVisitAt = max(createdAt), i.e. when the patient actually came, NOT when the row was touched. updatedAt = now (row-touch timestamp, sort key only). If zero visits remain, the person row is DELETED (orphan cleanup). Called after every visit write that can change ownership.
+v5 -> v6 upgrade: schema unchanged; adds people.visits (visit count per person). Maintained incrementally on addVisit. visitCountsForPeople reads it with a per-page fallback to a visits-store scan for pre-v6 rows (undefined counter).
+people projection maintenance (addVisit, incremental):
+  new visit        -> _bumpPersonOnGain(personId, nowIso, nowIso)   O(1) — visits++, lastVisitAt = max(cur, new), updatedAt = now
+  same-person edit -> _touchPerson(personId, nowIso)                O(1) — updatedAt only; lastVisitAt unchanged
+  reassign-to      -> _bumpPersonOnGain(personId, visit.createdAt, nowIso)  O(1)
+  reassign-away    -> _recomputePerson(prevPersonId)                O(V_old) — the only scan path
+_recomputePerson(personId): re-derives name/mob/age/gender/weight/visits/lastVisitAt from that person's current visits; DELETEs the row if zero remain (orphan cleanup).
+lastVisitAt = max(createdAt) over that person's visits (when the patient actually came); updatedAt = row-touch timestamp (sort key only).
 followup auto-rule: addVisit resolves followup/fee AFTER personId is known. _resolveBilling({personId, day, followup, fee}) -> {followup, fee}. Explicit followup=0 in the form opts out; otherwise if the person's most recent PAID (followup falsy) visit is within 6 calendar days, force followup=1. fee = 0 when followup=1, else form fee or 300.
 refund: setVisitRefund(visitId, tier) is a post-visit edit; fee stays as charged, refundAmountFor(tier) derives the amount (R1=100, R2=200, R=300)
 lastVisitAt vs updatedAt: lastVisitAt = when the patient last actually visited (max visit createdAt). updatedAt = when the row was last written. A same-person edit to an old visit bumps updatedAt but does NOT change lastVisitAt.
@@ -229,7 +235,7 @@ single PC, single browser profile (IndexedDB is per-origin per-profile)
 token uniqueness enforced by unique index day_token; on ConstraintError app retries once
 person uniqueness enforced by unique index name_mob; addVisit reuses existing person -> one identity per (name, mob), many visits/tokens
 people.id is the stable patient id (surfaced as ID in Patients, editable via Pat ID on Register); visits link back via personId
-people.updatedAt = row-touch time (sort key). people.lastVisitAt = max(createdAt) over the person's visits (recomputed by _recomputePerson after every visit write). people.visits = count of the person's visits from the same walk. Orphan people (0 visits) are deleted on recompute.
+people.updatedAt = row-touch time (sort key). people.lastVisitAt = max(createdAt) over the person's visits (when the patient actually came). people.visits = count of the person's visits. Both maintained incrementally by _bumpPersonOnGain / _touchPerson; only reassign-away triggers a full _recomputePerson (which also deletes the row if zero visits remain).
 Patients "Last visit" column shows lastVisitAt (falls back to updatedAt); list sorts by updatedAt desc
 addVisit identity: patId > (name,mob) match > create; rename to an existing other person's (name,mob) throws DuplicateIdentityError (register shows it, aborts save)
 Patients page = people registry (one row per person); Tokens page = per-visit log for a day
