@@ -1,14 +1,25 @@
 // Backup / restore to a user-chosen folder (typically a pendrive) via the
-// File System Access API. No JSON. Flat CSV, one row per visit, delimiter
-// U+2016 (‖) so ordinary names never need quoting.
+// File System Access API.
 //
-// Cadence: callers mark the backup dirty after any DB change
-// (PatientBackup.markDirty). Writes are debounced DEBOUNCE_MS and also
-// flushed on visibilitychange -> hidden. A failed write never blocks the
-// caller — it just updates the status line.
+// Logbook model: every write appends ONE line to apt-list-latest.csv. No
+// rewriting. A header is written once, when the file is first created.
+// At the first write of each day, the whole latest.csv is copied to
+// apt-list-YYYY-MM-DD.csv (self-contained daily snapshot); snapshots are
+// pruned to the newest KEEP_SNAPSHOTS.
+//
+// Restore reads every line of the log in file order and replays it through
+// PatientDb.replayLog — the same functions that produced the log — so the
+// restored DB is byte-identical to what the live DB would have been.
 
 import { PatientDb } from '../core/db.js';
-import { visitsToCsv, parseBackup } from './csv.js';
+import {
+  csvHeaderLine,
+  visitInputToLogLine,
+  refundInputToLogLine,
+  csvToLog,
+  parseBackup,
+  OP_REFUND,
+} from './csv.js';
 import { metaGet, metaSet, metaDel } from './meta.js';
 
 const LATEST = 'apt-list-latest.csv';
@@ -27,6 +38,11 @@ let _timer = null;
 let _writing = false;
 let _lastAt = '';
 let _lastError = '';
+// Pending journal entries (raw inputs from addVisit / setVisitRefund).
+// Drained by flush() in order and appended to latest.csv.
+let _pending = [];
+// True when latest.csv needs a header line prepended (fresh file / truncate).
+let _needsHeader = false;
 
 // ---------- status line ----------
 
@@ -84,6 +100,16 @@ async function writeText(dir, name, text) {
   await w.close();
 }
 
+// Append text to a file (creating it if needed) without rewriting its body.
+async function appendText(dir, name, text) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const file = await fh.getFile();
+  const w = await fh.createWritable({ keepExistingData: true });
+  await w.seek(file.size);
+  await w.write(text);
+  await w.close();
+}
+
 async function pruneSnapshots(dir) {
   const snaps = [];
   for await (const [name, handle] of dir.entries()) {
@@ -119,6 +145,11 @@ async function readNewestSnapshot(dir) {
   return await f.text();
 }
 
+function formatLogEntry(entry) {
+  if (entry.op === OP_REFUND) return refundInputToLogLine(entry);
+  return visitInputToLogLine(entry);
+}
+
 // ---------- public ops ----------
 
 async function loadPersistedHandle() {
@@ -131,6 +162,9 @@ async function loadPersistedHandle() {
 }
 
 async function init() {
+  // Wire db.js's journal into this module. Every successful addVisit /
+  // setVisitRefund now queues a log line here.
+  PatientDb.setJournal(markDirty);
   updateStatus();
   if (!hasFsAccess) return { ok: false, reason: 'unsupported' };
   const h = await loadPersistedHandle();
@@ -155,6 +189,7 @@ async function setFolder() {
   const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'apt-list-backup' });
   _dir = h;
   _lastError = '';
+  _needsHeader = true;
   await metaSet(HANDLE_KEY, h);
   _dirty = true;
   await flush();
@@ -176,6 +211,7 @@ async function clearFolder() {
   _dir = null;
   _lastAt = '';
   _lastError = '';
+  _pending = [];
   updateStatus();
 }
 
@@ -188,8 +224,12 @@ async function pickOrBackup() {
   return { folderName: _dir.name || '', lastAt: _lastAt };
 }
 
-function markDirty() {
+// Journal entry point. db.js calls this via PatientDb.setJournal() at boot.
+// Each successful addVisit / setVisitRefund queues its raw input here; the
+// next flush appends one formatted line per entry to latest.csv.
+function markDirty(entry) {
   if (!_dir) return;
+  if (entry) _pending.push(entry);
   _dirty = true;
   if (_timer) clearTimeout(_timer);
   _timer = setTimeout(() => {
@@ -198,9 +238,12 @@ function markDirty() {
   }, DEBOUNCE_MS);
 }
 
+// Append any queued log lines to latest.csv. Never rewrites the body — the
+// log is append-only by design. A header is emitted once, when latest.csv is
+// first created (or recreated after a truncate).
 async function flush() {
   if (!_dir || _writing) return;
-  if (!_dirty) return;
+  if (!_dirty && !_pending.length) return;
   _writing = true;
   try {
     const perm = await _dir.queryPermission({ mode: 'readwrite' });
@@ -209,13 +252,32 @@ async function flush() {
       updateStatus();
       return;
     }
-    const data = await PatientDb.exportAll();
-    const text = visitsToCsv(data.visits || []);
-    await writeText(_dir, LATEST, text);
+    if (!_pending.length) {
+      _dirty = false;
+      return;
+    }
+
+    const exists = await fileExists(_dir, LATEST);
+    if (!exists) _needsHeader = true;
+
+    let payload = '';
+    if (_needsHeader) payload += csvHeaderLine() + '\n';
+    for (const entry of _pending) payload += formatLogEntry(entry) + '\n';
+
+    await appendText(_dir, LATEST, payload);
+    _needsHeader = false;
+    _pending = [];
+
+    // First write of the day: snapshot the whole log into a dated file so
+    // each day has a self-contained copy. Later appends only touch latest.
     const day = PatientDb.localDay();
     const snap = `apt-list-${day}.csv`;
-    if (!(await fileExists(_dir, snap))) await writeText(_dir, snap, text);
-    await pruneSnapshots(_dir);
+    if (!(await fileExists(_dir, snap))) {
+      const full = await readLatest(_dir);
+      if (full != null) await writeText(_dir, snap, full);
+      await pruneSnapshots(_dir);
+    }
+
     _dirty = false;
     _lastAt = new Date().toISOString();
     _lastError = '';
@@ -250,32 +312,30 @@ async function restoreFromFolder() {
     source = 'snapshot';
     if (!text) throw new Error('No backup files in that folder.');
   }
-  let data;
+  let ops;
   try {
-    data = parseBackup(text, LATEST);
+    ops = csvToLog(text);
   } catch (e) {
     const snap = await readNewestSnapshot(_dir);
     if (!snap) throw e;
-    data = parseBackup(snap, LATEST);
+    ops = csvToLog(snap);
     source = 'snapshot';
   }
-  const n = await PatientDb.replaceAll(data);
+  const n = await PatientDb.replayLog(ops);
   return { source, count: n, folderName: _dir.name || '' };
 }
 
 async function restoreFromFileObject(file) {
   const text = await file.text();
-  const data = parseBackup(text, file.name);
-  const n = await PatientDb.replaceAll(data);
+  const ops = parseBackup(text, file.name);
+  const n = await PatientDb.replayLog(ops);
   return { mode: 'upload', filename: file.name, count: n };
 }
 
 // Fallback export: when File System Access is unavailable or the user cancels
-// the folder picker, download the CSV directly. Filename is date-stamped so
-// repeated clicks don't collide in the Downloads folder.
+// the folder picker, download the whole current DB as a fresh log CSV.
 async function downloadCsv() {
   const data = await PatientDb.exportAll();
-  const text = visitsToCsv(data.visits || []);
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp =
@@ -287,7 +347,7 @@ async function downloadCsv() {
     '-' +
     pad(now.getSeconds());
   const filename = `clinic-register-${stamp}.csv`;
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([data.text], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -295,9 +355,8 @@ async function downloadCsv() {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  // Give the browser a tick to start the download before revoking.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return { filename, count: (data.visits || []).length };
+  return { filename, count: data.count || 0 };
 }
 
 // ---------- lifecycle ----------

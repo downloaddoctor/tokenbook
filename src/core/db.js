@@ -13,6 +13,7 @@
 
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
+import { csvHeaderLine, visitInputToLogLine } from '../backup/csv.js';
 
 const DB_NAME = 'doctor-apt-list';
 
@@ -43,14 +44,15 @@ db.version(5).stores({
   visits: '++id, mob, createdAt, day, [day+token], personId',
 });
 db.version(6).stores({
-  // v6 adds people.visits (count of that person's visits). Maintained by
-  // addVisit + rebuildPeopleFromVisits; read by visitCountsForPeople so the
-  // Patients page doesn't scan the visits store per page. No backfill — old
-  // rows read as undefined; use rebuildPeopleFromVisits() to populate.
+  // v6 adds people.visits (count of that person's visits). Maintained
+  // incrementally by _writeVisit; read by visitCountsForPeople so the
+  // Patients page doesn't scan the visits store per page. No backfill —
+  // old rows read as undefined and fall back to a per-page visit scan.
   people: '++id, name, mob, [name+mob], updatedAt',
   visits: '++id, mob, createdAt, day, [day+token], personId',
 });
 
+// Shared open promise so concurrent callers get the same connection handle.
 let _openPromise = null;
 function openDb() {
   if (!_openPromise) _openPromise = db.open();
@@ -193,7 +195,41 @@ async function _resolveBilling({ personId, day, followup, fee }) {
   return { followup: fu, fee: outFee, anchoredOn };
 }
 
-function addVisit({ name, mob, age, gender, token, date, patId, weight, followup, payment, fee }) {
+// Journal hook: backup.js registers a callback at boot. Every successful
+// addVisit / setVisitRefund emits the INPUT it was called with (not the
+// derived output), so restoring from the log replays through the same code
+// path and re-derives identically. Keeps db.js free of any dependency on
+// the backup module (no import cycle).
+let _journal = null;
+function setJournal(fn) {
+  _journal = typeof fn === 'function' ? fn : null;
+}
+function _emitJournal(entry) {
+  if (!_journal) return;
+  try {
+    _journal(entry);
+  } catch (e) {
+    console.error('journal', e);
+  }
+}
+
+// The ONLY public write entry point. Two modes:
+//
+//   live save (default): the form gives (name, mob, patId?, weight, followup,
+//     payment, fee). addVisit resolves which person this visit belongs to and
+//     derives followup/fee from the person's prior paid-visit history.
+//
+//   restore (input.preserve set): every derived field is taken verbatim from
+//     the backup row — personId, followup, fee, refundTier, createdAt,
+//     updatedAt. No identity lookup, no billing scan. A person row is seeded
+//     on first sight of each preserve.personId so _writeVisit's projection
+//     helpers find it.
+//
+// Both modes funnel into _writeVisit — the single place that touches visits +
+// the people projection. Save and restore cannot diverge.
+function addVisit(input) {
+  const { preserve } = input;
+  let { name, mob, age, gender, token, date, patId, weight, followup, payment, fee } = input;
   name = String(name).trim().toUpperCase();
   mob = String(mob).trim();
   age = Number(age);
@@ -201,16 +237,63 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
   token = Number(token);
   weight = weight == null || weight === '' ? null : Number(weight);
   if (weight != null && !Number.isFinite(weight)) weight = null;
-  payment = payment === 0 || payment === 1 ? payment : 0;
-  followup = followup === 0 || followup === 1 ? followup : null;
+  payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
+  followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
   const now = new Date();
   const nowIso = now.toISOString();
   const day = date || localDay(now); // form's date drives the visit key
   patId = patId ? Number(patId) : null;
 
   return db.transaction('rw', db.people, db.visits, async () => {
-    let person = null;
+    let personId;
 
+    if (preserve) {
+      // ---- restore path: trust the backup row -------------------------
+      personId = preserve.personId != null ? Number(preserve.personId) : null;
+      if (personId == null) {
+        const e = new Error('Restore row missing personId.');
+        e.name = 'MissingPersonIdError';
+        throw e;
+      }
+      // Seed the person row on first sight; _writeVisit bumps it after.
+      const exists = await db.people.get(personId);
+      if (!exists) {
+        await db.people.add({
+          id: personId,
+          name,
+          mob,
+          age,
+          gender,
+          weight: weight != null ? weight : undefined,
+          visits: 0,
+          createdAt: preserve.createdAt || nowIso,
+          updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
+        });
+      }
+      const rec = {
+        name,
+        mob,
+        age,
+        gender,
+        weight,
+        followup: preserve.followup != null ? preserve.followup : followup != null ? followup : 0,
+        payment,
+        fee: preserve.fee != null ? Number(preserve.fee) : fee == null ? 0 : Number(fee),
+        refundTier: ['0', 'R1', 'R2', 'R'].includes(String(preserve.refundTier))
+          ? String(preserve.refundTier)
+          : '0',
+        token,
+        day,
+        date: day,
+        createdAt: preserve.createdAt || nowIso,
+        updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
+        personId,
+      };
+      return _writeVisit(rec, nowIso);
+    }
+
+    // ---- live save path: resolve identity + billing -------------------
+    let person = null;
     if (patId) {
       person = await db.people.get(patId);
     }
@@ -218,7 +301,6 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       person = await db.people.where('[name+mob]').equals([name, mob]).first();
     }
 
-    let personId;
     if (person) {
       // Guard: if the identity is changing, no other person may already hold
       // the target (name, mob) — the unique index would reject the put, but
@@ -236,9 +318,9 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       person.age = age;
       if (gender) person.gender = gender;
       if (weight != null) person.weight = weight;
-      // updatedAt / lastVisitAt / visits are set by the visit-write paths
-      // below, so a visit that is later reassigned away doesn't stamp this
-      // person with a visit they never keep.
+      // updatedAt / lastVisitAt / visits are set by _writeVisit below, so a
+      // visit that is later reassigned away doesn't stamp this person with a
+      // visit they never keep.
       if (!Number.isFinite(person.visits)) person.visits = 0;
       await db.people.put(person);
       personId = person.id;
@@ -261,45 +343,6 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
     followup = billing.followup;
     fee = billing.fee;
 
-    // ---- visit upsert on (day, token) ----
-    // The people projection (visits count, lastVisitAt, updatedAt) is
-    // maintained INCREMENTALLY here. Only the reassign-away branch needs to
-    // scan the old owner's visits — every other case is O(1).
-    const existing = await db.visits.where('[day+token]').equals([day, token]).first();
-    if (existing) {
-      const prevPersonId = existing.personId;
-      const reassignedAway = prevPersonId != null && prevPersonId !== personId;
-
-      // Snapshot the visit's own createdAt before overwriting (used below to
-      // stamp the new owner's lastVisitAt when this visit moves people).
-      const visitCreatedAt = existing.createdAt || nowIso;
-
-      existing.name = name;
-      existing.mob = mob;
-      existing.age = age;
-      existing.gender = gender;
-      existing.weight = weight;
-      existing.followup = followup;
-      existing.payment = payment;
-      existing.fee = fee;
-      existing.date = day;
-      existing.personId = personId;
-      existing.updatedAt = nowIso;
-      await db.visits.put(existing);
-
-      if (reassignedAway) {
-        // Old owner loses this visit: rescan only them (may become orphan).
-        await _recomputePerson(prevPersonId);
-        // New owner gains this visit: O(1) bump with this visit's createdAt.
-        await _bumpPersonOnGain(personId, visitCreatedAt, nowIso);
-      } else {
-        // Same-person edit: nothing about the set changed. Bump updatedAt
-        // only; lastVisitAt stays at the visit's createdAt.
-        await _touchPerson(personId, nowIso);
-      }
-      return { rec: existing, created: false };
-    }
-
     const rec = {
       name,
       mob,
@@ -316,11 +359,78 @@ function addVisit({ name, mob, age, gender, token, date, patId, weight, followup
       updatedAt: nowIso,
       personId,
     };
-    rec.id = await db.visits.add(rec);
-    // Brand-new visit: O(1) bump with the new visit's createdAt (= now).
-    await _bumpPersonOnGain(personId, nowIso, nowIso);
-    return { rec, created: true };
+    const result = await _writeVisit(rec, nowIso);
+    _emitJournal({
+      op: 1,
+      date: day,
+      token,
+      patId,
+      name,
+      mob,
+      age,
+      gender,
+      weight,
+      followup: rec.followup,
+      payment,
+      fee: rec.fee,
+    });
+    return result;
   });
+}
+
+// THE write path. Takes a fully-formed visit record (all fields resolved by
+// the caller) and:
+//   1. upserts the visit on (day, token)
+//   2. maintains the people projection (count, lastVisitAt, updatedAt,
+//      orphan delete) via _bumpPersonOnGain / _touchPerson / _recomputePerson
+// Must run inside the caller's rw transaction. Timestamps in `rec` are
+// authoritative (a restore carries its own createdAt/updatedAt); `nowIso` is
+// used only for row-touch bookkeeping (person.updatedAt).
+async function _writeVisit(rec, nowIso) {
+  const { day, token, personId } = rec;
+  const existing = await db.visits.where('[day+token]').equals([day, token]).first();
+  let stored;
+  let created;
+  let prevPerson = null;
+
+  if (existing) {
+    const prevPersonId = existing.personId;
+    const reassignedAway = prevPersonId != null && prevPersonId !== personId;
+    const visitCreatedAt = rec.createdAt || existing.createdAt || nowIso;
+
+    existing.name = rec.name;
+    existing.mob = rec.mob;
+    existing.age = rec.age;
+    existing.gender = rec.gender;
+    existing.weight = rec.weight;
+    existing.followup = rec.followup;
+    existing.payment = rec.payment;
+    existing.fee = rec.fee;
+    existing.refundTier = rec.refundTier != null ? rec.refundTier : existing.refundTier;
+    existing.date = day;
+    existing.personId = personId;
+    if (rec.createdAt) existing.createdAt = rec.createdAt;
+    existing.updatedAt = rec.updatedAt || nowIso;
+    await db.visits.put(existing);
+    stored = existing;
+    created = false;
+
+    if (reassignedAway) {
+      await _recomputePerson(prevPersonId);
+      prevPerson = await db.people.get(prevPersonId); // null if orphan-deleted
+      await _bumpPersonOnGain(personId, visitCreatedAt, nowIso);
+    } else {
+      await _touchPerson(personId, nowIso);
+    }
+  } else {
+    stored = { ...rec };
+    stored.id = await db.visits.add(stored);
+    await _bumpPersonOnGain(personId, stored.createdAt || nowIso, nowIso);
+    created = true;
+  }
+
+  const person = await db.people.get(personId);
+  return { rec: stored, created, person, prevPerson };
 }
 
 // O(1) field bump when a person GAINS a visit (new visit, or a visit was
@@ -396,6 +506,8 @@ export function refundAmountFor(tier) {
 
 // Post-visit edit: set (or clear) the refund tier on a single visit. Pass
 // '0' or null to clear. Fee is left untouched — see refundAmountFor().
+// Routes through _writeVisit so a refund change is logged the same way an
+// addVisit is (one append, one people projection touch).
 async function setVisitRefund(visitId, tier) {
   const t = tier == null || tier === 0 || tier === '0' ? '0' : String(tier);
   if (!(t in REFUND_TIERS)) {
@@ -404,13 +516,29 @@ async function setVisitRefund(visitId, tier) {
     throw e;
   }
   const nowIso = new Date().toISOString();
-  return db.transaction('rw', db.visits, async () => {
+  return db.transaction('rw', db.people, db.visits, async () => {
     const v = await db.visits.get(visitId);
     if (!v) throw new Error('Visit not found: ' + visitId);
-    v.refundTier = t;
-    v.updatedAt = nowIso;
-    await db.visits.put(v);
-    return v;
+    const rec = {
+      name: v.name,
+      mob: v.mob,
+      age: v.age,
+      gender: v.gender,
+      weight: v.weight,
+      followup: v.followup,
+      payment: v.payment,
+      fee: v.fee,
+      refundTier: t,
+      token: v.token,
+      day: v.day,
+      date: v.date,
+      createdAt: v.createdAt,
+      updatedAt: nowIso,
+      personId: v.personId,
+    };
+    const result = await _writeVisit(rec, nowIso);
+    _emitJournal({ op: 2, date: v.day || v.date, token: v.token, refundTier: t });
+    return result.rec;
   });
 }
 
@@ -419,8 +547,16 @@ async function setVisitRefund(visitId, tier) {
 // List unique patients, most recently seen first. `updatedAt` is bumped by
 // addVisit every time that person gets a new visit, so it doubles as
 // "last seen at".
+// List unique patients, most recently SEEN first. Sorting by lastVisitAt
+// (falling back to updatedAt) means restore preserves the operator-visible
+// order, and a same-day edit that only touches updatedAt never re-orders the
+// list under them.
 function listPeople({ offset = 0, limit = 50 } = {}) {
-  return db.people.orderBy('updatedAt').reverse().offset(offset).limit(limit).toArray();
+  return db.people
+    .toCollection()
+    .reverse()
+    .sortBy((p) => p.lastVisitAt || p.updatedAt || '')
+    .then((rows) => rows.slice(offset, offset + limit));
 }
 
 function countPeople() {
@@ -493,136 +629,128 @@ function countAll() {
   return db.visits.count();
 }
 
-// Derive `people` from `visits`. This is the invariant: visits are the
-// source of truth; a person row is a projection of their visit stream.
-//   - createdAt    = earliest visit's createdAt
-//   - name/mob     = latest visit's name/mob
-//   - age/gender   = latest visit's age/gender
-//   - updatedAt    = latest visit's createdAt
-//   - lastVisitAt  = latest visit's createdAt
-// Called after a bulk restore so the rebuilt table is consistent regardless
-// of what the backup file claimed. Runs inside its own rw transaction.
-async function rebuildPeopleFromVisits() {
-  return db.transaction('rw', db.people, db.visits, async () => {
-    const all = await db.visits.toArray();
-    const groups = new Map(); // personId -> { first, last, count }
-    for (const v of all) {
-      if (v.personId == null) continue;
-      const ts = v.createdAt || '';
-      let g = groups.get(v.personId);
-      if (!g) {
-        groups.set(v.personId, { first: v, last: v, count: 1 });
-        continue;
+// Replay a logbook: wipe stores, then run each op through the SAME functions
+// that produced the log — addVisit for op=1, setVisitRefund for op=2. The
+// journal is silenced during replay so we don't append to the log we're
+// reading from.
+//
+// Correctness over speed: a large log can take a while, but the result is
+// byte-identical to the live DB those writes would have produced.
+async function replayLog(ops) {
+  const savedJournal = _journal;
+  _journal = null;
+  try {
+    await db.transaction('rw', db.people, db.visits, async () => {
+      await db.people.clear();
+      await db.visits.clear();
+    });
+    let n = 0;
+    for (const op of ops) {
+      if (op.op === 2) {
+        // Refund edit: find the visit by (date, token), set the tier.
+        const visit = await db.visits
+          .where('[day+token]')
+          .equals([op.date, Number(op.token)])
+          .first();
+        if (visit) await setVisitRefund(visit.id, op.refundTier);
+      } else {
+        await addVisit({
+          name: op.name,
+          mob: op.mob,
+          age: op.age,
+          gender: op.gender,
+          weight: op.weight,
+          followup: op.followup,
+          payment: op.payment,
+          fee: op.fee,
+          token: op.token,
+          date: op.date,
+          patId: op.patId,
+        });
       }
-      g.count++;
-      if (ts < (g.first.createdAt || '')) g.first = v;
-      if (ts > (g.last.createdAt || '')) g.last = v;
+      n++;
     }
-    for (const [pid, g] of groups) {
-      const p = await db.people.get(pid);
-      if (!p) continue;
-      p.name = String(g.last.name || p.name || '').trim().toUpperCase();
-      p.mob = g.last.mob != null ? g.last.mob : p.mob;
-      p.age = g.last.age;
-      if (g.last.gender) p.gender = g.last.gender;
-      if (g.last.weight != null) p.weight = g.last.weight;
-      p.createdAt = g.first.createdAt || p.createdAt;
-      p.updatedAt = g.last.createdAt || p.updatedAt;
-      p.lastVisitAt = g.last.createdAt || p.lastVisitAt;
-      p.visits = g.count;
-      await db.people.put(p);
-    }
-    // Any person with no visits left in the visits store gets counter 0.
-    const allPeople = await db.people.toArray();
-    for (const p of allPeople) {
-      if (!groups.has(p.id)) {
-        p.visits = 0;
-        await db.people.put(p);
-      }
-    }
-  });
+    return n;
+  } finally {
+    _journal = savedJournal;
+  }
 }
 
-// Full restore. Accepts either the current export shape ({version:2, people,
-// visits}) or a v1 export ({version:1, records}) for backward compatibility.
-// `people` is rebuilt from `visits` afterwards, so person-side fields always
-// match the visit stream (regardless of what the file carried).
+// Thin alias kept for callers that still pass {visits}/{records} payloads.
 async function replaceAll(data) {
-  const isV1 = !data.version || data.version === 1;
-  let { people, visits } = isV1
-    ? synthesizePeopleFromLegacyRecords(data.records || [])
-    : { people: data.people || [], visits: data.visits || [] };
-  // Normalize stored names to uppercase (import may carry mixed case from
-  // older CSVs / hand-edited exports).
-  people = people.map((p) => ({ ...p, name: String(p.name || '').trim().toUpperCase() }));
-  visits = visits.map((v) => ({ ...v, name: String(v.name || '').trim().toUpperCase() }));
-
-  const n = await db.transaction('rw', db.people, db.visits, async () => {
-    await db.people.clear();
-    await db.visits.clear();
-    if (people.length) await db.people.bulkPut(people);
-    if (visits.length) await db.visits.bulkPut(visits);
-    return visits.length;
-  });
-  // Project people from the visit stream so derived fields (lastVisitAt,
-  // updatedAt, age, gender) are always consistent with the visits.
-  await rebuildPeopleFromVisits();
-  return n;
-}
-
-function synthesizePeopleFromLegacyRecords(records) {
-  const people = [];
-  const byKey = new Map();
-  const visits = records.map((r) => {
-    const name = String(r.name || '').trim().toUpperCase();
-    const mob = String(r.mob || '').trim();
-    const age = Number(r.age);
-    const gender = r.gender == null ? '' : String(r.gender).trim();
-    const key = name + '\u0000' + mob;
-    let person = byKey.get(key);
-    if (!person) {
-      person = {
-        id: people.length + 1,
-        name,
-        mob,
-        age,
-        gender,
-        createdAt: r.createdAt || new Date().toISOString(),
-        updatedAt: r.createdAt || new Date().toISOString(),
-      };
-      byKey.set(key, person);
-      people.push(person);
-    } else {
-      person.age = age;
-      if (gender) person.gender = gender;
-      person.updatedAt = r.createdAt || person.updatedAt;
+  if (Array.isArray(data)) return replayLog(data);
+  const ops = [];
+  if (Array.isArray(data.records)) {
+    for (const r of data.records) {
+      ops.push({
+        op: 1,
+        date: r.day || r.date || '',
+        token: Number(r.token),
+        patId: null,
+        name: r.name,
+        mob: r.mob,
+        age: r.age,
+        gender: r.gender,
+        weight: null,
+        followup: 0,
+        payment: 0,
+        fee: null,
+      });
     }
-    return {
-      id: typeof r.id === 'number' ? r.id : undefined,
-      name,
-      mob,
-      age,
-      gender,
-      token: Number(r.token),
-      day: r.day,
-      date: r.date || r.day,
-      createdAt: r.createdAt || new Date().toISOString(),
-      personId: person.id,
-    };
-  });
-  return { people, visits };
+  } else if (Array.isArray(data.visits)) {
+    for (const v of data.visits) {
+      ops.push({
+        op: 1,
+        date: v.day || v.date || '',
+        token: Number(v.token),
+        patId: v.personId != null ? Number(v.personId) : null,
+        name: v.name,
+        mob: v.mob,
+        age: v.age,
+        gender: v.gender,
+        weight: v.weight,
+        followup: v.followup ? 1 : 0,
+        payment: v.payment ? 1 : 0,
+        fee: v.fee,
+      });
+    }
+  }
+  return replayLog(ops);
 }
 
+// Serialize the current DB as a fresh log (header + one line per visit, plus
+// one line per non-'0' refundTier). Used by downloadCsv when File System
+// Access isn't available and by dev tooling. Not used by the append-only
+// folder backup path — that one appends from the journal.
 async function exportAll() {
-  const [people, visits] = await Promise.all([db.people.toArray(), db.visits.toArray()]);
-  return {
-    schema: 'doctor-apt-list/patients',
-    version: 2,
-    exportedAt: new Date().toISOString(),
-    count: visits.length,
-    people,
-    visits,
-  };
+  const [visits] = await Promise.all([db.visits.toArray()]);
+  const lines = [csvHeaderLine()];
+  const sorted = visits.slice().sort((a, b) => {
+    if ((a.day || '') !== (b.day || '')) return (a.day || '').localeCompare(b.day || '');
+    return (Number(a.token) || 0) - (Number(b.token) || 0);
+  });
+  let count = 0;
+  for (const v of sorted) {
+    lines.push(
+      visitInputToLogLine({
+        op: 1,
+        date: v.day || v.date || '',
+        token: v.token,
+        patId: v.personId,
+        name: v.name,
+        mob: v.mob,
+        age: v.age,
+        gender: v.gender,
+        weight: v.weight,
+        followup: v.followup,
+        payment: v.payment,
+        fee: v.fee,
+        refundTier: v.refundTier,
+      })
+    );
+    count++;
+  }
+  return { text: lines.join('\n') + '\n', count };
 }
 
 // Exported for dev seed + recovery tools; not part of the app's public surface.
@@ -646,12 +774,12 @@ export const PatientDb = {
   visitCountsForPeople,
   visitsForPerson,
   findVisitByDayToken,
-  rebuildPeopleFromVisits,
   lastPaidVisitDaysFor: _lastPaidVisitDaysFor,
   daysBetween: _daysBetween,
   setVisitRefund,
+  setJournal,
+  replayLog,
   REFUND_TIERS,
-  refundAmountFor,
   replaceAll,
   exportAll,
 };

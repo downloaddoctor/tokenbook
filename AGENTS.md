@@ -34,7 +34,8 @@ src/core/db.js (Dexie)
 DB doctor-apt-list v6, two stores:
   people: one row per unique (name, mob) identity; index name_mob unique; holds latest age/gender/weight + lastVisitAt + visits count
   visits: one row per token; snapshot name/mob/age/gender/weight + billing (followup, payment, fee, refundTier) + personId -> people
-exports: openDb, localDay, nextTokenForDay, findOrCreatePerson, searchPeopleByMob, searchPeopleByName, addVisit, listByDay, listAll, countAll, listPeople, countPeople, getPerson, searchPeopleByPrefix, visitCountsForPeople, visitsForPerson, findVisitByDayToken, rebuildPeopleFromVisits, lastPaidVisitDaysFor, daysBetween, setVisitRefund, REFUND_TIERS, refundAmountFor, replaceAll, exportAll
+exports: openDb, localDay, nextTokenForDay, findOrCreatePerson, searchPeopleByMob, searchPeopleByName, addVisit, listByDay, listAll, countAll, listPeople, countPeople, getPerson, searchPeopleByPrefix, visitCountsForPeople, visitsForPerson, findVisitByDayToken, lastPaidVisitDaysFor, daysBetween, setVisitRefund, REFUND_TIERS, refundAmountFor, replaceAll, exportAll
+single write path: _writeVisit(rec, nowIso) is the ONLY function that writes visits + the people projection. addVisit (live save) and replaceAll (restore) both build a rec and call it. Importing a CSV replays each row through replaceAll -> _resolvePersonIdFor (name+mob) -> _writeVisit. Restore and live saves cannot diverge.
 v1 -> v2 upgrade: none (app not in production; Dexie declares v2 only)
 v2 -> v3 upgrade: schema unchanged; adds people.lastVisitAt (no backfill)
 v3 -> v4 upgrade: schema unchanged; adds visits.weight/followup/payment/fee + people.weight (no backfill)
@@ -51,7 +52,7 @@ followup auto-rule: addVisit resolves followup/fee AFTER personId is known. _res
 refund: setVisitRefund(visitId, tier) is a post-visit edit; fee stays as charged, refundAmountFor(tier) derives the amount (R1=100, R2=200, R=300)
 lastVisitAt vs updatedAt: lastVisitAt = when the patient last actually visited (max visit createdAt). updatedAt = when the row was last written. A same-person edit to an old visit bumps updatedAt but does NOT change lastVisitAt.
 names are stored uppercase: db.js uppercases `name` on every write path (addVisit, findOrCreatePerson, replaceAll, CSV/legacy import). register.js uppercases on submit + on autofill. #f-name has CSS text-transform:uppercase for display. Searches uppercase the query (searchPeopleByName, searchPeopleByPrefix). mob is left as typed (digits).
-visits are the source of truth. people is a derived cache: createdAt=earliest visit, name/mob/age/gender/weight/updatedAt/lastVisitAt/visits=aggregated from the visit stream. Writes to people only from addVisit and rebuildPeopleFromVisits.
+visits are the source of truth. people is a derived cache: createdAt=earliest visit, name/mob/age/gender/weight/updatedAt/lastVisitAt/visits=aggregated from the visit stream. people is written ONLY from _writeVisit.
 addVisit person identity resolution:
   1. patId given and found -> use it; update name/mob/age/gender/lastVisitAt
   2. no patId, (name,mob) matches -> reuse; bump lastVisitAt/updatedAt
@@ -59,8 +60,13 @@ addVisit person identity resolution:
   rename collision (identity change to an existing other person's [name+mob]) -> throw DuplicateIdentityError
 addVisit visit upsert: key = (day, token), day = form's date (or today). If a visit exists at that key -> UPDATE in place (same id, createdAt kept, updatedAt bumped, personId may change); else INSERT.
 addVisit returns { rec, created } (created=false -> update path)
-people.lastVisitAt -> ISO of most recent visit; set by addVisit, restored/derived by rebuildPeopleFromVisits (called from replaceAll); undefined only if the person has no visits
-rebuildPeopleFromVisits() -> re-derives every person row from its visit stream (earliest -> createdAt, latest -> name/mob/age/gender/updatedAt/lastVisitAt). Called from replaceAll after bulk put so CSV/JSON restore is always self-consistent. Exported for devtools/recovery.
+people.lastVisitAt -> ISO max(createdAt) over that person's remaining visits (when the patient actually came, not when the row was written). Maintained incrementally by _writeVisit.
+people.visits -> count of that person's remaining visits, maintained in the same walk.
+people projection maintenance in _writeVisit (all O(1) except reassign-away):
+  new visit        -> _bumpPersonOnGain(personId, rec.createdAt, now)   visits++, lastVisitAt = max(cur, new), updatedAt = now
+  same-person edit -> _touchPerson(personId, now)                       updatedAt only; lastVisitAt unchanged
+  reassign-to      -> _bumpPersonOnGain(personId, rec.createdAt, now)
+  reassign-away    -> _recomputePerson(prevPersonId)                    O(V_old) — the only scan path; DELETEs the row if zero visits remain
 visits.updatedAt -> ISO; set on insert (= createdAt) and on every update
 visits unique index day_token ensures at most one visit per (day, token) per day
 register message uses created flag: "Saved. Token N." (new) vs "Updated. Token N." (existing)
@@ -77,10 +83,10 @@ owns dirHandle persistence via meta.js (key dirHandle)
 single folder leg (typically a pendrive); no local + offsite pair
 files in folder: apt-list-latest.csv (rolling) + apt-list-YYYY-MM-DD.csv (once/day, keep 30 newest by pruneSnapshots)
 writes are atomic-ish (create-writable then close); failure never blocks a save
-init() -> load persisted handle -> queryPermission -> {ok|needs-gesture|unsupported}
+init() -> load persisted handle(visits only, people is derived)  -> queryPermission -> {ok|needs-gesture|unsupported}
 pickOrBackup() -> setFolder (first time) | reconnect (perm dropped) | flush (perm granted)
 downloadCsv() -> PatientDb.exportAll -> visitsToCsv -> Blob download 'clinic-register-YYYY-MM-DD.csv' (fallback when File System Access unavailable or picker cancelled)
-Backup button -> hasFsAccess ? pickOrBackup : downloadCsv; AbortError (picker cancel) also falls back to downloadCsv silently
+Backup button -> hasFsAccess ? pickOrBackup : downloadCsv; AbortError (picker cancel) alvisits | v1 records). people is ignored on restore — always rebuilt from visits.v silently
 markDirty() -> debounce 2s -> flush(); visibilitychange->hidden flushes if dirty
 flush() -> PatientDb.exportAll -> visitsToCsv -> write latest + today snapshot -> prune
 restoreFromFolder() -> read latest.csv | newest snapshot -> parseBackup -> PatientDb.replaceAll
@@ -255,6 +261,7 @@ import graph: app -> {router, pages/index, backup, core/db}; pages/* -> {core/db
 only one <section.page> visible at a time (activateTab toggles [hidden]; [hidden]{display:none!important} guards #page-print-layout flex)
 activateTab(name, force) — force flag re-mounts current tab after destructive ops (restore)
 exactly one paperstamp iframe at a time (PS.mount clears other .ps-host containers)
+add a new visit field -> extend the rec in addVisit AND in replaceAll's rec builder (both call _writeVisit), + CSV_COLS + defaultLayout items + form + tables. Never write visits outside _writeVisit.
 
 ## EXTENSION-POINTS
 

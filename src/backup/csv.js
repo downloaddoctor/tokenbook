@@ -17,7 +17,48 @@ export const CSV_COLS = [
   'refundTier',
   'personId',
   'createdAt',
+  'updatedAt',
+  // Person projection AFTER this write (the logbook's fast-restore columns).
+  'personVisits',
+  'personLastVisitAt',
+  // Present only when this write reassigned the visit away from a previous
+  // owner; the previous owner's projection after the write.
+  'prevPersonId',
+  'prevPersonVisits',
+  'prevPersonLastVisitAt',
 ];
+
+// Build one CSV line from a _writeVisit result. Used by the append-only
+// logbook writer — one line per write, no header rewrite.
+export function journalResultToCsvLine(result) {
+  const { rec, person, prevPerson } = result;
+  const row = {
+    date: rec.day || rec.date,
+    token: rec.token,
+    name: rec.name,
+    mob: rec.mob,
+    age: rec.age,
+    gender: rec.gender,
+    weight: rec.weight,
+    followup: rec.followup,
+    payment: rec.payment,
+    fee: rec.fee,
+    refundTier: rec.refundTier != null ? rec.refundTier : '0',
+    personId: rec.personId,
+    createdAt: rec.createdAt,
+    updatedAt: rec.updatedAt,
+    personVisits: person ? person.visits : '',
+    personLastVisitAt: person ? person.lastVisitAt : '',
+    prevPersonId: prevPerson ? prevPerson.id : '',
+    prevPersonVisits: prevPerson ? prevPerson.visits : '',
+    prevPersonLastVisitAt: prevPerson ? prevPerson.lastVisitAt : '',
+  };
+  return CSV_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
+}
+
+export function csvHeaderLine() {
+  return CSV_COLS.join(CSV_DELIM);
+}
 
 function csvEscape(v) {
   const s = v == null ? '' : String(v);
@@ -27,15 +68,9 @@ function csvEscape(v) {
   return s;
 }
 
-export function visitsToCsv(visits) {
-  const sorted = [...visits].sort((a, b) => {
-    if ((a.day || '') !== (b.day || '')) return (a.day || '').localeCompare(b.day || '');
-    return (Number(a.token) || 0) - (Number(b.token) || 0);
-  });
-  const lines = [CSV_COLS.join(CSV_DELIM)];
-  for (const v of sorted) lines.push(CSV_COLS.map((k) => csvEscape(v[k])).join(CSV_DELIM));
-  return lines.join('\n') + '\n';
-}
+// Removed — the logbook writes one line per write, not whole-file dumps.
+// Kept as a stub in case something still imports it during the transition.
+export const visitsToCsv = null;
 
 function parseCsvLine(line) {
   const out = [];
@@ -91,8 +126,6 @@ export function csvToData(text) {
     throw new Error('Not a doctor-apt-list backup (unexpected header).');
   }
   const col = Object.fromEntries(header.map((h, i) => [h, i]));
-  const people = [];
-  const byKey = new Map();
   const visits = [];
   for (let i = 1; i < lines.length; i++) {
     const f = parseCsvLine(lines[i]);
@@ -115,27 +148,6 @@ export function csvToData(text) {
     const token = Number(f[col.token]);
     const day = f[col.date] || '';
     const createdAt = f[col.createdAt] || new Date().toISOString();
-    const key = name + '\u0000' + mob;
-    let person = byKey.get(key);
-    if (!person) {
-      person = {
-        id: people.length + 1,
-        name,
-        mob,
-        age,
-        gender,
-        weight: weight != null ? weight : undefined,
-        createdAt,
-        updatedAt: createdAt,
-      };
-      byKey.set(key, person);
-      people.push(person);
-    } else {
-      person.age = age;
-      if (gender) person.gender = gender;
-      if (weight != null) person.weight = weight;
-      person.updatedAt = createdAt;
-    }
     visits.push({
       name,
       mob,
@@ -150,10 +162,11 @@ export function csvToData(text) {
       day,
       date: day,
       createdAt,
-      personId: person.id,
     });
   }
-  return { schema: 'doctor-apt-list/patients', version: 2, people, visits };
+  // People are not returned — they are a pure projection rebuilt from
+  // visits on restore (PatientDb.replaceAll -> _writeVisit).
+  return { schema: 'doctor-apt-list/patients', version: 2, visits };
 }
 
 // Accepts .csv (default) or legacy .json/{ payload.
@@ -165,7 +178,8 @@ export function parseBackup(text, filename = '') {
       throw new Error('Not a doctor-apt-list backup file.');
     }
     if (Array.isArray(data.visits)) {
-      return { version: 2, people: data.people || [], visits: data.visits };
+      // people is ignored — replaceAll rebuilds it from visits.
+      return { version: 2, visits: data.visits };
     }
     if (Array.isArray(data.records)) return { version: 1, records: data.records };
     throw new Error('Unrecognized backup contents.');

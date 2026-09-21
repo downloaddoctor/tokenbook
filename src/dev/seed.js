@@ -2,8 +2,8 @@
 // list, history modal, restore, and pagination can be exercised.
 //
 // Invariant: visits are the source of truth. This writes visits directly,
-// then calls rebuildPeopleFromVisits() to project the people table — exactly
-// the same path a restore takes.
+// which goes through the same _writeVisit path a restore takes. Exactly
+// one write path, so seed, save, and restore cannot diverge.
 //
 // Guarded by ?dev=1 at the call site (app.js). Do not import from prod pages.
 
@@ -203,14 +203,9 @@ export async function seed({
     };
   });
 
-  // 6. write + rebuild (people projection from visits).
-  await db.transaction('rw', db.people, db.visits, async () => {
-    await db.people.clear();
-    await db.visits.clear();
-    await db.people.bulkPut(people);
-    await db.visits.bulkPut(visits);
-  });
-  await PatientDb.rebuildPeopleFromVisits();
+  // 6. write. Uses the same single path restore takes: replaceAll replays
+  // every row through _writeVisit, which builds the people projection.
+  await PatientDb.replaceAll({ version: 2, visits });
 
   return { people: people.length, visits: visits.length, days };
 }

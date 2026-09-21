@@ -619,8 +619,6 @@ async function submitBill() {
   }
   if (b.fWeight && rec.weight != null) b.fWeight.value = String(rec.weight);
 
-  PatientBackup.markDirty();
-
   PS.print(
     {
       name: rec.name,
