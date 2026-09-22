@@ -10,7 +10,7 @@ src/ui/        pages, router, DOM helpers, boot
 src/ui/pages/  one module per route
 src/backup/    folder/CSV backup + journal replay
 src/print/     paperstamp lifecycle + default layout
-src/dev/       dev-only seed/clear (opt-in, not prod)
+src/dev/       dev-only seed/clear + selftest (opt-in, not prod)
 styles.css     single global stylesheet
 index.html     single page shell; all views are <section> toggles
 
@@ -18,6 +18,7 @@ index.html     single page shell; all views are <section> toggles
 index.html -> src/ui/app.js          boot: open DB, init backup, wire router, tab hotkeys
 index.html loads paperstamp SDK from downloaddoctor.github.io
 ?dev=1 query    enables Seed/Clear buttons (dynamic import src/dev/seed.js)
+Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
 
 # MODULES
 core/db.js      Dexie wrapper; ONLY public write is addVisit -> _writeVisit
@@ -27,6 +28,8 @@ ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N
 ui/dom.js       el/on/bindOff/timeAgo helpers
 ui/toast.js     transient bottom-left notifications
 ui/pages/*.js   register, tokens, patients, printLayout (each {mount,unmount})
+dev/selftest.js   dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
+ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
 print/ps.js     singleton paperstamp embed manager; host moves between pages
 print/defaultLayout.js  seed layout pushed when plugin has none
 backup/backup.js  File System Access folder backup; journal -> append CSV; flush serialized
@@ -40,6 +43,7 @@ register submit -> PatientDb.addVisit() -> _writeVisit(log=true) -> journal -> b
   -> PS.print() -> paperstamp iframe -> onDone
 router.activateTab -> pages[name].mount()/unmount()
 restore -> backup reads latest.csv/snapshot -> csvToLog -> PatientDb.replayLog -> addVisit({preserve}) -> _writeVisit(log=false)
+Test button -> runSelfTest -> register (form driver, print suppressed) -> tokens refund dialog -> DB/log/replay checks -> cleanup
 
 # SCHEMA
 DB doctor-apt-list (Dexie)
@@ -72,6 +76,7 @@ PatientDb (core/db.js): openDb, addVisit, setVisitRefund, replayLog ({count,skip
 PatientBackup (backup/backup.js): init, setFolder, pickOrBackup, flush, backupNow,
   restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state
 PS (print/ps.js): mount, reset, preview, print, openDesigner, closeDesigner, listLayouts
+register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck,answerIdentity}), __getForm, __submitForTest
 
 # CONFIG
 .prettierrc: singleQuote, semi, printWidth 100, eol lf, trailingComma es5
@@ -106,4 +111,5 @@ Add a page: create src/ui/pages/<name>.js exporting {mount,unmount}; register in
 Default print layout: edit src/print/defaultLayout.js
 Log format: LOG_COLS in src/backup/csv.js (keep parse/encode in sync; header rename is breaking)
 Journal consumers: PatientDb.setJournal(fn)
+Self-test: src/dev/selftest.js runSelfTest({onProgress,confirmReplay,router}); register test hooks gate print/dialogs
 Backup dir handle: backup/meta.js (its own IDB, not Dexie)

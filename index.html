@@ -295,6 +295,7 @@
           Restore
         </button>
         <button id="btn-log" type="button" title="Show the append-only backup log">Log</button>
+        <button id="btn-test" type="button" title="Self-test: add / update / edit / refund + log">Test</button>
       </div>
     </footer>
 
@@ -308,6 +309,23 @@
         </header>
         <div class="modal-body">
           <pre id="log-body" class="log-view"></pre>
+        </div>
+        <footer class="modal-actions">
+          <button value="close" type="submit">Close</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="test-dialog" class="modal-dialog">
+      <form method="dialog" class="modal-card">
+        <header class="modal-head">
+          <div>
+            <h2>Self-test</h2>
+            <p class="hint" id="test-sub">idle</p>
+          </div>
+        </header>
+        <div class="modal-body">
+          <pre id="test-body" class="log-view"></pre>
         </div>
         <footer class="modal-actions">
           <button value="close" type="submit">Close</button>

@@ -9,6 +9,30 @@ import { toast, clearToast } from '../toast.js';
 
 let b;
 
+// ---- test hooks (dev self-test only) ---------------------------------
+// The self-test drives the real form. To keep it headless it can (a) suppress
+// the paperstamp print call and (b) auto-answer the identity dialogs instead
+// of waiting for a click. Both default to production behavior.
+const testHooks = {
+  suppressPrint: false,
+  answerIdentity: null, // null | 'update' | 'new' | 'reassign' | 'cancel'
+  bypassLayoutCheck: false, // self-test: skip the paperstamp layout requirement
+};
+export function __setTestHooks(hooks) {
+  if (!hooks) return;
+  if ('suppressPrint' in hooks) testHooks.suppressPrint = !!hooks.suppressPrint;
+  if ('bypassLayoutCheck' in hooks) testHooks.bypassLayoutCheck = !!hooks.bypassLayoutCheck;
+  if ('answerIdentity' in hooks) testHooks.answerIdentity = hooks.answerIdentity || null;
+}
+export function __getForm() {
+  return b;
+}
+// Self-test: run the submit path and RETURN its promise so the caller can
+// observe errors (the normal submit handler swallows them in a toast).
+export function __submitForTest() {
+  return submitBill();
+}
+
 function fieldValues() {
   return {
     name: b.fName.value.trim(),
@@ -194,29 +218,32 @@ async function onTokenChange() {
   if (!found) {
     loadedVisitId = null;
     setMsg(`Token ${token} is free on ${day}.`, 'ok');
+    startNewBill(false)
     return;
   }
   const { visit, person } = found;
-  b.fName.value = (visit.name || '').toUpperCase();
-  b.fMob.value = visit.mob || '';
-  if (visit.age != null && visit.age !== '') b.fAge.value = String(visit.age);
-  b.fGender.value = visit.gender || person?.gender || 'M';
-  if (b.fWeight) b.fWeight.value = visit.weight != null ? String(visit.weight) : '';
-  if (b.fFollowup) b.fFollowup.value = visit.followup ? '1' : '0';
-  if (b.fPayment) b.fPayment.value = visit.payment ? '1' : '0';
-  if (b.fFee && visit.fee != null) {
-    b.fFee.value = String(visit.fee);
-    if (visit.followup) lockFee(visit.fee);
-    else unlockFee();
-  }
-  b.fPatientId.value = person ? String(person.id) : visit.personId != null ? String(visit.personId) : '';
-  loadedVisitId = visit.id;
+  
+  setFollowupNote('');
   hideSuggests();
   setMsg(
     `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.id + ')' : ''}.`,
     'ok'
   );
-  applyFollowupRule(person ? person.id : visit.personId);
+
+  b.fName.value = (visit.name || '').toUpperCase();
+  b.fMob.value = visit.mob || '';
+  b.fAge.value = String(visit.age);
+  b.fGender.value = visit.gender || person?.gender || 'M';
+  b.fWeight.value = String(visit.weight);
+  b.fFollowup.value = visit.followup ? '1' : '0';
+  b.fPayment.value = visit.payment ? '1' : '0';
+  b.fFee.value = String(visit.fee);
+  if (visit.followup) lockFee(visit.fee);
+  else unlockFee();
+  
+  b.fPatientId.value = person ? String(person.id) : visit.personId != null ? String(visit.personId) : '';
+  loadedVisitId = visit.id;
+  
   refreshPreview();
 }
 
@@ -311,17 +338,6 @@ function unlockFee() {
   b.fFee.readOnly = false;
 }
 
-// Keep Fee in sync with the Follow-up select unless the user has taken over
-// the field (readOnly set by lockFee, or manually edited).
-function syncFeeFromFollowup() {
-  if (!b.fFee || !b.fFollowup) return;
-  if (b.fFee.dataset.locked === '1') return;
-  if (b.fFollowup.value === '1') {
-    if (!b.fFee.value || Number(b.fFee.value) !== 0) b.fFee.value = '0';
-  } else if (Number(b.fFee.value) === 0) {
-    b.fFee.value = '300';
-  }
-}
 
 function onFollowupChange() {
   if (b.fFollowup.value === '1') lockFee(0);
@@ -341,38 +357,38 @@ async function onPatIdChange() {
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0) {
     setMsg('Pat ID must be a number.', 'err');
-    b.fPatientId.value = '';
     return;
   }
   const p = await PatientDb.getPerson(id);
   if (!p) {
     setMsg(`No patient with ID ${id}.`, 'err');
-    b.fPatientId.value = '';
     return;
   }
   b.fName.value = (p.name || '').toUpperCase();
   b.fMob.value = p.mob || '';
-  if (p.age != null && p.age !== '') b.fAge.value = String(p.age);
+  b.fAge.value = String(p.age);
   b.fGender.value = p.gender || 'M';
-  if (b.fWeight) b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
+  b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
   hideSuggests();
   setMsg('');
-  applyFollowupRule(p.id);
+
+  if(!loadedVisitId) applyFollowupRule(p.id);
+  else setFollowupNote('');
   refreshPreview();
 }
 
 // Prepare a fresh bill for the next patient. Called by the New-bill button
 // and by Alt+N via app.js.
-export function startNewBill() {
+export function startNewBill(nextToken = true) {
   b.fName.value = '';
   b.fMob.value = '';
   b.fAge.value = '';
   b.fGender.value = 'M';
-  if (b.fWeight) b.fWeight.value = '';
-  if (b.fFollowup) b.fFollowup.value = '0';
-  if (b.fPayment) b.fPayment.value = '0';
+  b.fWeight.value = '';
+  b.fFollowup.value = '0';
+  b.fPayment.value = '0';
   unlockFee();
-  if (b.fFee) b.fFee.value = '300';
+  b.fFee.value = '300';
   setFollowupNote('');
   b.fPatientId.value = '';
   tokenEdited = false;
@@ -380,7 +396,7 @@ export function startNewBill() {
   hideSuggests();
   setMsg('');
   b.fName.focus();
-  refreshNextToken();
+  if(nextToken) refreshNextToken();
 }
 
 async function onSubmit(e) {
@@ -400,6 +416,7 @@ async function onSubmit(e) {
 // Ask the user how to proceed when the form's identity differs from the
 // linked patient. Returns 'update' | 'new' | 'cancel'.
 function askIdentityChange(person, current) {
+  if (testHooks.answerIdentity) return Promise.resolve(testHooks.answerIdentity);
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
     const sub = document.getElementById('pat-id-confirm-sub');
@@ -445,6 +462,7 @@ function askIdentityChange(person, current) {
 // Cancel. Reuses the same dialog element; falls back to 'reassign' if the
 // markup is missing so behavior degrades gracefully.
 function askReassign(linked, other, current) {
+  if (testHooks.answerIdentity) return Promise.resolve(testHooks.answerIdentity);
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
     const title = document.getElementById('pat-id-confirm-title');
@@ -538,7 +556,7 @@ async function submitBill() {
     return;
   }
 
-  if (!PS.selectedLayoutId() || !PS.activeLayoutDef()) {
+  if (!testHooks.bypassLayoutCheck && (!PS.selectedLayoutId() || !PS.activeLayoutDef())) {
     setMsg('No layout — create one in Settings first.', 'err');
     return;
   }
@@ -619,21 +637,23 @@ async function submitBill() {
   }
   if (b.fWeight && rec.weight != null) b.fWeight.value = String(rec.weight);
 
-  PS.print(
-    {
-      name: rec.name,
-      mob: rec.mob,
-      age: String(rec.age),
-      gender: rec.gender || '',
-      weight: rec.weight != null ? String(rec.weight) : '',
-      followup: rec.followup ? 'Yes' : 'No',
-      payment: rec.payment ? 'UPI' : 'Cash',
-      fee: rec.fee != null ? String(rec.fee) : '',
-      date: rec.date,
-      token: String(rec.token),
-    },
-    () => PS.openDesigner()
-  );
+  if (!testHooks.suppressPrint) {
+    PS.print(
+      {
+        name: rec.name,
+        mob: rec.mob,
+        age: String(rec.age),
+        gender: rec.gender || '',
+        weight: rec.weight != null ? String(rec.weight) : '',
+        followup: rec.followup ? 'Yes' : 'No',
+        payment: rec.payment ? 'UPI' : 'Cash',
+        fee: rec.fee != null ? String(rec.fee) : '',
+        date: rec.date,
+        token: String(rec.token),
+      },
+      () => PS.openDesigner()
+    );
+  }
   setMsg(
     (created ? 'Saved. Token ' : 'Updated. Token ') +
       rec.token +

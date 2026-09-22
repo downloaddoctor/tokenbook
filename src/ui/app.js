@@ -36,6 +36,7 @@ function restoreConfirm(folderName) {
   const btnBackup = document.getElementById('btn-backup');
   const btnRestore = document.getElementById('btn-restore');
   const btnLog = document.getElementById('btn-log');
+  const btnTest = document.getElementById('btn-test');
   const fileRestore = document.getElementById('file-restore');
 
   const router = createRouter({
@@ -134,6 +135,64 @@ function restoreConfirm(folderName) {
     });
   }
 
+  if (btnTest) {
+    btnTest.addEventListener('click', async () => {
+      const dlg = document.getElementById('test-dialog');
+      const sub = document.getElementById('test-sub');
+      const body = document.getElementById('test-body');
+      if (!dlg || !sub || !body) return;
+      sub.textContent = 'running…';
+      body.textContent = '';
+      btnTest.disabled = true;
+      const lines = [];
+      const render = (text) => {
+        lines.push(text);
+        body.textContent = lines.join('\n');
+        body.scrollTop = body.scrollHeight;
+      };
+      try {
+        const { runSelfTest } = await import('../dev/selftest.js');
+        const r = await runSelfTest({
+          router,
+          onProgress: (name, ok, detail, status) => {
+            if (name === '#stage') render('--- ' + detail + ' ---');
+            else render((status || (ok ? 'PASS' : 'FAIL')) + ' ' + name + (detail ? '  (' + detail + ')' : ''));
+          },
+          confirmReplay: async ({ visits, people }) => {
+            const ok = window.confirm(
+              'Replay is destructive: it CLEARS the database and rebuilds it from the log.\n\n' +
+                `Current DB: ${visits} visits, ${people} people.\n\nProceed with replay?`
+            );
+            if (ok) render('--- replay confirmed by user ---');
+            else render('--- replay CANCELLED by user ---');
+            return ok;
+          },
+        });
+        const tally =
+          `${r.passed} passed` +
+          (r.skipped ? `, ${r.skipped} skipped` : '') +
+          (r.failed ? `, ${r.failed} failed` : '');
+        sub.textContent = r.ok
+          ? `all good — ${tally}`
+          : `${r.failed} FAILED — ${tally}`;
+        render('');
+        render(r.ok ? 'RESULT: ALL PASSED' : 'RESULT: FAILURES — see FAIL lines above');
+        toast(
+          r.ok ? `Self-test passed (${tally}).` : `Self-test: ${r.failed} failed.`,
+          r.ok ? 'ok' : 'err'
+        );
+      } catch (err) {
+        sub.textContent = 'error';
+        render('ERROR: ' + (err && err.message ? err.message : String(err)));
+        toast('Self-test error: ' + (err && err.message ? err.message : String(err)), 'err');
+      } finally {
+        btnTest.disabled = false;
+        dlg.returnValue = '';
+        dlg.showModal();
+      }
+    });
+  }
+
   try {
     await PatientDb.openDb();
   } catch (err) {
@@ -168,7 +227,7 @@ function restoreConfirm(folderName) {
       bSeed.addEventListener('click', async () => {
         bSeed.disabled = true;
         bClear.disabled = true;
-        const TOTAL = 100;
+        const TOTAL = 1000;
         try {
           const r = await seed({
             total: TOTAL,

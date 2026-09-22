@@ -18,11 +18,13 @@ import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../back
 const DB_NAME = 'doctor-apt-list';
 
 const db = new Dexie(DB_NAME);
-db.version(1).stores({
-  // v6 adds people.visits (count of that person's visits). Maintained
-  // incrementally by _writeVisit; read by visitCountsForPeople so the
-  // Patients page doesn't scan the visits store per page. No backfill —
-  // old rows read as undefined and fall back to a per-page visit scan.
+// Schema history:
+//   v1: visits.day + [day+token]; log/API key patId
+//   v2: renamed to visits.date + [date+token]; log/API key personId
+//   v3: bump again so a browser holding a stale v1/v2 store recreates the
+//       object stores (and the [date+token] index) on next open. No prod
+//       data, so the rebuild just drops old rows.
+db.version(3).stores({
   people: '++id, name, mob, [name+mob], updatedAt',
   visits: '++id, mob, createdAt, date, [date+token], personId',
 });
@@ -367,7 +369,8 @@ function addVisit(input) {
       fee,
       refundTier,
       token,
-      date: createdAt || nowIso,
+      date,
+      createdAt: createdAt || nowIso,
       updatedAt: updatedAt || createdAt || nowIso,
       personId,
     };
@@ -523,6 +526,32 @@ function listByDate(date) {
     .where('[date+token]')
     .between([date, Dexie.minKey], [date, Dexie.maxKey])
     .toArray();
+}
+
+// Delete every visit on `date` and recompute the people projection for the
+// affected people (orphans are removed). Used by the dev self-test to clean up
+// its isolated test date. Returns { visits, people } counts removed.
+async function deleteVisitsByDate(date) {
+  return db.transaction('rw', db.people, db.visits, async () => {
+    const rows = await db.visits
+      .where('[date+token]')
+      .between([date, Dexie.minKey], [date, Dexie.maxKey])
+      .toArray();
+    const peopleBefore = new Set();
+    for (const v of rows) {
+      if (v.personId != null) peopleBefore.add(v.personId);
+      await db.visits.delete(v.id);
+    }
+    let peopleRemoved = 0;
+    for (const pid of peopleBefore) {
+      const p = await db.people.get(pid);
+      if (!p) continue;
+      await _recomputePerson(pid);
+      const still = await db.people.get(pid);
+      if (!still) peopleRemoved++;
+    }
+    return { visits: rows.length, people: peopleRemoved };
+  });
 }
 
 // Refund tier is a non-negative integer N; amount = N * 100 (0 = none).
@@ -754,6 +783,7 @@ export const PatientDb = {
   searchPeopleByName,
   addVisit,
   listByDate,
+  deleteVisitsByDate,
   listAll,
   countAll,
   listPeople,
