@@ -1,5 +1,5 @@
 // IndexedDB wrapper for patient records. Backed by Dexie.
-// DB: doctor-apt-list, v3. Two stores:
+// DB: doctor-apt-list, v6. Two stores:
 //   people  — one row per unique (name, mob) identity. keyPath id, autoIncrement.
 //             unique index [name+mob]. Holds latest known age/gender. Used for
 //             uniqueness enforcement and register autofill/search.
@@ -24,7 +24,7 @@ db.version(1).stores({
   // Patients page doesn't scan the visits store per page. No backfill —
   // old rows read as undefined and fall back to a per-page visit scan.
   people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, day, [day+token], personId',
+  visits: '++id, mob, createdAt, date, [date+token], personId',
 });
 
 // Shared open promise so concurrent callers get the same connection handle.
@@ -34,10 +34,10 @@ function openDb() {
   return _openPromise;
 }
 
-function nextTokenForDay(day) {
+function nextTokenForDate(date) {
   return db.visits
-    .where('[day+token]')
-    .between([day, Dexie.minKey], [day, Dexie.maxKey])
+    .where('[date+token]')
+    .between([date, Dexie.minKey], [date, Dexie.maxKey])
     .last()
     .then((v) => (v ? v.token + 1 : 1));
 }
@@ -85,34 +85,34 @@ function searchPeopleByName(prefix, limit = 8) {
     .then((rows) => rows.slice(0, limit));
 }
 
-// Upsert a visit, keyed on (day, token). `day` comes from the form's date
-// (or today if blank). If a visit already exists at that (day, token), it is
+// Upsert a visit, keyed on (date, token). `date` comes from the form's date
+// (or today if blank). If a visit already exists at that (date, token), it is
 // UPDATED in place (same id, createdAt preserved, updatedAt bumped); the
 // person is reassigned to whoever the form now describes. Otherwise a new
 // visit is inserted.
 //
 // Person identity resolution, in order:
-//   1. patId given and found -> use it (update that person's fields).
-//   2. no patId, (name, mob) matches -> reuse that person.
+//   1. personId given and found -> use it (update that person's fields).
+//   2. no personId, (name, mob) matches -> reuse that person.
 //   3. otherwise -> create a new person.
 // In cases 1 and 2, if the update would make this person collide with a
 // different person sharing (name, mob), throw — the unique index must hold.
 //
 // Returns { rec, created }: created=false means an existing visit was updated.
 // Find the most recent visit for `personId` and return {visit, days} where
-// days = calendar days between that visit's day and `day` (0 = same day).
+// days = calendar days between that visit's date and `date` (0 = same day).
 // Used by the follow-up rule (window anchors on the last PAID visit).
-async function _lastVisitDaysFor(personId, day) {
+async function _lastVisitDaysFor(personId, date) {
   if (!personId) return null;
   const rows = await db.visits.where('personId').equals(personId).toArray();
   if (!rows.length) return null;
   let best = null;
   for (const v of rows) {
-    if (!best || (v.day || '') > (best.day || '')) best = v;
-    else if ((v.day || '') === (best.day || '') && (v.token || 0) > (best.token || 0)) best = v;
+    if (!best || (v.date || '') > (best.date || '')) best = v;
+    else if ((v.date || '') === (best.date || '') && (v.token || 0) > (best.token || 0)) best = v;
   }
   if (!best) return null;
-  return { visit: best, days: _daysBetween(best.day, day) };
+  return { visit: best, days: _daysBetween(best.date, date) };
 }
 
 // Whole-day difference between two 'YYYY-MM-DD' strings (b - a). Both must
@@ -127,21 +127,21 @@ function _daysBetween(a, b) {
 
 // Walk back through a person's visits (newest first) and return the last
 // visit whose `followup` is falsy (i.e. a PAID visit). Returns {visit, days}
-// where days = calendar days between that paid visit and `day`. If the most
+// where days = calendar days between that paid visit and `date`. If the most
 // recent visit is within 6 days AND that paid visit is the anchor, the caller
 // marks this visit as a follow-up.
-async function _lastPaidVisitDaysFor(personId, day) {
+async function _lastPaidVisitDaysFor(personId, date) {
   if (!personId) return null;
   const rows = await db.visits.where('personId').equals(personId).toArray();
   if (!rows.length) return null;
   rows.sort((a, b) => {
-    const ad = a.day || '';
-    const bd = b.day || '';
+    const ad = a.date || '';
+    const bd = b.date || '';
     if (ad !== bd) return bd.localeCompare(ad);
     return (b.token || 0) - (a.token || 0);
   });
   for (const v of rows) {
-    if (!v.followup) return { visit: v, days: _daysBetween(v.day, day) };
+    if (!v.followup) return { visit: v, days: _daysBetween(v.date, date) };
   }
   return null;
 }
@@ -153,16 +153,16 @@ async function _lastPaidVisitDaysFor(personId, day) {
 //     AND no paid visit exists in the window
 //   - fee = 0 when followup=1, else the given fee (default 300)
 // Returns {followup, fee, anchoredOn: {visitId|null, days|null}}.
-async function _resolveBilling({ personId, day, followup, fee }) {
+async function _resolveBilling({ personId, date, followup, fee }) {
   const baseFee = Number.isFinite(Number(fee)) && Number(fee) > 0 ? Number(fee) : 300;
   const explicit = followup === 0 || followup === 1 ? followup : null;
   let anchoredOn = null;
   let auto = false;
   if (explicit !== 0) {
-    const last = await _lastPaidVisitDaysFor(personId, day);
+    const last = await _lastPaidVisitDaysFor(personId, date);
     if (last && last.days != null && last.days >= 0 && last.days <= 6) {
       auto = true;
-      anchoredOn = { visitId: last.visit.id, days: last.days, day: last.visit.day };
+      anchoredOn = { visitId: last.visit.id, days: last.days, date: last.visit.date };
     }
   }
   const fu = explicit != null ? explicit : auto ? 1 : 0;
@@ -176,11 +176,49 @@ async function _resolveBilling({ personId, day, followup, fee }) {
 // path and re-derives identically. Keeps db.js free of any dependency on
 // the backup module (no import cycle).
 let _journal = null;
+// Per-transaction journal buffers. Key = Dexie Transaction, value = entries.
+// Entries are released on the transaction's 'complete' event and dropped on
+// 'abort'/'error', so the backup log only ever records committed writes.
+const _journalBuffers = new Map();
 function setJournal(fn) {
   _journal = typeof fn === 'function' ? fn : null;
 }
+
+// Journal buffering: entries emitted during a Dexie transaction are held per
+// transaction and released only on 'complete'. If the transaction aborts or
+// errors, the buffer is dropped — a rolled-back write never reaches the log.
+// Outside any transaction, entries flush immediately.
 function _emitJournal(entry) {
   if (!_journal) return;
+  const txn = Dexie.currentTransaction;
+  if (txn) {
+    const buf = _journalBuffers.get(txn);
+    if (buf) {
+      buf.push(entry);
+      return;
+    }
+    const fresh = [entry];
+    _journalBuffers.set(txn, fresh);
+    const release = () => {
+      _journalBuffers.delete(txn);
+      for (const e of fresh) _deliverJournal(e);
+    };
+    const drop = () => _journalBuffers.delete(txn);
+    try {
+      txn.on('complete', release);
+      txn.on('abort', drop);
+      txn.on('error', drop);
+    } catch {
+      // Transaction already settled or not observable — deliver now.
+      _journalBuffers.delete(txn);
+      _deliverJournal(entry);
+    }
+    return;
+  }
+  _deliverJournal(entry);
+}
+
+function _deliverJournal(entry) {
   try {
     _journal(entry);
   } catch (e) {
@@ -190,9 +228,9 @@ function _emitJournal(entry) {
 
 // The ONLY public write entry point. Two modes:
 //
-//   live save (default): the form gives (name, mob, patId?, weight, followup,
-//     payment, fee). addVisit resolves which person this visit belongs to and
-//     derives followup/fee from the person's prior paid-visit history.
+//   live save (default): the form gives (name, mob, personId?, weight,
+//     followup, payment, fee). addVisit resolves which person this visit
+//     belongs to and derives followup/fee from that person's paid history.
 //
 //   restore (input.preserve set): every derived field is taken verbatim from
 //     the backup row — personId, followup, fee, refundTier, createdAt,
@@ -204,7 +242,7 @@ function _emitJournal(entry) {
 // the people projection. Save and restore cannot diverge.
 function addVisit(input) {
   const { preserve } = input;
-  let { name, mob, age, gender, token, date, patId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
+  let { name, mob, age, gender, token, date, personId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
   // Normalize: blank/missing becomes null (so it never coerces to 0 or ''),
   // real values are trimmed/typed. Both the live and restore paths supply
   // full values; the null branch is defensive.
@@ -221,12 +259,10 @@ function addVisit(input) {
   refundTier = normalizeRefundTier(refundTier);
   const now = new Date();
   const nowIso = now.toISOString();
-  const day = date || localDay(now); // form's date drives the visit key
-  patId = patId ? Number(patId) : null;
+  date = date || localDay(now); // form's date drives the visit key
+  personId = personId ? Number(personId) : null;
 
   return db.transaction('rw', db.people, db.visits, async () => {
-    let personId;
-
     if (preserve) {
       // ---- restore path: trust the backup row -------------------------
       personId = preserve.personId != null ? Number(preserve.personId) : null;
@@ -261,19 +297,19 @@ function addVisit(input) {
         fee: preserve.fee != null ? Number(preserve.fee) : fee == null ? 0 : Number(fee),
         refundTier: normalizeRefundTier(preserve.refundTier),
         token,
-        day,
-        date: day,
+        date,
         createdAt: preserve.createdAt || nowIso,
         updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
         personId,
       };
-      return _writeVisit(rec, nowIso);
+      // Restore: never journal — replay must not append to the log it reads.
+      return _writeVisit(rec, nowIso, false);
     }
 
     // ---- live save path: resolve identity + billing -------------------
     let person = null;
-    if (patId) {
-      person = await db.people.get(patId);
+    if (personId) {
+      person = await db.people.get(personId);
     }
     if (!person) {
       person = await db.people.where('[name+mob]').equals([name, mob]).first();
@@ -316,7 +352,7 @@ function addVisit(input) {
 
     // Resolve followup + fee AFTER personId is known (auto-followup needs the
     // person's prior paid-visit history).
-    const billing = await _resolveBilling({ personId, day, followup, fee });
+    const billing = await _resolveBilling({ personId, date, followup, fee });
     followup = billing.followup;
     fee = billing.fee;
 
@@ -331,45 +367,30 @@ function addVisit(input) {
       fee,
       refundTier,
       token,
-      day,
-      date: day,
-      createdAt: createdAt || nowIso,
+      date: createdAt || nowIso,
       updatedAt: updatedAt || createdAt || nowIso,
       personId,
     };
-    const result = await _writeVisit(rec, nowIso);
-    _emitJournal({
-      op: 1,
-      date: day,
-      token,
-      patId: personId,
-      name,
-      mob,
-      age,
-      gender,
-      weight,
-      followup: rec.followup,
-      payment,
-      fee: rec.fee,
-      refundTier: rec.refundTier,
-      createdAt: rec.createdAt,
-      updatedAt: rec.updatedAt,
-    });
-    return result;
+    // _writeVisit journals this write itself (log defaults to true).
+    return _writeVisit(rec, nowIso);
   });
 }
 
 // THE write path. Takes a fully-formed visit record (all fields resolved by
 // the caller) and:
-//   1. upserts the visit on (day, token)
+//   1. upserts the visit on (date, token)
 //   2. maintains the people projection (count, lastVisitAt, updatedAt,
 //      orphan delete) via _bumpPersonOnGain / _touchPerson / _recomputePerson
+//   3. emits one journal line (unless log=false) — the single place backup
+//      learns about a committed write
 // Must run inside the caller's rw transaction. Timestamps in `rec` are
 // authoritative (a restore carries its own createdAt/updatedAt); `nowIso` is
 // used only for row-touch bookkeeping (person.updatedAt).
-async function _writeVisit(rec, nowIso) {
-  const { day, token, personId } = rec;
-  const existing = await db.visits.where('[day+token]').equals([day, token]).first();
+// log=true (default): live add / refund edits — journal the row.
+// log=false: restore/replay — never append to the log being read.
+async function _writeVisit(rec, nowIso, log = true) {
+  const { date, token, personId } = rec;
+  const existing = await db.visits.where('[date+token]').equals([date, token]).first();
   let stored;
   let created;
   let prevPerson = null;
@@ -388,7 +409,7 @@ async function _writeVisit(rec, nowIso) {
     existing.payment = rec.payment;
     existing.fee = rec.fee;
     existing.refundTier = rec.refundTier != null ? rec.refundTier : existing.refundTier;
-    existing.date = day;
+    existing.date = date;
     existing.personId = personId;
     if (rec.createdAt) existing.createdAt = rec.createdAt;
     existing.updatedAt = rec.updatedAt || nowIso;
@@ -411,6 +432,14 @@ async function _writeVisit(rec, nowIso) {
   }
 
   const person = await db.people.get(personId);
+  // Journal lives HERE, behind the `log` flag: every committed write that
+  // should be backed up emits exactly one full self-describing row. Restore
+  // calls _writeVisit(..., log=false) so replay never re-appends the log it
+  // is reading. This makes the flag the single source of truth for what gets
+  // journaled, instead of the caller remembering to emit.
+  // The stored row is handed over verbatim; it already uses `personId`,
+  // the one key shared by the DB, the journal, and the log column.
+  if (log) _emitJournal(stored);
   return { rec: stored, created, person, prevPerson };
 }
 
@@ -489,10 +518,10 @@ async function _recomputePerson(personId) {
   await db.people.put(p);
 }
 
-function listByDay(day) {
+function listByDate(date) {
   return db.visits
-    .where('[day+token]')
-    .between([day, Dexie.minKey], [day, Dexie.maxKey])
+    .where('[date+token]')
+    .between([date, Dexie.minKey], [date, Dexie.maxKey])
     .toArray();
 }
 
@@ -514,7 +543,7 @@ async function setVisitRefund(visitId, tier, whenIso) {
     const v = await db.visits.get(visitId);
     if (!v) throw new Error('Visit not found: ' + visitId);
     const rec = {
-      name: name,
+      name: v.name,
       mob: v.mob,
       age: v.age,
       gender: v.gender,
@@ -524,23 +553,21 @@ async function setVisitRefund(visitId, tier, whenIso) {
       fee: v.fee,
       refundTier: t,
       token: v.token,
-      day: v.day,
       date: v.date,
       createdAt: v.createdAt,
       updatedAt: nowIso,
       personId: v.personId,
     };
+    // _writeVisit journals this write itself. A refund is a FULL
+    // self-describing row (same shape as a visit add), so replay has one code
+    // path and never depends on an earlier line still being present.
     const result = await _writeVisit(rec, nowIso);
-    _emitJournal({ op: 2, date: v.day || v.date, token: v.token, refundTier: t, updatedAt: nowIso });
     return result.rec;
   });
 }
 
 // ---- people (patient registry) ----
 
-// List unique patients, most recently seen first. `updatedAt` is bumped by
-// addVisit every time that person gets a new visit, so it doubles as
-// "last seen at".
 // List unique patients, most recently SEEN first. Sorting by lastVisitAt
 // (falling back to updatedAt) means restore preserves the operator-visible
 // order, and a same-day edit that only touches updatedAt never re-orders the
@@ -610,10 +637,10 @@ function visitsForPerson(personId) {
   return db.visits.where('personId').equals(personId).reverse().sortBy('createdAt');
 }
 
-// Look up a single visit by its identity (day, token), plus its person row.
+// Look up a single visit by its identity (date, token), plus its person row.
 // Returns { visit, person } or null when no visit exists at that key.
-async function findVisitByDayToken(day, token) {
-  const visit = await db.visits.where('[day+token]').equals([day, Number(token)]).first();
+async function findVisitByDateToken(date, token) {
+  const visit = await db.visits.where('[date+token]').equals([date, Number(token)]).first();
   if (!visit) return null;
   const person = visit.personId ? await db.people.get(visit.personId) : null;
   return { visit, person };
@@ -627,104 +654,76 @@ function countAll() {
   return db.visits.count();
 }
 
-// Replay a logbook: wipe stores, then run each op through the SAME functions
-// that produced the log — addVisit for op=1, setVisitRefund for op=2. The
-// journal is silenced during replay so we don't append to the log we're
-// reading from.
+// Replay a logbook: wipe stores, then run every row through the SAME write
+// path that produced it — addVisit({preserve}). The restore path calls
+// _writeVisit with log=false, so replay never re-appends the log it reads
+// (no journal silencing needed here).
 //
 // Correctness over speed: a large log can take a while, but the result is
 // byte-identical to the live DB those writes would have produced.
 async function replayLog(ops) {
-  const savedJournal = _journal;
-  _journal = null;
-  try {
-    // Single rw transaction for the whole replay. Nested addVisit /
-    // setVisitRefund transactions join this one, so the entire restore is one
-    // atomic commit — N transactions collapse to 1, and a failure leaves
-    // nothing half-restored.
-    return await db.transaction('rw', db.people, db.visits, async () => {
-      await db.people.clear();
-      await db.visits.clear();
-      let n = 0;
-      for (const op of ops) {
-        if (op.op === 2) {
-          // Refund edit: find the visit by (date, token), set the tier.
-          const visit = await db.visits
-            .where('[day+token]')
-            .equals([op.date, Number(op.token)])
-            .first();
-          if (visit) await setVisitRefund(visit.id, op.refundTier, op.updatedAt);
-        } else if (op.patId != null) {
-          // Preserve path: the log carries the resolved personId plus the
-          // final billing fields and timestamps, so replay is a verbatim
-          // restore — no identity lookup, no billing scan, ids preserved,
-          // O(N) instead of O(N x V).
-          await addVisit({
-            name: op.name,
-            mob: op.mob,
-            age: op.age,
-            gender: op.gender,
-            weight: op.weight,
-            payment: op.payment,
-            token: op.token,
-            date: op.date,
-            patId: op.patId,
-            preserve: {
-              personId: op.patId,
-              followup: op.followup,
-              fee: op.fee,
-              refundTier: op.refundTier,
-              createdAt: op.createdAt,
-              updatedAt: op.updatedAt,
-            },
-          });
-        } else {
-          // Legacy log without resolved ids: fall back to the live path.
-          await addVisit({
-            name: op.name,
-            mob: op.mob,
-            age: op.age,
-            gender: op.gender,
-            weight: op.weight,
-            followup: op.followup,
-            payment: op.payment,
-            fee: op.fee,
-            refundTier: op.refundTier,
-            token: op.token,
-            date: op.date,
-            patId: null,
-            createdAt: op.createdAt,
-            updatedAt: op.updatedAt,
-          });
-        }
-        n++;
+  // Single rw transaction for the whole replay. Nested addVisit transactions
+  // join this one, so the entire restore is one atomic commit — N
+  // transactions collapse to 1, and a failure leaves nothing half-restored.
+  return await db.transaction('rw', db.people, db.visits, async () => {
+    await db.people.clear();
+    await db.visits.clear();
+    let n = 0;
+    let skipped = 0;
+    for (const op of ops) {
+      // Defensive: csv.js already filters these, but a caller could hand us
+      // a raw op list. Skip rather than abort the whole atomic restore —
+      // one bad row must not cost every good row.
+      if (op.personId == null || !op.date || !Number.isInteger(op.token) || op.token < 1) {
+        skipped++;
+        continue;
       }
-      return n;
-    });
-  } finally {
-    _journal = savedJournal;
-  }
+      // One replay path: the log row carries the resolved personId plus
+      // final billing fields and timestamps, so replay is a verbatim
+      // restore — no identity lookup, no billing scan, ids preserved, O(N).
+      await addVisit({
+        name: op.name,
+        mob: op.mob,
+        age: op.age,
+        gender: op.gender,
+        weight: op.weight,
+        payment: op.payment,
+        token: op.token,
+        date: op.date,
+        personId: op.personId,
+        preserve: {
+          personId: op.personId,
+          followup: op.followup,
+          fee: op.fee,
+          refundTier: op.refundTier,
+          createdAt: op.createdAt,
+          updatedAt: op.updatedAt,
+        },
+      });
+      n++;
+    }
+    return { count: n, skipped };
+  });
 }
 
-// Serialize the current DB as a fresh log (header + one line per visit, plus
-// one line per non-'0' refundTier). Used by downloadCsv when File System
-// Access isn't available and by dev tooling. Not used by the append-only
-// folder backup path — that one appends from the journal.
+// Serialize the current DB as a fresh log (header + one full row per visit,
+// refundTier included in-row). Used by downloadCsv when File System Access
+// isn't available and by dev tooling. Not used by the append-only folder
+// backup path — that one appends from the journal.
 async function exportAll() {
   const [visits] = await Promise.all([db.visits.toArray()]);
   const lines = [csvHeaderLine()];
   const sorted = visits.slice().sort((a, b) => {
-    if ((a.day || '') !== (b.day || '')) return (a.day || '').localeCompare(b.day || '');
+    if ((a.date || '') !== (b.date || '')) return (a.date || '').localeCompare(b.date || '');
     return (Number(a.token) || 0) - (Number(b.token) || 0);
   });
   let count = 0;
   for (const v of sorted) {
     lines.push(
       visitInputToLogLine({
-        op: 1,
-        date: v.day || v.date || '',
+        date: v.date || '',
         token: v.token,
-        patId: v.personId,
+        personId: v.personId,
         name: v.name,
         mob: v.mob,
         age: v.age,
@@ -749,12 +748,12 @@ export { db };
 export const PatientDb = {
   openDb,
   localDay,
-  nextTokenForDay,
+  nextTokenForDate,
   findOrCreatePerson,
   searchPeopleByMob,
   searchPeopleByName,
   addVisit,
-  listByDay,
+  listByDate,
   listAll,
   countAll,
   listPeople,
@@ -763,7 +762,7 @@ export const PatientDb = {
   searchPeopleByPrefix,
   visitCountsForPeople,
   visitsForPerson,
-  findVisitByDayToken,
+  findVisitByDateToken,
   lastPaidVisitDaysFor: _lastPaidVisitDaysFor,
   daysBetween: _daysBetween,
   setVisitRefund,

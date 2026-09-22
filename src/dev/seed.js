@@ -71,8 +71,8 @@ function atClinicHour(d) {
 // would have produced.
 export async function seed({
   total = 100000,
-  days = 366,
-  patients = 30000,
+  days = 30,
+  patients = 10000,
   onProgress = null,
 } = {}) {
   const t0 = Date.now();
@@ -108,7 +108,7 @@ export async function seed({
   const rawVisits = [];
   for (let off = 0; off < days && rawVisits.length < total; off++) {
     const d = addDays(today, -days + off);
-    const day = localDayOf(d);
+    const date = localDayOf(d);
     for (let k = 0; k < perDay && rawVisits.length < total; k++) {
       const p = personList[randInt(personList.length)];
       const when = atClinicHour(d);
@@ -117,8 +117,7 @@ export async function seed({
         _person: p,
         _offset: off,
         createdAt: isoAt(when),
-        day,
-        date: day,
+        date,
         age: p.age,
         weight,
         payment: randInt(2),
@@ -153,8 +152,8 @@ export async function seed({
   rawVisits.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const perDayCount = new Map();
   for (const v of rawVisits) {
-    const t = (perDayCount.get(v.day) || 0) + 1;
-    perDayCount.set(v.day, t);
+    const t = (perDayCount.get(v.date) || 0) + 1;
+    perDayCount.set(v.date, t);
     v.token = t;
   }
 
@@ -172,7 +171,6 @@ export async function seed({
     fee: v.fee,
     refundTier: v.refundTier,
     token: v.token,
-    day: v.day,
     date: v.date,
     createdAt: v.createdAt,
     updatedAt: v.createdAt,

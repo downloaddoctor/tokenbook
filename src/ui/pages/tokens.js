@@ -43,7 +43,7 @@ function ymd(d) {
 
 async function refresh() {
   const day = s.dateEl.value || ymd(new Date());
-  const rows = await PatientDb.listByDay(day);
+  const rows = await PatientDb.listByDate(day);
   s.tbody.replaceChildren();
   rowCache = new Map();
   activeRow = -1;

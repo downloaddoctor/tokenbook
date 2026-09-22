@@ -15,10 +15,8 @@ import { PatientDb } from '../core/db.js';
 import {
   csvHeaderLine,
   visitInputToLogLine,
-  refundInputToLogLine,
   csvToLog,
   parseBackup,
-  OP_REFUND,
 } from './csv.js';
 import { metaGet, metaSet, metaDel } from './meta.js';
 
@@ -36,6 +34,9 @@ let _dir = null;
 let _dirty = false;
 let _timer = null;
 let _writing = false;
+// In-flight flush promise. flush() chains onto it so concurrent callers
+// (debounced timer + explicit backupNow) serialize instead of one no-oping.
+let _flushPromise = null;
 let _lastAt = '';
 let _lastError = '';
 // Pending journal entries (raw inputs from addVisit / setVisitRefund).
@@ -146,8 +147,9 @@ async function readNewestSnapshot(dir) {
 
 
 
+// One encoder for both ops: refunds are full rows (see csv.js). op is a
+// provenance tag only, not a shape selector.
 function formatLogEntry(entry) {
-  if (entry.op === OP_REFUND) return refundInputToLogLine(entry);
   return visitInputToLogLine(entry);
 }
 
@@ -231,10 +233,12 @@ async function pickOrBackup() {
 function markDirty(entry) {
   if (!_dir) return;
   if (entry) {
-    // Dedupe within the pending window: same op + same (date, token) is a
-    // last-write-wins update, so replace in place rather than append twice.
-    const key = entry.op + '|' + entry.date + '|' + entry.token;
-    const idx = _pending.findIndex((e) => e.op + '|' + e.date + '|' + e.token === key);
+    // Dedupe within the pending window: (date, token) is the visit's upsert
+    // key in the DB, so a later write for the same key is a last-write-wins
+    // update — replace in place rather than append twice. Refund edits and
+    // visit adds share this key because both are full self-describing rows.
+    const key = entry.date + '|' + entry.token;
+    const idx = _pending.findIndex((e) => e.date + '|' + e.token === key);
     if (idx >= 0) _pending[idx] = entry;
     else _pending.push(entry);
   }
@@ -250,55 +254,78 @@ function markDirty(entry) {
 // log is append-only by design. A header is emitted once, when latest.csv is
 // first created (or recreated after a truncate).
 async function flush() {
-  if (!_dir || _writing) return;
+  if (!_dir) return;
+  // Serialize: chain onto any in-flight flush so a debounced write and an
+  // explicit backupNow() never race, and backupNow() never silently no-ops.
+  if (_flushPromise) {
+    await _flushPromise;
+    // Re-check after the in-flight flush — it may have drained _pending.
+    if (!_dir || (!_dirty && !_pending.length)) return;
+  }
+  if (_writing) return;
   if (!_dirty && !_pending.length) return;
   _writing = true;
-  try {
-    const perm = await _dir.queryPermission({ mode: 'readwrite' });
-    if (perm !== 'granted') {
-      _lastError = 'permission needed';
-      updateStatus();
-      return;
-    }
-    if (!_pending.length) {
+  _flushPromise = (async () => {
+    try {
+      const perm = await _dir.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        _lastError = 'permission needed';
+        return;
+      }
+      if (!_pending.length) {
+        _dirty = false;
+        return;
+      }
+
+      const exists = await fileExists(_dir, LATEST);
+      if (!exists) _needsHeader = true;
+
+      let payload = '';
+      if (_needsHeader) payload += csvHeaderLine() + '\n';
+      for (const entry of _pending) payload += formatLogEntry(entry) + '\n';
+
+      const before = exists ? await readLatest(_dir) : null;
+      await appendText(_dir, LATEST, payload);
+
+      // Verify the append landed: re-read and confirm the byte length grew by
+      // the payload size (or matches on a fresh file). Guards against a
+      // silently-failed write that would leave latest.csv stale.
+      const after = await readLatest(_dir);
+      const expectedLen = (before != null ? before.length : 0) + payload.length;
+      if (after == null || after.length !== expectedLen) {
+        _lastError = 'append verification failed';
+        return;
+      }
+      _needsHeader = false;
+      _pending = [];
+
+      // First write of the day: snapshot the whole log into a dated file so
+      // each day has a self-contained copy. Later appends only touch latest.
+      const day = PatientDb.localDay();
+      const snap = `apt-list-${day}.csv`;
+      if (!(await fileExists(_dir, snap))) {
+        const full = await readLatest(_dir);
+        if (full != null) await writeText(_dir, snap, full);
+        await pruneSnapshots(_dir);
+      }
+
       _dirty = false;
-      return;
+      _lastAt = new Date().toISOString();
+      _lastError = '';
+    } catch (e) {
+      _lastError = e && e.message ? e.message : String(e);
+    } finally {
+      _writing = false;
+      _flushPromise = null;
+      updateStatus();
     }
-
-    const exists = await fileExists(_dir, LATEST);
-    if (!exists) _needsHeader = true;
-
-    let payload = '';
-    if (_needsHeader) payload += csvHeaderLine() + '\n';
-    for (const entry of _pending) payload += formatLogEntry(entry) + '\n';
-
-    await appendText(_dir, LATEST, payload);
-    _needsHeader = false;
-    _pending = [];
-
-    // First write of the day: snapshot the whole log into a dated file so
-    // each day has a self-contained copy. Later appends only touch latest.
-    const day = PatientDb.localDay();
-    const snap = `apt-list-${day}.csv`;
-    if (!(await fileExists(_dir, snap))) {
-      const full = await readLatest(_dir);
-      if (full != null) await writeText(_dir, snap, full);
-      await pruneSnapshots(_dir);
-    }
-
-    _dirty = false;
-    _lastAt = new Date().toISOString();
-    _lastError = '';
-  } catch (e) {
-    _lastError = e && e.message ? e.message : String(e);
-  } finally {
-    _writing = false;
-    updateStatus();
-  }
+  })();
+  return _flushPromise;
 }
 
 async function backupNow() {
   _dirty = true;
+  _lastError = '';
   await flush();
   if (_lastError) throw new Error(_lastError);
   return { folderName: _dir ? _dir.name || '' : '', lastAt: _lastAt };
@@ -319,6 +346,19 @@ async function readLog() {
   } catch (e) {
     return { text: null, source: 'error', error: e && e.message ? e.message : String(e) };
   }
+}
+
+// Discard any queued journal entries and cancel the debounce timer before a
+// restore. Otherwise pre-restore lines would be appended to latest.csv AFTER
+// the replay commits, corrupting the log the next restore reads from.
+function resetPendingForRestore() {
+  if (_timer) {
+    clearTimeout(_timer);
+    _timer = null;
+  }
+  _pending = [];
+  _dirty = false;
+  _needsHeader = false;
 }
 
 async function restoreFromFolder() {
@@ -344,15 +384,17 @@ async function restoreFromFolder() {
     ops = csvToLog(snap);
     source = 'snapshot';
   }
-  const n = await PatientDb.replayLog(ops);
-  return { source, count: n, folderName: _dir.name || '' };
+  resetPendingForRestore();
+  const r = await PatientDb.replayLog(ops);
+  return { source, count: r.count, skipped: r.skipped, folderName: _dir.name || '' };
 }
 
 async function restoreFromFileObject(file) {
   const text = await file.text();
   const ops = parseBackup(text, file.name);
-  const n = await PatientDb.replayLog(ops);
-  return { mode: 'upload', filename: file.name, count: n };
+  resetPendingForRestore();
+  const r = await PatientDb.replayLog(ops);
+  return { mode: 'upload', filename: file.name, count: r.count, skipped: r.skipped };
 }
 
 // Fallback export: when File System Access is unavailable or the user cancels

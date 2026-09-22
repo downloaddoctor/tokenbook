@@ -175,7 +175,7 @@ function revalidateIdentity() {
 
 async function refreshNextToken() {
   const day = b.fDate.value || PatientDb.localDay();
-  const t = await PatientDb.nextTokenForDay(day);
+  const t = await PatientDb.nextTokenForDate(day);
   if (!b.fDate.value) b.fDate.value = day;
   b.fToken.value = String(t);
   tokenEdited = false;
@@ -190,7 +190,7 @@ async function onTokenChange() {
   const day = b.fDate.value.trim();
   const token = Number(b.fToken.value);
   if (!day || !Number.isInteger(token) || token < 1) return;
-  const found = await PatientDb.findVisitByDayToken(day, token);
+  const found = await PatientDb.findVisitByDateToken(day, token);
   if (!found) {
     loadedVisitId = null;
     setMsg(`Token ${token} is free on ${day}.`, 'ok');
@@ -583,9 +583,9 @@ async function submitBill() {
     fee,
     token: Number(b.fToken.value) || undefined,
     date: day,
-    patId,
+    personId: patId,
   };
-  let token = visitInput.token || (await PatientDb.nextTokenForDay(day));
+  let token = visitInput.token || (await PatientDb.nextTokenForDate(day));
   visitInput.token = token;
   let result;
   try {
@@ -596,7 +596,7 @@ async function submitBill() {
       return;
     }
     if (err && err.name === 'ConstraintError') {
-      token = await PatientDb.nextTokenForDay(day);
+      token = await PatientDb.nextTokenForDate(day);
       visitInput.token = token;
       result = await PatientDb.addVisit(visitInput);
     } else {
@@ -605,7 +605,7 @@ async function submitBill() {
   }
   const { rec, created } = result;
   // Echo the resolved person id back into the form so the next Save for the
-  // same patient carries an explicit patId (new patients get an id here).
+  // same patient carries an explicit personId (new patients get an id here).
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
   hideSuggests();
 

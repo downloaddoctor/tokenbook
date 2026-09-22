@@ -7,6 +7,13 @@ import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash } from './router.js';
 import { toast } from './toast.js';
 
+// Restore result message. Flags skipped rows so the operator knows the
+// restore was not 1:1 with the file.
+function restoreMsg(count, skipped, tail) {
+  const base = 'Restored ' + count + ' visits ' + tail + '.';
+  return skipped ? base + ' Skipped ' + skipped + ' bad row(s).' : base;
+}
+
 // Styled confirm used before a destructive restore. Returns true if the user
 // confirmed, false on cancel / Esc / backdrop.
 function restoreConfirm(folderName) {
@@ -81,7 +88,7 @@ function restoreConfirm(folderName) {
     if (!(await restoreConfirm(st.folderName))) return;
     try {
       const r = await PatientBackup.restoreFromFolder();
-      toast('Restored ' + r.count + ' visits from ' + r.source + '.', 'ok');
+      toast(restoreMsg(r.count, r.skipped, 'from ' + r.source), r.skipped ? 'err' : 'ok');
       router.activateTab(router.currentTab, true);
     } catch (err) {
       if (err && err.name === 'AbortError') return;
@@ -95,7 +102,7 @@ function restoreConfirm(folderName) {
     if (!f) return;
     try {
       const r = await PatientBackup.restoreFromFileObject(f);
-      toast('Restored ' + r.count + ' visits from ' + r.filename + '.', 'ok');
+      toast(restoreMsg(r.count, r.skipped, 'from ' + r.filename), r.skipped ? 'err' : 'ok');
       router.activateTab(router.currentTab, true);
     } catch (err) {
       toast('Restore failed: ' + err.message, 'err');

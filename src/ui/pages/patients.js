@@ -71,7 +71,7 @@ async function openHistory(personId) {
   for (const v of visits) {
     const tr = document.createElement('tr');
     for (const c of [
-      v.date || v.day,
+      v.date,
       v.token,
       v.age,
       v.gender || '',

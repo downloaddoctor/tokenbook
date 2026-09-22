@@ -3,19 +3,15 @@
 // contains the delimiter (names/mobs never do in practice, so no quoting in
 // the common case).
 //
-// One format: LOG_COLS — one op-tagged line per write. Restore replays each
-// line through addVisit / setVisitRefund. Every op=1 line is SELF-DESCRIBING
-// (full identity), so a line never depends on earlier lines.
+// One format: LOG_COLS. Every line is a FULL self-describing visit row, so a
+// line never depends on earlier lines. Restore reads the log in file order
+// and replays each row via addVisit({preserve}).
 //
 // Space choices:
 //   * delimiter is 1 byte ('|'), not U+2016 (3 bytes)
 //   * timestamps are epoch-SECONDS, not 24-char ISO strings
 
 export const CSV_DELIM = '|'; // 1 byte
-
-// Logbook op tags. op=1 = visit add, op=2 = refund edit.
-export const OP_VISIT = 1;
-export const OP_REFUND = 2;
 
 // Refund tier is a non-negative integer N; the amount is N * 100.
 // 0 (or blank) = no refund.
@@ -26,12 +22,11 @@ export function normalizeRefundTier(v) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-// Log line columns. Full rows — every op=1 line carries the complete visit.
+// Log line columns. Every line is a complete visit row.
 export const LOG_COLS = [
-  'op',
   'date',
   'token',
-  'patId',
+  'personId',
   'name',
   'mob',
   'age',
@@ -59,13 +54,14 @@ export function fromEpoch(v) {
   return Number.isFinite(n) ? new Date(n * 1000).toISOString() : null;
 }
 
-// Encode one op=1 journal entry. Full self-describing row.
+// Encode one journal entry. Full self-describing visit row.
+// One key everywhere: the DB row, the journal emit, and the log column all
+// use `personId`. Callers can pass the stored visit row verbatim.
 export function visitInputToLogLine(entry) {
   const row = {
-    op: entry.op != null ? entry.op : OP_VISIT,
     date: entry.date != null ? entry.date : '',
     token: entry.token != null ? entry.token : '',
-    patId: entry.patId != null ? entry.patId : '',
+    personId: entry.personId != null ? entry.personId : '',
     name: entry.name != null ? entry.name : '',
     mob: entry.mob != null ? entry.mob : '',
     age: entry.age != null ? entry.age : '',
@@ -81,27 +77,6 @@ export function visitInputToLogLine(entry) {
   return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
 }
 
-// Encode one op=2 refund edit. Only date/token/refundTier carry meaning.
-export function refundInputToLogLine(entry) {
-  const row = {
-    op: OP_REFUND,
-    date: entry.date,
-    token: entry.token,
-    patId: '',
-    name: '',
-    mob: '',
-    age: '',
-    gender: '',
-    weight: '',
-    followup: '',
-    payment: '',
-    fee: '',
-    refundTier: normalizeRefundTier(entry.refundTier),
-    createdAt: toEpoch(entry.createdAt),
-    updatedAt: toEpoch(entry.updatedAt),
-  };
-  return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
-}
 
 // Header for the logbook (what exportAll / append writers emit).
 export function csvHeaderLine() {
@@ -166,26 +141,21 @@ function parseLogLines(header, lines) {
   const ops = [];
   for (let i = 1; i < lines.length; i++) {
     const f = parseCsvLine(lines[i]);
+    // Short row = malformed / truncated write. Skip it rather than let it
+    // abort the entire atomic restore.
     if (f.length < header.length) continue;
-    const op = Number(f[col.op]) === OP_REFUND ? OP_REFUND : OP_VISIT;
     const token = Number(f[col.token]);
     const date = f[col.date] || '';
-    if (op === OP_REFUND) {
-      ops.push({
-        op: OP_REFUND,
-        date,
-        token,
-        refundTier: normalizeRefundTier(f[col.refundTier]),
-        updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
-      });
-      continue;
-    }
-    const patIdRaw = f[col.patId];
+    // A row must have a valid (date, token) to be replayable. Blank personId
+    // is also fatal for a row: replay keys on it, so a row without one is a
+    // corrupt line — skip it in parseLogLines rather than throw mid-replay.
+    const personIdRaw = f[col.personId];
+    const personId = personIdRaw === '' || personIdRaw == null ? null : Number(personIdRaw);
+    if (!date || !Number.isInteger(token) || token < 1 || personId == null) continue;
     ops.push({
-      op: OP_VISIT,
       date,
       token,
-      patId: patIdRaw === '' || patIdRaw == null ? null : Number(patIdRaw),
+      personId,
       name: String(f[col.name] || '').trim(),
       mob: String(f[col.mob] || '').trim(),
       age: numOrNull(f[col.age]),
@@ -203,6 +173,8 @@ function parseLogLines(header, lines) {
 }
 
 // Accepts a log CSV and returns replay ops. (Logbook only — no legacy formats.)
+// A .json file (accepted by the picker for legacy convenience) will fail the
+// header check and surface the friendly csvToLog error.
 export function parseBackup(text) {
   return csvToLog(text);
 }
