@@ -294,8 +294,26 @@
         <button id="btn-restore" type="button" title="Restore patients from folder or file">
           Restore
         </button>
+        <button id="btn-log" type="button" title="Show the append-only backup log">Log</button>
       </div>
     </footer>
+
+    <dialog id="log-dialog" class="modal-dialog">
+      <form method="dialog" class="modal-card">
+        <header class="modal-head">
+          <div>
+            <h2>Backup log</h2>
+            <p class="hint" id="log-sub"></p>
+          </div>
+        </header>
+        <div class="modal-body">
+          <pre id="log-body" class="log-view"></pre>
+        </div>
+        <footer class="modal-actions">
+          <button value="close" type="submit">Close</button>
+        </footer>
+      </form>
+    </dialog>
 
     <div id="toast-host" aria-live="polite" aria-atomic="true"></div>
 

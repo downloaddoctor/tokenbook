@@ -438,6 +438,19 @@ tbody tr.active:hover {
   border-top: 1px solid var(--line);
 }
 .modal-actions button { padding: 8px 14px; }
+.log-view {
+  margin: 0;
+  max-height: min(60vh, 480px);
+  overflow: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg, #f7f7f7);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
 
 /* toolbar */
 .toolbar {

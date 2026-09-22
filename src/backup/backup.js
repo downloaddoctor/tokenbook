@@ -306,6 +306,21 @@ async function backupNow() {
 
 // ---------- restore ----------
 
+// Read the current logbook text for display. Prefers latest.csv; falls back
+// to the newest daily snapshot. Returns { text, source }.
+async function readLog() {
+  if (!_dir) return { text: null, source: 'no-folder' };
+  try {
+    let text = await readLatest(_dir);
+    if (text != null) return { text, source: LATEST };
+    text = await readNewestSnapshot(_dir);
+    if (text != null) return { text, source: 'snapshot' };
+    return { text: null, source: 'empty' };
+  } catch (e) {
+    return { text: null, source: 'error', error: e && e.message ? e.message : String(e) };
+  }
+}
+
 async function restoreFromFolder() {
   if (!_dir) throw new Error('No backup folder set.');
   const perm = await _dir.queryPermission({ mode: 'readwrite' });
@@ -387,6 +402,7 @@ export const PatientBackup = {
   backupNow,
   restoreFromFolder,
   restoreFromFileObject,
+  readLog,
   downloadCsv,
   parseBackup,
   state: () => ({

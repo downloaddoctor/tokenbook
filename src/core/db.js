@@ -768,6 +768,7 @@ export const PatientDb = {
   daysBetween: _daysBetween,
   setVisitRefund,
   setJournal,
+  replayLog,
   refundAmountFor,
   exportAll,
 };

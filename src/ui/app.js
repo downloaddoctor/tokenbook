@@ -28,6 +28,7 @@ function restoreConfirm(folderName) {
 (async function boot() {
   const btnBackup = document.getElementById('btn-backup');
   const btnRestore = document.getElementById('btn-restore');
+  const btnLog = document.getElementById('btn-log');
   const fileRestore = document.getElementById('file-restore');
 
   const router = createRouter({
@@ -101,6 +102,31 @@ function restoreConfirm(folderName) {
     }
   });
 
+  if (btnLog) {
+    btnLog.addEventListener('click', async () => {
+      const dlg = document.getElementById('log-dialog');
+      const sub = document.getElementById('log-sub');
+      const body = document.getElementById('log-body');
+      if (!dlg || !sub || !body) return;
+      const r = await PatientBackup.readLog();
+      if (r.text == null) {
+        sub.textContent =
+          r.source === 'no-folder'
+            ? 'No backup folder set.'
+            : r.source === 'empty'
+              ? 'No log file yet.'
+              : 'Error: ' + (r.error || r.source);
+        body.textContent = '';
+      } else {
+        const lines = r.text.split('\n').filter((l) => l.length > 0);
+        sub.textContent = `${r.source} · ${Math.max(0, lines.length - 1)} entries`;
+        body.textContent = r.text.trimEnd();
+      }
+      dlg.returnValue = '';
+      dlg.showModal();
+    });
+  }
+
   try {
     await PatientDb.openDb();
   } catch (err) {
@@ -135,7 +161,7 @@ function restoreConfirm(folderName) {
       bSeed.addEventListener('click', async () => {
         bSeed.disabled = true;
         bClear.disabled = true;
-        const TOTAL = 100000;
+        const TOTAL = 100;
         try {
           const r = await seed({
             total: TOTAL,
