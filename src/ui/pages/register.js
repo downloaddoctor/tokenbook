@@ -15,14 +15,12 @@ let b;
 // of waiting for a click. Both default to production behavior.
 const testHooks = {
   suppressPrint: false,
-  answerIdentity: null, // null | 'update' | 'new' | 'reassign' | 'cancel'
   bypassLayoutCheck: false, // self-test: skip the paperstamp layout requirement
 };
 export function __setTestHooks(hooks) {
   if (!hooks) return;
   if ('suppressPrint' in hooks) testHooks.suppressPrint = !!hooks.suppressPrint;
   if ('bypassLayoutCheck' in hooks) testHooks.bypassLayoutCheck = !!hooks.bypassLayoutCheck;
-  if ('answerIdentity' in hooks) testHooks.answerIdentity = hooks.answerIdentity || null;
 }
 export function __getForm() {
   return b;
@@ -416,7 +414,6 @@ async function onSubmit(e) {
 // Ask the user how to proceed when the form's identity differs from the
 // linked patient. Returns 'update' | 'new' | 'cancel'.
 function askIdentityChange(person, current) {
-  if (testHooks.answerIdentity) return Promise.resolve(testHooks.answerIdentity);
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
     const sub = document.getElementById('pat-id-confirm-sub');
@@ -462,7 +459,6 @@ function askIdentityChange(person, current) {
 // Cancel. Reuses the same dialog element; falls back to 'reassign' if the
 // markup is missing so behavior degrades gracefully.
 function askReassign(linked, other, current) {
-  if (testHooks.answerIdentity) return Promise.resolve(testHooks.answerIdentity);
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
     const title = document.getElementById('pat-id-confirm-title');
@@ -486,18 +482,16 @@ function askReassign(linked, other, current) {
     sub.textContent = `Currently linked to patient #${linked.id}. A different patient already has this name + mobile.`;
     body.replaceChildren();
     const dl = document.createElement('dl');
-    const row = (label, from, to) => {
+    const row = (label, value) => {
       const dt = document.createElement('dt');
       dt.textContent = label;
       const dd = document.createElement('dd');
-      const f = from == null || from === '' ? '—' : String(from);
-      const t = to == null || to === '' ? '—' : String(to);
-      dd.textContent = f === t ? f : `${f} → ${t}`;
+      dd.textContent = value == null || value === '' ? '—' : String(value);
       dl.append(dt, dd);
     };
-    row('Linked', `#${linked.id} ${linked.name}`, '');
-    row('Reassign to', `#${other.id} ${other.name}`, '');
-    row('Mobile', other.mob, '');
+    row('Currently linked', `#${linked.id} ${linked.name}`);
+    row('Reassign to', `#${other.id} ${other.name}`);
+    row('Mobile', other.mob);
     body.appendChild(dl);
     const restore = () => {
       if (title) title.textContent = 'Update patient?';
@@ -572,12 +566,14 @@ async function submitBill() {
   // to proceed before writing anything.
   if (patId) {
     const p = await PatientDb.getPerson(patId);
+    // Identity unchanged -> nothing to resolve, no dialog. Just save.
     if (p && (p.name !== name || p.mob !== mob)) {
       // If the new (name, mob) belongs to a DIFFERENT existing patient, then
       // "Update" (rename A to the new identity) would collide. Only offer
       // "Use as new" (reassign the visit to that patient) or Cancel.
-      const clash = await PatientDb.searchPeopleByPrefix(name, 200);
-      const other = clash.find((x) => x.name === name && x.mob === mob && x.id !== patId);
+      // Exact compound-index lookup — a prefix search was the wrong tool.
+      const hit = await PatientDb.findPersonByNameMob(name, mob);
+      const other = hit && hit.id !== patId ? hit : null;
       if (other) {
         const choice = await askReassign(p, other, { name, mob, age, gender });
         if (choice === 'cancel') return;

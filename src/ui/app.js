@@ -156,17 +156,13 @@ function restoreConfirm(folderName) {
           router,
           onProgress: (name, ok, detail, status) => {
             if (name === '#stage') render('--- ' + detail + ' ---');
+            else if (name === '#info') render('    · ' + detail);
             else render((status || (ok ? 'PASS' : 'FAIL')) + ' ' + name + (detail ? '  (' + detail + ')' : ''));
           },
-          confirmReplay: async ({ visits, people }) => {
-            const ok = window.confirm(
-              'Replay is destructive: it CLEARS the database and rebuilds it from the log.\n\n' +
-                `Current DB: ${visits} visits, ${people} people.\n\nProceed with replay?`
-            );
-            if (ok) render('--- replay confirmed by user ---');
-            else render('--- replay CANCELLED by user ---');
-            return ok;
-          },
+          // No confirm: the self-test runs on an isolated DB
+          // (doctor-apt-list-devtest) that is dropped afterwards, so replay
+          // cannot destroy real data.
+          confirmReplay: async () => true,
         });
         const tally =
           `${r.passed} passed` +

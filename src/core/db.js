@@ -17,23 +17,49 @@ import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../back
 
 const DB_NAME = 'doctor-apt-list';
 
-const db = new Dexie(DB_NAME);
+// The active Dexie instance. Swappable so the self-test can run against an
+// isolated database (doctor-apt-list-devtest) and wipe/replay it without
+// touching real data. Default is the real DB_NAME.
+let _dbName = DB_NAME;
+let db = new Dexie(_dbName);
 // Schema history:
 //   v1: visits.day + [day+token]; log/API key patId
 //   v2: renamed to visits.date + [date+token]; log/API key personId
 //   v3: bump again so a browser holding a stale v1/v2 store recreates the
 //       object stores (and the [date+token] index) on next open. No prod
 //       data, so the rebuild just drops old rows.
-db.version(3).stores({
-  people: '++id, name, mob, [name+mob], updatedAt',
-  visits: '++id, mob, createdAt, date, [date+token], personId',
-});
+function _declareSchema(instance) {
+  instance.version(3).stores({
+    people: '++id, name, mob, [name+mob], updatedAt',
+    visits: '++id, mob, createdAt, date, [date+token], personId',
+  });
+}
+_declareSchema(db);
 
 // Shared open promise so concurrent callers get the same connection handle.
 let _openPromise = null;
 function openDb() {
   if (!_openPromise) _openPromise = db.open();
   return _openPromise;
+}
+
+// DEV/TEST ONLY: swap to a different database (e.g. the self-test DB). Closes
+// the current connection, recreates the Dexie instance + schema, and resets
+// the open promise. All PatientDb functions reference the module-level `db`,
+// so they follow the swap automatically.
+async function setDbName(name) {
+  const next = name || DB_NAME;
+  if (next === _dbName) return;
+  try { db.close(); } catch (e) { /* ignore */ }
+  _dbName = next;
+  db = new Dexie(_dbName);
+  _declareSchema(db);
+  _openPromise = null;
+}
+
+// DEV/TEST ONLY: delete the current database entirely.
+function deleteDb() {
+  return Dexie.delete(_dbName);
 }
 
 function nextTokenForDate(date) {
@@ -62,6 +88,29 @@ function findOrCreatePerson({ name, mob, age, gender }) {
     const id = await db.people.add({ name, mob, age, gender, createdAt: now, updatedAt: now });
     return { id, name, mob, age, gender, createdAt: now, updatedAt: now };
   });
+}
+
+// Delete a person row by exact (name, mob). DEV/TEST ONLY — the app itself
+// never deletes people (0-visit people are kept). Used by the self-test to
+// clean up its fixed TEST PATIENT identities between runs.
+async function deletePeopleByNameMob(name, mob) {
+  name = String(name || '').trim().toUpperCase();
+  mob = String(mob || '').trim();
+  if (!name || !mob) return 0;
+  return db.transaction('rw', db.people, async () => {
+    const rows = await db.people.where('[name+mob]').equals([name, mob]).toArray();
+    for (const p of rows) await db.people.delete(p.id);
+    return rows.length;
+  });
+}
+
+// Exact (name, mob) lookup via the compound index. Used to detect identity
+// collisions when an edit would rename a person onto another person's identity.
+function findPersonByNameMob(name, mob) {
+  name = String(name || '').trim().toUpperCase();
+  mob = String(mob || '').trim();
+  if (!name || !mob) return Promise.resolve(null);
+  return db.people.where('[name+mob]').equals([name, mob]).first();
 }
 
 // Prefix search on mobile number for billing autofill, most recently seen first.
@@ -310,17 +359,21 @@ function addVisit(input) {
 
     // ---- live save path: resolve identity + billing -------------------
     let person = null;
+    // Fast path: a linked person whose identity is UNCHANGED needs no
+    // [name+mob] lookup at all — an edit that doesn't touch the name/mobile
+    // must not run identity resolution.
+    let identityChanged = false;
     if (personId) {
       person = await db.people.get(personId);
+      if (person && (person.name !== name || person.mob !== mob)) identityChanged = true;
     }
     if (!person) {
       person = await db.people.where('[name+mob]').equals([name, mob]).first();
     }
     if (person) {
-      // Guard: if the identity is changing, no other person may already hold
-      // the target (name, mob) — the unique index would reject the put, but
-      // we want a clearer message for the UI to surface.
-      if (person.name !== name || person.mob !== mob) {
+      // Only when the identity is actually changing do we guard against
+      // another person already holding the target (name, mob).
+      if (identityChanged) {
         const clash = await db.people.where('[name+mob]').equals([name, mob]).first();
         if (clash && clash.id !== person.id) {
           const e = new Error('Another patient already has this name + mobile.');
@@ -467,19 +520,20 @@ async function _bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso) {
 
 // O(1) touch when a person's own visit was edited in place. lastVisitAt must
 // NOT be bumped to now — it reflects when the patient actually came. Identity
-// is refreshed only when the edited visit is still the person's newest.
+// is refreshed on EVERY edit (last-edited wins), not just when the edited
+// visit is the person's newest: any name/mob change must update the current
+// identity, and db.people.put() reindexes [name+mob] automatically.
 async function _touchPerson(personId, rec, visitCreatedAt, nowIso) {
   const p = await db.people.get(personId);
   if (!p) return;
-  const isNewest = !p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '');
-  if (isNewest) _applyIdentity(p, rec);
+  _applyIdentity(p, rec);
   p.updatedAt = nowIso;
   await db.people.put(p);
 }
 
 // Mirror a visit's identity snapshot onto the person row. `name/mob/age/
-// gender/weight` are the "latest known" values per schema; only called when
-// the source visit is the person's newest.
+// gender/weight` are the "latest known" values per schema. Called on every
+// identity edit (last-edited wins), and on gain when the visit is newest.
 function _applyIdentity(p, rec) {
   if (!p || !rec) return;
   p.name = String(rec.name || p.name || '').trim().toUpperCase();
@@ -495,15 +549,19 @@ function _applyIdentity(p, rec) {
 //                  actually came", NOT when the row was touched
 //   name/mob/age/gender/weight = snapshot of the newest visit
 //   updatedAt    = now (row-touch timestamp; used only for sort)
-// If the person has no visits left, the row is deleted (orphan).
-// Must be called AFTER any visit write that could change who owns which
-// visits, and it queries by the (already-updated) personId index.
+// If the person has no visits left, the row is kept with visits=0 and its
+// last-known identity (stale people are NOT deleted). Must be called AFTER any
+// visit write that could change who owns which visits, and it queries by the
+// (already-updated) personId index.
 async function _recomputePerson(personId) {
   const p = await db.people.get(personId);
   if (!p) return;
   const visits = await db.visits.where('personId').equals(personId).toArray();
   if (!visits.length) {
-    await db.people.delete(personId);
+    p.visits = 0;
+    p.lastVisitAt = undefined;
+    p.updatedAt = new Date().toISOString();
+    await db.people.put(p);
     return;
   }
   let newest = visits[0];
@@ -512,11 +570,10 @@ async function _recomputePerson(personId) {
   }
   p.visits = visits.length;
   p.lastVisitAt = newest.createdAt || undefined;
-  p.name = String(newest.name || p.name || '').trim().toUpperCase();
-  p.mob = newest.mob != null ? newest.mob : p.mob;
-  p.age = newest.age;
-  if (newest.gender) p.gender = newest.gender;
-  if (newest.weight != null) p.weight = newest.weight;
+  // Identity (name/mob/age/gender/weight) is NOT re-derived here. It is owned
+  // by explicit edits via _applyIdentity (last-edited wins). Re-deriving it
+  // from the newest visit snapshot would silently revert a rename whenever
+  // this person's visit set changes (e.g. a visit is reassigned away).
   p.updatedAt = new Date().toISOString();
   await db.people.put(p);
 }
@@ -529,8 +586,9 @@ function listByDate(date) {
 }
 
 // Delete every visit on `date` and recompute the people projection for the
-// affected people (orphans are removed). Used by the dev self-test to clean up
-// its isolated test date. Returns { visits, people } counts removed.
+// affected people (0-visit people are KEPT, not deleted). Used by the dev
+// self-test to clean up its isolated test date. Returns { visits, people }
+// counts removed (people is always 0 now).
 async function deleteVisitsByDate(date) {
   return db.transaction('rw', db.people, db.visits, async () => {
     const rows = await db.visits
@@ -542,15 +600,13 @@ async function deleteVisitsByDate(date) {
       if (v.personId != null) peopleBefore.add(v.personId);
       await db.visits.delete(v.id);
     }
-    let peopleRemoved = 0;
+    // People are KEPT with visits=0 (no orphan delete), so nothing is removed.
     for (const pid of peopleBefore) {
       const p = await db.people.get(pid);
       if (!p) continue;
       await _recomputePerson(pid);
-      const still = await db.people.get(pid);
-      if (!still) peopleRemoved++;
     }
-    return { visits: rows.length, people: peopleRemoved };
+    return { visits: rows.length, people: 0 };
   });
 }
 
@@ -776,6 +832,8 @@ export { db };
 
 export const PatientDb = {
   openDb,
+  setDbName,
+  deleteDb,
   localDay,
   nextTokenForDate,
   findOrCreatePerson,
@@ -790,6 +848,8 @@ export const PatientDb = {
   countPeople,
   getPerson,
   searchPeopleByPrefix,
+  findPersonByNameMob,
+  deletePeopleByNameMob,
   visitCountsForPeople,
   visitsForPerson,
   findVisitByDateToken,

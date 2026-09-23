@@ -93,7 +93,11 @@ addVisit is the ONLY write entry point; both live and restore funnel into _write
 _writeVisit(rec, nowIso, log=true) journals the committed row itself; restore passes log=false
 Journal buffered per Dexie transaction; released on 'complete', dropped on 'abort'/'error'
   (rolled-back writes never reach the log)
-people projection = {visits count, lastVisitAt=max createdAt, newest visit's identity}
+people projection = {visits count, lastVisitAt=max createdAt}; identity is NOT derived from visits
+identity ownership: current name/mob/age/gender/weight set only by explicit edits (_touchPerson/_applyIdentity, last-edited wins) or on gaining a newest visit (_bumpPersonOnGain); _recomputePerson never rewrites identity (would revert renames)
+addVisit fast path: linked personId + unchanged name/mob skips [name+mob] lookup and clash check (plain edits do no identity resolution)
+0-visit people are KEPT (visits=0, identity preserved); orphans are NOT deleted by app code
+deletePeopleByNameMob(name,mob) deletes a person row exactly — DEV/TEST ONLY (self-test cleanup)
 Follow-up window = 6 calendar days anchored on last PAID visit; fee forced to 0 when followup=1
 Log is append-only; one full self-describing row per write; delimiter '|'; timestamps epoch-seconds
 Log columns (LOG_COLS): date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
@@ -112,4 +116,6 @@ Default print layout: edit src/print/defaultLayout.js
 Log format: LOG_COLS in src/backup/csv.js (keep parse/encode in sync; header rename is breaking)
 Journal consumers: PatientDb.setJournal(fn)
 Self-test: src/dev/selftest.js runSelfTest({onProgress,confirmReplay,router}); register test hooks gate print/dialogs
+Self-test isolation: setDbName('doctor-apt-list-devtest') + PatientBackup.setLogFileName('apt-list-latest-devtest.csv'); DB dropped + name/log restored after; runs on current local day; replay auto-runs (no confirm — isolated)
+PatientDb.setDbName/deleteDb + PatientBackup.setLogFileName/deleteLog are DEV/TEST ONLY (self-test isolation)
 Backup dir handle: backup/meta.js (its own IDB, not Dexie)

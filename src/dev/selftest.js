@@ -4,16 +4,22 @@
 // read-side (tokens list + patient history) and the backup log. Reports
 // progress and a final per-check pass/fail.
 //
-// Uses date '1970-01-01' so test rows are isolated. NOT imported by prod
-// pages; wired from app.js. Replay is destructive and gated by confirmReplay.
+// Runs on the current local day against an ISOLATED DB + log, so it never
+// touches real data. NOT imported by prod pages; wired from app.js.
+// Replay auto-runs (safe: isolated DB is dropped afterwards).
 
 import { PatientDb } from '../core/db.js';
 import { PatientBackup } from '../backup/backup.js';
+import { localDay } from '../core/day.js';
 
-const TEST_DATE = '1970-01-01';
+// The test runs on the CURRENT local day. Safe because the self-test uses an
+// isolated DB (doctor-apt-list-devtest) + isolated log (devtest csv), so there
+// is no real data on this day to collide with; cleanup deletes by this date.
+const TEST_DATE = localDay();
 const NAME_A = 'TEST PATIENT A';
 const MOB_A = '0000000001';
 const NAME_B = 'TEST PATIENT B';
+const NAME_BN = 'TEST PATIENT B2';
 const MOB_B = '0000000002';
 
 function makeReporter(onProgress) {
@@ -40,8 +46,14 @@ function makeReporter(onProgress) {
       emit({ name, ok: true, status: 'SKIP', detail: detail || '' });
       return true;
     },
+    // Informational line — shown in the dialog but NOT counted as a check.
+    info(text) {
+      if (onProgress) onProgress('#info', true, text);
+      return true;
+    },
   };
 }
+
 
 function settle(ms) {
   return new Promise((r) => setTimeout(r, ms == null ? 2200 : ms));
@@ -90,6 +102,39 @@ async function submitForm(form, register) {
   return null;
 }
 
+// Real-click driver for the identity dialog: submitBill() awaits the dialog's
+// close event, so the button must be clicked WHILE the submit promise is
+// pending. `choice` is the button's value ('update' | 'new' | 'cancel' |
+// 'reassign'). Resolves once the dialog has been opened and clicked, or with
+// an error string if the dialog never appeared.
+async function clickDialog(choice, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs == null ? 3000 : timeoutMs);
+  while (Date.now() < deadline) {
+    const dlg = document.getElementById('pat-id-confirm');
+    if (dlg && dlg.open) {
+      const btns = dlg.querySelectorAll('#pat-id-confirm-actions button');
+      let target = null;
+      for (const btn of btns) if (btn.value === choice) target = btn;
+      if (!target) return 'dialog open but no button value=' + choice;
+      target.click();
+      await settle(150);
+      return null;
+    }
+    await settle(50);
+  }
+  return 'identity dialog did not open for choice=' + choice;
+}
+
+// Submit and answer a dialog in parallel: kick off the submit, click the
+// dialog button, then await the submit result.
+async function submitWithDialog(form, register, choice) {
+  const submitP = submitForm(form, register);
+  const clickP = clickDialog(choice);
+  const clickErr = await clickP;
+  const submitErr = await submitP;
+  return clickErr || submitErr;
+}
+
 // Shift a 'YYYY-MM-DD' string by -offsetDays.
 function shiftDate(dateStr, offsetDays) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -132,17 +177,43 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const rep = makeReporter(onProgress);
   const stage = (s) => onProgress && onProgress('#stage', true, s);
 
+  // Run against an ISOLATED database so replay can wipe/rebuild freely without
+  // touching real data — which is why no destructive confirm is needed here.
+  await PatientDb.setDbName('doctor-apt-list-devtest');
+  await PatientDb.openDb();
+  // Isolate the backup LOG too, so test rows never pollute the real log file.
+  // Delete any devtest log from a prior run so each run starts fresh with a
+  // header (the replay parser requires the header on line 1).
+  PatientBackup.setLogFileName('apt-list-latest-devtest.csv');
+  await PatientBackup.deleteLog().catch(() => {});
+
   const register = await import('../ui/pages/register.js');
-  register.__setTestHooks({ suppressPrint: true, bypassLayoutCheck: true, answerIdentity: null });
+  register.__setTestHooks({ suppressPrint: true, bypassLayoutCheck: true });
 
   if (router && router.activateTab) router.activateTab('register', true);
   await settle(350);
   const b = register.__getForm();
   if (!b || !b.form) {
     rep.check('register form mounted', false, 'could not access #patient-form');
+    await PatientDb.deleteDb().catch(() => {});
+    await PatientDb.setDbName(null).catch(() => {});
+    PatientBackup.setLogFileName(null);
     return finish(rep);
   }
   rep.check('register form mounted', true);
+
+  // Pre-clean: purge any residue from a previous run (its fixed TEST PATIENT
+  // identities and test-date visits). People are not auto-deleted on 0 visits,
+  // so without this a prior run's rows collide with this run's lookups. Keeps
+  // the self-test idempotent — green on the first run, no manual reset.
+  await PatientDb.deletePeopleByNameMob(NAME_A, MOB_A).catch(() => 0);
+  await PatientDb.deletePeopleByNameMob(NAME_B, MOB_B).catch(() => 0);
+  await PatientDb.deletePeopleByNameMob(NAME_BN, MOB_B).catch(() => 0);
+  await PatientDb.deletePeopleByNameMob('TEST PATIENT C', '0000000003').catch(() => 0);
+  await PatientDb.deletePeopleByNameMob('TEST PATIENT D', '0000000004').catch(() => 0);
+  await PatientDb.deleteVisitsByDate(TEST_DATE).catch(() => null);
+  await PatientDb.deleteVisitsByDate(shiftDate(TEST_DATE, 6)).catch(() => null);
+  await PatientDb.deleteVisitsByDate(shiftDate(TEST_DATE, 7)).catch(() => null);
 
   const st = PatientBackup.state();
   const hasFolder = st.hasFolder;
@@ -158,22 +229,33 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
       setVal(b.fDate, date || TEST_DATE);
       await settle(400);
     }
+
     if (token) {
       setVal(b.fToken, String(token));
       await settle(400);
     }
+
     if (patientId) {
       setVal(b.fPatientId, String(patientId));
       await settle(400);
     }
-    if (name) setVal(b.fName, name);
-    if (mob) setVal(b.fMob, mob);
-    if (age) setVal(b.fAge, age);
+    
+    if (name) {
+      setVal(b.fName, name);
+      await settle(350);
+    }
+
+    if (mob) {
+      setVal(b.fMob, mob);
+      await settle(350);
+    }
+
+    if (age) setVal(b.fAge, String(age));
     if (gender) setVal(b.fGender, gender);
     if (weight) setVal(b.fWeight, weight);
     if (payment) setVal(b.fPayment, payment);
     if (followup) setVal(b.fFollowup, String(followup));
-    await settle(120);
+    await settle(350);
   };
 
   // ---- 1. FIRST VISIT (paid) -------------------------------------------
@@ -222,14 +304,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   stage('4. edit visit (token 1)');
   register.startNewBill();
   await settle(350);
-  await fill({ date: TEST_DATE, token: 1 });
+  await fill({ date: TEST_DATE, token: 1, age: 41 });
   rep.eq('edit: form loaded name', (b.fName.value || '').toUpperCase(), NAME_A);
-  setVal(b.fAge, '41');
-  // Keep it a PAID visit: the follow-up rule may have flipped it to free when
-  // the visit loaded (patient A has a same-day paid visit). Force paid so the
-  // refund stage that follows can open the dialog.
-  // setVal(b.fFollowup, '0');
-  await settle(200);
   const err4 = await submitForm(b.form, register);
   rep.check('edit: submit ok', !err4, err4 || '');
 
@@ -241,35 +317,84 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   stage('5. reassign visit (token 1 -> patient B)');
   register.startNewBill();
   await settle(350);
-  await fill({ date: TEST_DATE, token: 1 });
-  const beforeAssign = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
-  if (!beforeAssign || !beforeAssign.visit) {
-    rep.check('reassign: token 1 present before reassign', false, 'token 1 missing');
-  } else {
-    setVal(b.fPatientId, String(pidB));
-    await settle(400);
-    rep.eq('reassign: form loaded patient B name', (b.fName.value || '').toUpperCase(), NAME_B);
-    // Keep it PAID so the refund stage can exercise the dialog.
-    // setVal(b.fFollowup, '0');
-    await settle(150);
-    const err5 = await submitForm(b.form, register);
-    rep.check('reassign: submit ok', !err5, err5 || '');
+  await fill({ date: TEST_DATE, token: 1, patientId: pidB });
 
-    const v1c = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
-    rep.check(
-      'reassign: visit now points at patient B',
-      v1c && v1c.visit.personId === pidB,
-      v1c ? 'personId=' + v1c.visit.personId + ' (B=' + pidB + ')' : 'no visit'
-    );
-    const aPerson = await PatientDb.getPerson(pidA);
-    const aVisits = aPerson ? aPerson.visits : 0;
-    rep.check('reassign: patient A visit count = 1', aVisits === 1, 'A.visits=' + aVisits);
-  }
+  rep.eq('reassign: form loaded patient B name', (b.fName.value || '').toUpperCase(), NAME_B);
+  const err5 = await submitForm(b.form, register);
+  rep.check('reassign: submit ok', !err5, err5 || '');
 
   const v1c = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
-  if (!v1c) {
+  rep.check(
+    'reassign: visit now points at patient B',
+    v1c && v1c.visit.personId === pidB,
+    v1c ? 'personId=' + v1c.visit.personId + ' (B=' + pidB + ')' : 'no visit'
+  );
+  const aPerson = await PatientDb.getPerson(pidA);
+  const aVisits = aPerson ? aPerson.visits : 0;
+  rep.check('reassign: patient A visit count = 1', aVisits === 1, 'A.visits=' + aVisits);
+
+  // ---- 5b. IDENTITY-CHANGE dialog (edit a linked patient's name) -------
+  // Load token 1 (now patient B), change the name so it no longer matches B,
+  // then CLICK the real dialog's "Update patient" button. The person's name
+  // should change and the visit must stay linked to B.
+  stage('5b. identity-change dialog (update)');
+  register.startNewBill();
+  await settle(350);
+  await fill({ date: TEST_DATE, token: 1 });
+  rep.eq('id-dialog: loaded patient B', (b.fName.value || '').toUpperCase(), NAME_B);
+  setVal(b.fName, NAME_BN);
+  await settle(150);
+  const err5b = await submitWithDialog(b.form, register, 'update');
+  await settle(350);
+  rep.check('id-dialog: submit ok', !err5b, err5b || '');
+  const bPerson = await PatientDb.getPerson(pidB);
+  rep.eq('id-dialog: patient B renamed', bPerson && bPerson.name, NAME_BN);
+  const v1d = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rep.eq('id-dialog: visit still linked to B', v1d && v1d.visit.personId, pidB);
+
+  // ---- 5c. REASSIGN dialog (identity collides with another patient) ----
+  // Change the linked patient B's identity to patient A's name + mobile. This
+  // collides, so the reassign dialog appears. Click its Cancel first (must
+  // change nothing), then click Reassign (visit moves to patient A).
+  stage('5c. reassign dialog (collision)');
+  register.startNewBill();
+  await settle(350);
+  await fill({ date: TEST_DATE, token: 1, name: NAME_A, mob: MOB_A });
+  await settle(150);
+  const err5cCancel = await submitWithDialog(b.form, register, 'cancel');
+  await settle(350);
+  rep.check('reassign-dialog: cancel submit ok', !err5cCancel, err5cCancel || '');
+  const v1e = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rep.eq('reassign-dialog: cancel left personId on B', v1e && v1e.visit.personId, pidB);
+  
+  await settle(350);
+  await fill({ date: TEST_DATE, token: 1, name: NAME_A, mob: MOB_A });
+  const err5c = await submitWithDialog(b.form, register, 'reassign');
+  await settle(350);
+  rep.check('reassign-dialog: reassign submit ok', !err5c, err5c || '');
+  const v1f = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rep.eq('reassign-dialog: visit moved to patient A', v1f && v1f.visit.personId, pidA);
+  
+  // Move token 1 back to patient B so downstream refund/log/read stages see
+  // the state they assert (token 1 -> B). B was renamed in stage 5b, so its
+  // current identity is (TEST PATIENT B2, MOB_B).
+  register.startNewBill();
+  await settle(350);
+  await fill({ date: TEST_DATE, token: 1 });
+  setVal(b.fName, NAME_BN);
+  setVal(b.fMob, MOB_B);
+  setVal(b.fAge, '46');
+  await settle(150);
+  const err5cBack = await submitWithDialog(b.form, register, 'reassign');
+  rep.check('reassign-dialog: return-to-B submit ok', !err5cBack, err5cBack || '');
+  const v1g = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rep.eq('reassign-dialog: token 1 back on patient B', v1g && v1g.visit.personId, pidB);
+  rep.eq('debug: token1 age after return-to-B', v1g && v1g.visit.age, 46);
+
+  const v1h = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  if (!v1h) {
     rep.check('refund: token 1 visit present', false, 'no token 1 visit; cannot test refund');
-    register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false, answerIdentity: null });
+    register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false });
     return finish(rep);
   }
 
@@ -343,8 +468,11 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     if (f1) {
       // date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
       rep.eq('log: row1 personId = B', Number(f1[2]), pidB);
-      rep.eq('log: row1 age = 41', Number(f1[6]), 41);
+      rep.eq('log: row1 age = 46', Number(f1[5]), 46);
       rep.eq('log: row1 refundTier = 2', Number(f1[11]), 2);
+      // Show the REAL log file content, verbatim (no reformatting).
+      rep.info('----- BACKUP LOG (' + logRows(text).length + ' rows) -----');
+      for (const l of text.split('\n')) rep.info(l);
     }
 
     stage('8. replay (wipes + rebuilds from log)');
@@ -393,12 +521,27 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     const fc = await PatientDb.findVisitByDateToken(date6, 1);
     const fd = await PatientDb.findVisitByDateToken(date7, 1);
     rep.check('cleanup: boundary rows gone', !fc && !fd);
+
+    // People are NOT auto-deleted on 0 visits, so the test must purge its own
+    // fixed TEST PATIENT identities or the next run collides with them.
+    let peopleRemoved = 0;
+    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_A, MOB_A);
+    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_B, MOB_B);
+    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_BN, MOB_B);
+    peopleRemoved += await PatientDb.deletePeopleByNameMob('TEST PATIENT C', '0000000003');
+    peopleRemoved += await PatientDb.deletePeopleByNameMob('TEST PATIENT D', '0000000004');
+    rep.check('cleanup: test people removed from DB', true, 'people removed=' + peopleRemoved);
   } catch (e) {
     rep.check('cleanup: test visits removed from DB', false, e && e.message ? e.message : String(e));
   }
 
-  register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false, answerIdentity: null });
+  register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false });
   if (router && router.activateTab) router.activateTab(router.currentTab, true);
+
+  // Drop the isolated test DB and restore the real DB name + log file.
+  await PatientDb.deleteDb().catch(() => {});
+  await PatientDb.setDbName(null).catch(() => {});
+  PatientBackup.setLogFileName(null);
 
   return finish(rep);
 }
@@ -412,9 +555,13 @@ async function doReplay(rep, text, preVisits, prePeople) {
   rep.check('replay: token 1 restored', !!after);
   if (after) {
     rep.eq('replay: restored refundTier = 2', after.visit.refundTier, 2);
-    rep.eq('replay: restored age = 41', after.visit.age, 41);
+    rep.eq('replay: restored age = 46', after.visit.age, 46);
   }
   rep.check('replay: pre-replay DB had rows', preVisits > 0, 'visits=' + preVisits + ' people=' + prePeople);
+  // Show what replay restored for the test day, verbatim from the DB rows.
+  const dayRows = await PatientDb.listByDate(TEST_DATE);
+  rep.info('----- RESTORED VISITS (' + dayRows.length + ') -----');
+  for (const v of dayRows) rep.info(JSON.stringify(v));
 }
 
 function finish(rep) {

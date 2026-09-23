@@ -20,7 +20,25 @@ import {
 } from './csv.js';
 import { metaGet, metaSet, metaDel } from './meta.js';
 
-const LATEST = 'apt-list-latest.csv';
+// Active log file name. Swappable so the self-test writes its own log
+// (apt-list-latest-devtest.csv) instead of polluting the real one.
+let LATEST = 'apt-list-latest.csv';
+const DEFAULT_LATEST = LATEST;
+// DEV/TEST ONLY: point the log file at a different name (null = default).
+function setLogFileName(name) {
+  LATEST = name || DEFAULT_LATEST;
+}
+// DEV/TEST ONLY: delete the current log file from the folder (fresh start).
+async function deleteLog() {
+  if (!_dir) return false;
+  try {
+    await _dir.removeEntry(LATEST);
+    _needsHeader = true; // next flush re-emits the header
+    return true;
+  } catch (e) {
+    return false; // not present
+  }
+}
 const SNAP_RE = /^apt-list-(\d{4}-\d{2}-\d{2})\.csv$/;
 const KEEP_SNAPSHOTS = 30;
 const DEBOUNCE_MS = 2000;
@@ -441,6 +459,8 @@ export const PatientBackup = {
   pickOrBackup,
   markDirty,
   flush,
+  setLogFileName,
+  deleteLog,
   backupNow,
   restoreFromFolder,
   restoreFromFileObject,
