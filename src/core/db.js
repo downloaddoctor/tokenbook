@@ -1,5 +1,5 @@
 // IndexedDB wrapper for patient records. Backed by Dexie.
-// DB: doctor-apt-list, v6. Two stores:
+// DB: doctor-apt-list, v1. Two stores:
 //   people  — one row per unique (name, mob) identity. keyPath id, autoIncrement.
 //             unique index [name+mob]. Holds latest known age/gender. Used for
 //             uniqueness enforcement and register autofill/search.
@@ -51,14 +51,10 @@ class DB {
     this._journalBuffers = new Map();
   }
 
-  // Schema history:
-  //   v1: visits.day + [day+token]; log/API key patId
-  //   v2: renamed to visits.date + [date+token]; log/API key personId
-  //   v3: bump again so a browser holding a stale v1/v2 store recreates the
-  //       object stores (and the [date+token] index) on next open. No prod
-  //       data, so the rebuild just drops old rows.
+  // Single declared version. No production data yet, so the schema can be
+  // reset freely; the declared number only needs to be self-consistent.
   _declareSchema(instance) {
-    instance.version(3).stores({
+    instance.version(1).stores({
       people: '++id, name, mob, [name+mob], updatedAt',
       visits: '++id, mob, createdAt, date, [date+token], personId',
     });
@@ -150,27 +146,17 @@ class DB {
     return this._db.people.where('[name+mob]').equals([name, mob]).first();
   }
 
-  // Prefix search on mobile number for billing autofill, most recently seen first.
+  // Prefix search on mobile number for autofill. Matches as-is (no reordering).
   searchPeopleByMob(prefix, limit = 8) {
     if (!prefix) return Promise.resolve([]);
-    return this._db.people
-      .where('mob')
-      .startsWith(prefix)
-      .reverse()
-      .sortBy('updatedAt')
-      .then((rows) => rows.slice(0, limit));
+    return this._db.people.where('mob').startsWith(prefix).limit(limit).toArray();
   }
 
-  // Prefix search on name for billing autofill, most recently seen first.
+  // Prefix search on name for autofill. Matches as-is (no reordering).
   searchPeopleByName(prefix, limit = 8) {
     prefix = String(prefix || '').trim().toUpperCase();
     if (!prefix) return Promise.resolve([]);
-    return this._db.people
-      .where('name')
-      .startsWith(prefix)
-      .reverse()
-      .sortBy('updatedAt')
-      .then((rows) => rows.slice(0, limit));
+    return this._db.people.where('name').startsWith(prefix).limit(limit).toArray();
   }
 
   // Upsert a visit, keyed on (date, token). `date` comes from the form's date

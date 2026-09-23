@@ -58,7 +58,7 @@ export function createRouter({ pages, onNewBill } = {}) {
       if (e.ctrlKey === e.altKey) return; // require exactly one of Ctrl/Alt
       if (e.altKey && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
-        if (currentTab !== 'billing') activateTab('billing');
+        if (currentTab !== 'register') activateTab('register');
         if (typeof onNewBill === 'function') onNewBill();
         return;
       }
