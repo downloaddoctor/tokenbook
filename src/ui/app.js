@@ -4,7 +4,7 @@
 import db from '../core/db.js';
 import backup, { hasFsAccess } from '../backup/backup.js';
 import { Pages } from './pages/index.js';
-import { createRouter, routeFromHash } from './router.js';
+import { createRouter, routeFromHash, setRouter } from './router.js';
 import { toast } from './toast.js';
 
 // Restore result message. Flags skipped rows so the operator knows the
@@ -45,7 +45,25 @@ function restoreConfirm(folderName) {
       if (Pages.register && Pages.register.startNewBill) Pages.register.startNewBill();
     },
   });
+  setRouter(router);
   router.wire();
+
+  // Alt+H: open the history modal for the patient id currently entered in
+  // the Register form (works from any tab; focuses Register if needed).
+  window.addEventListener('keydown', async (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== 'h' && e.key !== 'H') return;
+    e.preventDefault();
+    if (router.currentTab !== 'register') router.activateTab('register');
+    const idEl = document.getElementById('f-patient-id');
+    const id = idEl ? Number(idEl.value) : 0;
+    if (!id) {
+      toast('No patient ID in the form.', 'err');
+      return;
+    }
+    const { openHistory } = await import('./history.js');
+    await openHistory(id);
+  });
 
   btnBackup.addEventListener('click', async () => {
     // No File System Access -> CSV download instead of picking a folder.

@@ -203,29 +203,51 @@ async function onTokenChange() {
     return;
   }
   const { visit, person } = found;
-  
   setFollowupNote('');
   hideSuggests();
   setMsg(
     `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.id + ')' : ''}.`,
     'ok'
   );
+  loadVisitIntoForm(visit, person);
+}
 
+// Fill the form from a visit (edit mode). Shared by onTokenChange and
+// editVisitById so the Tokens page can jump straight into a row.
+function loadVisitIntoForm(visit, person) {
+  if (!b) return;
+  hideSuggests();
+  b.fDate.value = visit.date;
+  b.fToken.value = String(visit.token);
   b.fName.value = (visit.name || '').toUpperCase();
   b.fMob.value = visit.mob || '';
   b.fAge.value = String(visit.age);
-  b.fGender.value = visit.gender || person?.gender || 'M';
+  b.fGender.value = visit.gender || (person && person.gender) || 'M';
   b.fWeight.value = String(visit.weight);
   b.fFollowup.value = visit.followup ? '1' : '0';
   b.fPayment.value = visit.payment ? '1' : '0';
   b.fFee.value = String(visit.fee);
   if (visit.followup) lockFee(visit.fee);
   else unlockFee();
-  
-  b.fPatientId.value = person ? String(person.id) : visit.personId != null ? String(visit.personId) : '';
+  b.fPatientId.value =
+    person && person.id != null
+      ? String(person.id)
+      : visit.personId != null
+        ? String(visit.personId)
+        : '';
   loadedVisitId = visit.id;
-  
   refreshPreview();
+}
+
+// Public: load a visit into the Register form for editing. Used by the
+// Tokens page on Enter. `visit` is the row object (has personId); person is
+// resolved here so callers don't have to.
+export async function editVisit(visit) {
+  if (!visit) return false;
+  let person = null;
+  if (visit.personId != null) person = await db.getPerson(visit.personId);
+  loadVisitIntoForm(visit, person);
+  return true;
 }
 
 // Date change: if token has not been hand-edited, recompute the next token

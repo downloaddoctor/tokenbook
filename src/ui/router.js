@@ -4,6 +4,16 @@
 
 export const ROUTES = ['register', 'tokens', 'patients', 'printLayout'];
 
+// Module-level holder so page modules can ask the router to switch tabs
+// without threading a reference through mount(). Set once in app.js.
+let _router = null;
+export function setRouter(r) {
+  _router = r;
+}
+export function getRouter() {
+  return _router;
+}
+
 // Route id -> DOM section id. Route ids use camelCase; section ids use
 // kebab-case for readability. Keep them in sync via this map.
 const PAGE_ID = {

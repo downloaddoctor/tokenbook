@@ -407,6 +407,81 @@ tbody tr.active:hover {
   overflow-y: auto;
   min-height: 0;
 }
+.hx-list {
+  padding: 12px 16px 16px 20px;
+}
+.hx-item {
+  position: relative;
+  padding: 0 0 14px 22px;
+}
+.hx-item::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 14px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--line);
+}
+.hx-item:last-child::before {
+  display: none;
+}
+.hx-dot {
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.hx-item.followup .hx-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px #d1fae5;
+}
+.hx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+.hx-date {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hx-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.hx-item.followup .hx-badge {
+  background: #d1fae5;
+  color: var(--ok);
+}
+.hx-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hx-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hx-item.hx-active .hx-body {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.hx-item {
+  cursor: pointer;
+}
 .modal-card table {
   width: 100%;
   border-collapse: collapse;

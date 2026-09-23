@@ -3,6 +3,7 @@
 
 import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
+import { openHistory } from '../history.js';
 
 const PAGE = 50;
 let st;
@@ -82,42 +83,6 @@ async function render() {
   st.countEl.textContent = total + ' patient' + (total === 1 ? '' : 's');
 }
 
-async function openHistory(personId) {
-  let p = st.cache.get(personId);
-  if (!p) p = await db.getPerson(personId);
-  const visits = await db.visitsForPerson(personId);
-  st.modalName.textContent = p ? p.name : `Patient #${personId}`;
-  st.modalMeta.textContent = p
-    ? `${p.mob} · Age ${p.age} · ${p.gender || '—'}${p.weight != null ? ' · ' + p.weight + ' kg' : ''}`
-    : '';
-  st.modalBody.replaceChildren();
-  for (const v of visits) {
-    const tr = document.createElement('tr');
-    for (const c of [
-      v.date,
-      v.token,
-      v.age,
-      v.gender || '',
-      v.weight != null ? v.weight : '',
-      v.followup ? 'Yes' : 'No',
-      v.payment ? 'UPI' : 'Cash',
-      v.fee != null ? v.fee : '',
-      v.refundTier ? String(v.refundTier) : '',
-      new Date(v.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    ]) {
-      const td = document.createElement('td');
-      td.textContent = String(c);
-      tr.appendChild(td);
-    }
-    st.modalBody.appendChild(tr);
-  }
-  st.modal.hidden = false;
-}
-
-function closeHistory() {
-  st.modal.hidden = true;
-}
-
 export function mount() {
   st = {
     searchEl: document.getElementById('patients-search'),
@@ -128,11 +93,6 @@ export function mount() {
     prevBtn: document.getElementById('pg-prev'),
     nextBtn: document.getElementById('pg-next'),
     infoEl: document.getElementById('pg-info'),
-    modal: document.getElementById('history-modal'),
-    modalName: document.getElementById('history-name'),
-    modalMeta: document.getElementById('history-meta'),
-    modalBody: document.querySelector('#history-table tbody'),
-    modalClose: document.getElementById('history-close'),
     offset: 0,
     cache: new Map(), // personId -> person row (last rendered page)
   };
@@ -175,16 +135,11 @@ export function mount() {
     openHistory(Number(tr.dataset.id));
   });
 
-  off.on(st.modalClose, 'click', closeHistory);
-  off.on(st.modal, 'click', (e) => {
-    if (e.target === st.modal) closeHistory();
-  });
+
   off.on(document, 'keydown', (e) => {
-    if (e.key === 'Escape' && !st.modal.hidden) {
-      closeHistory();
-      return;
-    }
-    if (!st.modal.hidden) return;
+    // History modal owns the keyboard while it's open.
+    const modal = document.getElementById('history-modal');
+    if (modal && !modal.hidden) return;
     if (!st.tbody || !rowEls().length) return;
     const t = e.target;
     if (

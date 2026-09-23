@@ -16,6 +16,7 @@ index.html     single page shell; all views are <section> toggles
 
 # ENTRY-POINTS
 index.html -> src/ui/app.js          boot: open DB, init backup, wire router, tab hotkeys
+Alt+H (app.js)  open history modal for the patient id in the Register form (dynamic import ui/history.js)
 index.html loads paperstamp SDK from downloaddoctor.github.io
 ?dev=1 query    enables Seed/Clear buttons (dynamic import src/dev/seed.js)
 Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
@@ -24,10 +25,11 @@ Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test
 core/db.js      class DB; default export = instance (`import db`); rawDb() -> Dexie for bulk tools; ONLY public write is addVisit -> _writeVisit
 core/day.js     localDay() -> 'YYYY-MM-DD' in browser TZ
 ui/app.js       boot, topbar tabs, backup/restore/log buttons; default-imports db + backup
-ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N
+ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N; getRouter()/setRouter() module holder (app.js sets it) so pages can switch tabs
 ui/dom.js       el/on/bindOff/timeAgo helpers
 ui/toast.js     class Toast; default export = instance; named exports toast/clearToast are bound methods
 ui/pages/*.js   register, tokens, patients, printLayout (each {mount,unmount})
+ui/history.js   reusable patient-history modal (visit timeline); openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit in Register; opened by Patients rows and Register Alt+H
 dev/selftest.js   dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
 ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
 print/ps.js     class Paperstamp; default export = singleton instance (`import ps`); host moves between pages
@@ -85,7 +87,7 @@ ps (default export of print/ps.js, instance of Paperstamp): mount, reset, previe
   plugin's zoom/pan is preserved (no reset to Fit); queued jobs carry options through flush()
 meta (default export of backup/meta.js, instance of Meta): get, set, del
 rawDb() (named export of core/db.js): current Dexie instance for bulk tools (seed.js)
-register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck}), __getForm, __submitForTest
+register page: editVisit(visit) loads a visit into the form for editing (used by Tokens Enter); startNewBill; test hooks __setTestHooks({suppressPrint,bypassLayoutCheck}), __getForm, __submitForTest
 
 # CONFIG
 .prettierrc: singleQuote, semi, printWidth 100, eol lf, trailingComma es5

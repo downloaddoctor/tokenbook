@@ -4,6 +4,7 @@ import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
 import { toast } from '../toast.js';
 
+
 let s;
 let rowCache = new Map(); // visitId -> visit row (rendered page)
 let activeRow = -1; // index of the keyboard-highlighted row in tbody
@@ -178,9 +179,9 @@ export function mount() {
     refresh();
   });
   off.on(s.tbody, 'click', onRowClick);
-  // Arrow keys navigate the token list; Enter opens the refund dialog for
-  // the highlighted row. Ignored when focus is inside an input/select/dialog
-  // so the date field and modals keep their own arrow behaviour.
+  // Arrow keys navigate the token list; Enter opens the highlighted visit in
+  // the Register tab for editing. Ignored when focus is inside an
+  // input/select/dialog so the date field and modals keep their own behaviour.
   off.on(document, 'keydown', (e) => {
     if (!s.tbody || !rowEls().length) return;
     const t = e.target;
