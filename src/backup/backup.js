@@ -77,13 +77,18 @@ class Backup {
       el.className = 'status';
       return;
     }
+    const name = this._dir.name || 'folder';
+    // Surface queued log lines so an unflushed/failed write is visible.
+    const queued = this._pending.length;
+    const queuedStr = queued ? ` · ${queued} pending` : '';
     if (this._lastError) {
-      el.textContent = 'backup: ✗ ' + this._lastError;
+      el.textContent = 'backup: ✗ ' + this._lastError + queuedStr;
       el.className = 'status err';
       return;
     }
-    const name = this._dir.name || 'folder';
-    el.textContent = `backup: ${name} · ${this._lastAt ? this.timeAgo(this._lastAt) : 'pending'}`;
+    el.textContent = `backup: ${name} · ${
+      this._lastAt ? this.timeAgo(this._lastAt) : 'pending'
+    }${queuedStr}`;
     el.className = 'status ok';
   }
 
@@ -304,6 +309,8 @@ class Backup {
       else this._pending.push(entry);
     }
     this._dirty = true;
+    // Reflect the queued line immediately (status line shows "N pending").
+    this.updateStatus();
     if (this._timer) clearTimeout(this._timer);
     this._timer = setTimeout(() => {
       this._timer = null;
@@ -502,6 +509,8 @@ class Backup {
       folderName: this._dir ? this._dir.name || '' : '',
       lastAt: this._lastAt,
       lastError: this._lastError,
+      pending: this._pending.length,
+      dirty: this._dirty,
     };
   }
 }
