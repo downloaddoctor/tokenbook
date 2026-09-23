@@ -359,6 +359,7 @@ async function onPatIdChange() {
   const p = await db.getPerson(id);
   if (!p) {
     setMsg(`No patient with ID ${id}.`, 'err');
+    applyFollowupRule(null)
     return;
   }
   b.fName.value = (p.name || '').toUpperCase();

@@ -10,6 +10,7 @@
 
 import db from '../core/db.js';
 import backup from '../backup/backup.js';
+import { parseBackup } from '../backup/csv.js';
 import { localDay } from '../core/day.js';
 
 // The test runs on the CURRENT local day. Safe because the self-test uses an
@@ -547,7 +548,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 }
 
 async function doReplay(rep, text, preVisits, prePeople) {
-  const ops = await backup.parseBackup(text);
+  const ops = parseBackup(text);
   const r = await db.replayLog(ops);
   rep.check('replay: rows restored', r.count > 0, 'count=' + r.count + ' skipped=' + r.skipped);
   rep.eq('replay: skipped = 0', r.skipped, 0);

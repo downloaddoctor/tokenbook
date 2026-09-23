@@ -32,13 +32,14 @@ dev/selftest.js   dev self-test: drives real register form + tokens refund dialo
 ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
 print/ps.js     class Paperstamp; default export = singleton instance (`import ps`); host moves between pages
 print/defaultLayout.js  seed layout pushed when plugin has none
-backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized
+backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized; named export hasFsAccess (Feature-detect; import it, NOT backup.hasFsAccess)
 backup/csv.js     pure CSV encode/decode for the log format
 backup/meta.js    class Meta; default export = instance (`import meta`); separate IDB for the directory handle
 
 # RUNTIME-GRAPH
 app.js -> db.openDb() -> Dexie (doctor-apt-list)
-app.js -> backup.init() -> db.setJournal(markDirty)
+app.js -> backup.init() -> db.setJournal(markDirty); validates persisted handle, clears if stale
+backup button -> pickOrBackup -> setFolder (always opens picker) -> writeFullBackup (whole DB -> latest.csv + daily snapshot)
 register submit -> db.addVisit() -> _writeVisit(log=true) -> journal -> backup.flush()
   -> PS.print() -> paperstamp iframe -> onDone
 router.activateTab -> pages[name].mount()/unmount()
@@ -74,7 +75,7 @@ db (default export of core/db.js, instance of DB): openDb, addVisit, setVisitRef
   findVisitByDateToken, lastPaidVisitDaysFor, nextTokenForDate, setJournal, refundAmountFor
   addVisit input keys: name, mob, personId?, date, token, weight, followup, payment, fee, refundTier
 backup (default export of backup/backup.js, instance of Backup): init, setFolder, pickOrBackup,
-  flush, backupNow, restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state,
+  writeFullBackup, flush, backupNow, restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state,
   setLogFileName, deleteLog
 ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview, print,
   openDesigner, closeDesigner, listLayouts
@@ -108,6 +109,10 @@ Log columns (LOG_COLS): date token personId name mob age gender weight followup 
 Key names are uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API
 Restore = replayLog over log lines; clear both stores in one rw transaction; skips bad rows (returns {count,skipped})
 flush() is serialized (_flushPromise); backupNow never no-ops; append verified by byte length
+Backup button (pickOrBackup) ALWAYS opens the picker via setFolder; setFolder does a FULL DB write
+  (writeFullBackup -> latest.csv overwrite + daily snapshot), not an append; auto-backup (markDirty) still appends
+init() probes the persisted folder handle (validateHandle) and clears it if stale (isStaleHandleError)
+hasFsAccess is a named export of backup.js; `backup.hasFsAccess` is undefined — always import the named binding
 restore resets pending journal/timer (resetPendingForRestore) so stale lines can't re-append
 Refund tier N: amount = N * 100; 0 = none; fee untouched by refunds
 Identity collision on (name, mob) throws DuplicateIdentityError / ConstraintError

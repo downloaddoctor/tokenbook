@@ -2,7 +2,7 @@
 // Entry point loaded from index.html as <script type="module" src="src/ui/app.js">.
 
 import db from '../core/db.js';
-import backup from '../backup/backup.js';
+import backup, { hasFsAccess } from '../backup/backup.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash } from './router.js';
 import { toast } from './toast.js';
@@ -49,7 +49,7 @@ function restoreConfirm(folderName) {
 
   btnBackup.addEventListener('click', async () => {
     // No File System Access -> CSV download instead of picking a folder.
-    if (!backup.hasFsAccess) {
+    if (!hasFsAccess) {
       try {
         const r = await backup.downloadCsv();
         toast('Backup saved: ' + r.filename, 'ok');

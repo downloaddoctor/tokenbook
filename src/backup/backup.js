@@ -47,7 +47,9 @@ class Backup {
     // (debounced timer + explicit backupNow) serialize instead of one no-oping.
     this._flushPromise = null;
     this._lastAt = '';
+    this._lastCount = 0;
     this._lastError = '';
+    this._lastErrorName = '';
     // Pending journal entries (raw inputs from addVisit / setVisitRefund).
     // Drained by flush() in order and appended to latest.csv.
     this._pending = [];
@@ -174,12 +176,40 @@ class Backup {
     }
   }
 
+  // True when an error means the saved folder handle no longer resolves to a
+  // real directory (user deleted/moved it, or the FS revoked access). These
+  // should clear the persisted handle so the next Backup click re-opens the
+  // picker instead of failing forever.
+  isStaleHandleError(e) {
+    if (!e) return false;
+    const name = e.name || '';
+    if (name === 'NotFoundError') return true;
+    // Chromium reports a missing/renamed dir as NotAllowedError on some versions.
+    if (name === 'NotAllowedError') return true;
+    return false;
+  }
+
+  // Probe the handle with a cheap directory read. Throws if the dir is gone.
+  async validateHandle(h) {
+    for await (const _ of h.entries()) break;
+    return true;
+  }
+
   async init() {
     db.setJournal(this._markDirty);
     this.updateStatus();
     if (!hasFsAccess) return { ok: false, reason: 'unsupported' };
     const h = await this.loadPersistedHandle();
     if (!h) return { ok: false, reason: 'no-handle' };
+    // Drop a stale handle (folder deleted/moved) before using it.
+    try {
+      await this.validateHandle(h);
+    } catch (e) {
+      if (this.isStaleHandleError(e)) {
+        await this.clearFolder();
+        return { ok: false, reason: 'stale-handle' };
+      }
+    }
     this._dir = h;
     let perm = 'prompt';
     try {
@@ -200,11 +230,48 @@ class Backup {
     const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'apt-list-backup' });
     this._dir = h;
     this._lastError = '';
-    this._needsHeader = true;
+    this._lastErrorName = '';
+    this._needsHeader = false;
     await meta.set(HANDLE_KEY, h);
-    this._dirty = true;
-    await this.flush();
-    return { folderName: h.name || '' };
+    // Picking a folder performs a full backup: write the entire current DB as
+    // latest.csv (header + one row per visit), overwriting any stale file, then
+    // take the daily snapshot. Pending journal rows are folded in by exportAll.
+    await this.writeFullBackup();
+    return { folderName: h.name || '', count: this._lastCount || 0 };
+  }
+
+  // Write the whole current DB to latest.csv in the active folder, plus the
+  // dated snapshot. Replaces the log (unlike flush, which appends).
+  async writeFullBackup() {
+    if (!this._dir) throw new Error('No folder set.');
+    const perm = await this._dir.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      const req = await this._dir.requestPermission({ mode: 'readwrite' });
+      if (req !== 'granted') throw new Error('Permission denied.');
+    }
+    // Cancel any debounced flush so it can't append on top of the full file.
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
+    }
+    const data = await db.exportAll();
+    await this.writeText(this._dir, this.LATEST, data.text);
+    // A full write supersedes any pending journal rows / header flag.
+    this._pending = [];
+    this._needsHeader = false;
+    this._dirty = false;
+    const day = db.localDay();
+    const snap = `apt-list-${day}.csv`;
+    if (!(await this.fileExists(this._dir, snap))) {
+      await this.writeText(this._dir, snap, data.text);
+      await this.pruneSnapshots(this._dir);
+    }
+    this._lastCount = data.count || 0;
+    this._lastAt = new Date().toISOString();
+    this._lastError = '';
+    this._lastErrorName = '';
+    this.updateStatus();
+    return { count: this._lastCount };
   }
 
   async reconnect() {
@@ -222,17 +289,16 @@ class Backup {
     this._dir = null;
     this._lastAt = '';
     this._lastError = '';
+    this._lastErrorName = '';
     this._pending = [];
     this.updateStatus();
   }
 
+  // Backup button: always open the folder picker so the operator can pick or
+  // change the target folder, then write to it. Auto-backup (markDirty) still
+  // flushes silently to the current folder.
   async pickOrBackup() {
-    if (!this._dir) return this.setFolder();
-    const perm = await this._dir.queryPermission({ mode: 'readwrite' });
-    if (perm !== 'granted') return this.reconnect();
-    this._dirty = true;
-    await this.flush();
-    return { folderName: this._dir.name || '', lastAt: this._lastAt };
+    return this.setFolder();
   }
 
   // Journal entry point. db.js calls this via db.setJournal() at boot.
@@ -273,13 +339,13 @@ class Backup {
           this._lastError = 'permission needed';
           return;
         }
+        const exists = await this.fileExists(this._dir, this.LATEST);
+        if (!exists) this._needsHeader = true;
+
         if (!this._pending.length) {
           this._dirty = false;
           return;
         }
-
-        const exists = await this.fileExists(this._dir, this.LATEST);
-        if (!exists) this._needsHeader = true;
 
         let payload = '';
         if (this._needsHeader) payload += csvHeaderLine() + '\n';
@@ -311,8 +377,10 @@ class Backup {
         this._dirty = false;
         this._lastAt = new Date().toISOString();
         this._lastError = '';
+        this._lastErrorName = '';
       } catch (e) {
         this._lastError = e && e.message ? e.message : String(e);
+        this._lastErrorName = e && e.name ? e.name : '';
       } finally {
         this._writing = false;
         this._flushPromise = null;
