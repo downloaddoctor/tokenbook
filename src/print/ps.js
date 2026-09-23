@@ -2,250 +2,252 @@
 // One embed() per host element. Host elements live on Billing and Settings
 // pages; router moves the SINGLETON host between pages (never destroys it)
 // so preview state survives navigation. Recreate = call reset() explicitly.
+//
+// Class shape: the PaperStamp handle, the current host, ready flag, queued
+// jobs and pending callbacks all live on the instance. External code uses the
+// default instance (`import ps from './ps.js'; ps.print(...)`).
 
 import { defaultLayoutDef } from './defaultLayout.js';
 
 const LS_SELECTED = 'aptList.selectedLayoutId';
 
-let lp = null; // current PaperStamp instance
-let currentHost = null; // element the iframe lives in
-let ready = false;
-let layoutDefs = {}; // name -> layoutDef, from listLayoutDefs()
-let activeLayoutId = localStorage.getItem(LS_SELECTED) || '';
-const pending = []; // queued jobs while !ready
-const printDoneCbs = []; // one-shot callbacks fired after each print completes
-
-function statusEl() {
-  return document.getElementById('ps-status');
-}
-
-function setStatus(text) {
-  const el = statusEl();
-  if (el) el.textContent = 'paperstamp: ' + text;
-}
-
-function activeLayoutDef() {
-  return layoutDefs[activeLayoutId] || null;
-}
-
-function selectedLayoutId() {
-  return activeLayoutId;
-}
-function setSelectedLayoutId(id) {
-  activeLayoutId = id || '';
-  localStorage.setItem(LS_SELECTED, activeLayoutId);
-}
-
-// Ask the plugin for its saved layouts. cb(map) where map = {name: layoutDef}.
-function listLayouts(cb) {
-  if (!lp) {
-    if (cb) cb({});
-    return;
+class Paperstamp {
+  constructor() {
+    this._lp = null; // current PaperStamp instance
+    this._currentHost = null; // element the iframe lives in
+    this._ready = false;
+    this._layoutDefs = {}; // name -> layoutDef, from listLayoutDefs()
+    this._activeLayoutId = localStorage.getItem(LS_SELECTED) || '';
+    this._pending = []; // queued jobs while !ready
+    this._printDoneCbs = []; // one-shot callbacks fired after each print completes
   }
-  if (!ready) {
-    pending.push({ kind: 'listLayouts', cb });
-    return;
-  }
-  lp.listLayoutDefs((map) => {
-    layoutDefs = map || {};
-    if (activeLayoutId && !layoutDefs[activeLayoutId]) activeLayoutId = '';
-    if (cb) cb(layoutDefs);
-  });
-}
 
-// Push the default layout into the plugin if it has none saved.
-function seedDefaultIfEmpty(cb) {
-  if (!lp || !ready) {
-    if (cb) cb(false);
-    return;
+  _statusEl() {
+    return document.getElementById('ps-status');
   }
-  const syncActive = () => {
-    if (activeLayoutId && layoutDefs[activeLayoutId]) return;
-    const first = Object.keys(layoutDefs)[0];
-    if (first) setSelectedLayoutId(first);
-  };
-  lp.listLayoutDefs((map) => {
-    layoutDefs = map || {};
-    if (Object.keys(layoutDefs).length === 0) {
-      lp.import(defaultLayoutDef());
-      lp.listLayoutDefs((map2) => {
-        layoutDefs = map2 || {};
-        syncActive();
-        if (cb) cb(true);
-      });
+
+  _setStatus(text) {
+    const el = this._statusEl();
+    if (el) el.textContent = 'paperstamp: ' + text;
+  }
+
+  activeLayoutDef() {
+    return this._layoutDefs[this._activeLayoutId] || null;
+  }
+
+  selectedLayoutId() {
+    return this._activeLayoutId;
+  }
+
+  setSelectedLayoutId(id) {
+    this._activeLayoutId = id || '';
+    localStorage.setItem(LS_SELECTED, this._activeLayoutId);
+  }
+
+  // Ask the plugin for its saved layouts. cb(map) where map = {name: layoutDef}.
+  listLayouts(cb) {
+    if (!this._lp) {
+      if (cb) cb({});
       return;
     }
-    syncActive();
-    if (cb) cb(false);
-  });
-}
-
-// Mount (or remount) the paperstamp iframe into hostEl.
-function mount(
-  hostEl,
-  { force = false, autoShow = true, openDesignerOnReady = false, seedDefaultOnReady = false } = {}
-) {
-  if (!hostEl) return;
-  if (typeof window.PaperStamp === 'undefined') {
-    setStatus('SDK not loaded');
-    return;
-  }
-  if (lp && currentHost === hostEl && !force) return;
-
-  if (lp) {
-    try {
-      lp.destroy();
-    } catch {}
-    lp = null;
-    ready = false;
+    if (!this._ready) {
+      this._pending.push({ kind: 'listLayouts', cb });
+      return;
+    }
+    this._lp.listLayoutDefs((map) => {
+      this._layoutDefs = map || {};
+      if (this._activeLayoutId && !this._layoutDefs[this._activeLayoutId]) {
+        this._activeLayoutId = '';
+      }
+      if (cb) cb(this._layoutDefs);
+    });
   }
 
-  document.querySelectorAll('.ps-host').forEach((h) => {
-    if (h !== hostEl) h.replaceChildren();
-  });
+  // Push the default layout into the plugin if it has none saved.
+  seedDefaultIfEmpty(cb) {
+    if (!this._lp || !this._ready) {
+      if (cb) cb(false);
+      return;
+    }
+    const syncActive = () => {
+      if (this._activeLayoutId && this._layoutDefs[this._activeLayoutId]) return;
+      const first = Object.keys(this._layoutDefs)[0];
+      if (first) this.setSelectedLayoutId(first);
+    };
+    this._lp.listLayoutDefs((map) => {
+      this._layoutDefs = map || {};
+      if (Object.keys(this._layoutDefs).length === 0) {
+        this._lp.import(defaultLayoutDef());
+        this._lp.listLayoutDefs((map2) => {
+          this._layoutDefs = map2 || {};
+          syncActive();
+          if (cb) cb(true);
+        });
+        return;
+      }
+      syncActive();
+      if (cb) cb(false);
+    });
+  }
 
-  currentHost = hostEl;
-  hostEl.replaceChildren();
-  lp = window.PaperStamp.embed({
-    container: hostEl,
-    origin: location.origin,
-    width: '100%',
-    height: '100%',
-    autoShow,
-    onReady: () => {
-      ready = true;
-      setStatus('ready');
-      listLayouts(() => {
-        const after = () => {
-          flush();
-          if (openDesignerOnReady && activeLayoutId && layoutDefs[activeLayoutId]) {
-            lp.setDesignerLayout(activeLayoutId);
+  // Mount (or remount) the paperstamp iframe into hostEl.
+  mount(
+    hostEl,
+    { force = false, autoShow = true, openDesignerOnReady = false, seedDefaultOnReady = false } = {}
+  ) {
+    if (!hostEl) return;
+    if (typeof window.PaperStamp === 'undefined') {
+      this._setStatus('SDK not loaded');
+      return;
+    }
+    if (this._lp && this._currentHost === hostEl && !force) return;
+
+    if (this._lp) {
+      try {
+        this._lp.destroy();
+      } catch {}
+      this._lp = null;
+      this._ready = false;
+    }
+
+    document.querySelectorAll('.ps-host').forEach((h) => {
+      if (h !== hostEl) h.replaceChildren();
+    });
+
+    this._currentHost = hostEl;
+    hostEl.replaceChildren();
+    this._lp = window.PaperStamp.embed({
+      container: hostEl,
+      origin: location.origin,
+      width: '100%',
+      height: '100%',
+      autoShow,
+      onReady: () => {
+        this._ready = true;
+        this._setStatus('ready');
+        this.listLayouts(() => {
+          const after = () => {
+            this.flush();
+            if (openDesignerOnReady && this._activeLayoutId && this._layoutDefs[this._activeLayoutId]) {
+              this._lp.setDesignerLayout(this._activeLayoutId);
+              return;
+            }
+            if (openDesignerOnReady) this._lp.openDesigner();
+          };
+          if (seedDefaultOnReady) {
+            this.seedDefaultIfEmpty(after);
             return;
           }
-          if (openDesignerOnReady) lp.openDesigner();
-        };
-        if (seedDefaultOnReady) {
-          seedDefaultIfEmpty(after);
-          return;
+          after();
+        });
+      },
+      onDone: () => {
+        this._setStatus('print done');
+        const cbs = this._printDoneCbs.splice(0);
+        for (const cb of cbs) {
+          try {
+            cb();
+          } catch (e) {
+            console.error('ps print done cb', e);
+          }
         }
-        after();
-      });
-    },
-    onDone: () => {
-      setStatus('print done');
-      const cbs = printDoneCbs.splice(0);
-      for (const cb of cbs) {
-        try {
-          cb();
-        } catch (e) {
-          console.error('ps print done cb', e);
-        }
-      }
-    },
-    onError: (err) => {
-      setStatus('error: ' + err.code);
+      },
+      onError: (err) => {
+        this._setStatus('error: ' + err.code);
+        console.error('paperstamp', err);
+      },
+    });
+    this._lp.on('error', (err) => {
+      this._setStatus('error: ' + err.code);
       console.error('paperstamp', err);
-    },
-  });
-  lp.on('error', (err) => {
-    setStatus('error: ' + err.code);
-    console.error('paperstamp', err);
-  });
-}
+    });
+  }
 
-function flush() {
-  while (pending.length) {
-    const job = pending.shift();
-    try {
-      if (job.kind === 'print') lp.print(job.payload);
-      else if (job.kind === 'preview') lp.preview(job.payload);
-      else if (job.kind === 'previewById') lp.previewById(job.layoutId, job.fieldValues);
-      else if (job.kind === 'printById') lp.printById(job.layoutId, job.fieldValues, job.options);
-      else if (job.kind === 'designer') lp.openDesigner();
-      else if (job.kind === 'closeDesigner') lp.closeDesigner();
-      else if (job.kind === 'listLayouts') listLayouts(job.cb);
-    } catch (e) {
-      console.error('ps.flush', e);
+  flush() {
+    while (this._pending.length) {
+      const job = this._pending.shift();
+      try {
+        if (job.kind === 'print') this._lp.print(job.payload);
+        else if (job.kind === 'preview') this._lp.preview(job.payload);
+        else if (job.kind === 'previewById') this._lp.previewById(job.layoutId, job.fieldValues);
+        else if (job.kind === 'printById') this._lp.printById(job.layoutId, job.fieldValues, job.options);
+        else if (job.kind === 'designer') this._lp.openDesigner();
+        else if (job.kind === 'closeDesigner') this._lp.closeDesigner();
+        else if (job.kind === 'listLayouts') this.listLayouts(job.cb);
+      } catch (e) {
+        console.error('ps.flush', e);
+      }
     }
   }
+
+  preview(fieldValues) {
+    if (!this._lp) return;
+    if (!this._activeLayoutId || !this._layoutDefs[this._activeLayoutId]) return;
+    if (!this._ready) {
+      this._pending.push({ kind: 'previewById', layoutId: this._activeLayoutId, fieldValues });
+      return;
+    }
+    this._lp.previewById(this._activeLayoutId, fieldValues);
+  }
+
+  print(fieldValues, onPrinted) {
+    if (!this._lp) {
+      this._setStatus('iframe not mounted');
+      return;
+    }
+    if (!this._activeLayoutId || !this._layoutDefs[this._activeLayoutId]) {
+      this._setStatus('no layout selected');
+      return;
+    }
+    if (typeof onPrinted === 'function') this._printDoneCbs.push(onPrinted);
+    const options = { silent: false };
+    if (!this._ready) {
+      this._pending.push({ kind: 'printById', layoutId: this._activeLayoutId, fieldValues, options });
+      return;
+    }
+    this._lp.printById(this._activeLayoutId, fieldValues, options);
+  }
+
+  openDesigner() {
+    if (!this._lp) {
+      this._setStatus('iframe not mounted');
+      return;
+    }
+    if (!this._ready) {
+      this._pending.push({ kind: 'designer' });
+      this._setStatus('designer pending');
+      return;
+    }
+    this._lp.openDesigner();
+    this._setStatus('designer open');
+  }
+
+  closeDesigner() {
+    if (!this._lp) return;
+    if (!this._ready) {
+      this._pending.push({ kind: 'closeDesigner' });
+      return;
+    }
+    this._lp.closeDesigner();
+    this._setStatus('ready');
+  }
+
+  // Destroy current embed. Next mount() will create a fresh iframe.
+  reset() {
+    if (this._lp) {
+      try {
+        this._lp.destroy();
+      } catch {}
+      this._lp = null;
+    }
+    this._currentHost = null;
+    this._ready = false;
+    this._pending.length = 0;
+    this._setStatus('idle');
+  }
 }
 
-function preview(fieldValues) {
-  if (!lp) return;
-  if (!activeLayoutId || !layoutDefs[activeLayoutId]) return;
-  if (!ready) {
-    pending.push({ kind: 'previewById', layoutId: activeLayoutId, fieldValues });
-    return;
-  }
-  lp.previewById(activeLayoutId, fieldValues);
-}
+const ps = new Paperstamp();
 
-function print(fieldValues, onPrinted) {
-  if (!lp) {
-    setStatus('iframe not mounted');
-    return;
-  }
-  if (!activeLayoutId || !layoutDefs[activeLayoutId]) {
-    setStatus('no layout selected');
-    return;
-  }
-  if (typeof onPrinted === 'function') printDoneCbs.push(onPrinted);
-  const options = { silent: false };
-  if (!ready) {
-    pending.push({ kind: 'printById', layoutId: activeLayoutId, fieldValues, options });
-    return;
-  }
-  lp.printById(activeLayoutId, fieldValues, options);
-}
-
-function openDesigner() {
-  if (!lp) {
-    setStatus('iframe not mounted');
-    return;
-  }
-  if (!ready) {
-    pending.push({ kind: 'designer' });
-    setStatus('designer pending');
-    return;
-  }
-  lp.openDesigner();
-  setStatus('designer open');
-}
-
-function closeDesigner() {
-  if (!lp) return;
-  if (!ready) {
-    pending.push({ kind: 'closeDesigner' });
-    return;
-  }
-  lp.closeDesigner();
-  setStatus('ready');
-}
-
-// Destroy current embed. Next mount() will create a fresh iframe.
-function reset() {
-  if (lp) {
-    try {
-      lp.destroy();
-    } catch {}
-    lp = null;
-  }
-  currentHost = null;
-  ready = false;
-  pending.length = 0;
-  setStatus('idle');
-}
-
-export const PS = {
-  mount,
-  reset,
-  preview,
-  print,
-  openDesigner,
-  closeDesigner,
-  listLayouts,
-  seedDefaultIfEmpty,
-  selectedLayoutId,
-  setSelectedLayoutId,
-  activeLayoutDef,
-};
+export default ps;
+export { Paperstamp };

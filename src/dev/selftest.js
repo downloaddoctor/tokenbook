@@ -8,8 +8,8 @@
 // touches real data. NOT imported by prod pages; wired from app.js.
 // Replay auto-runs (safe: isolated DB is dropped afterwards).
 
-import { PatientDb } from '../core/db.js';
-import { PatientBackup } from '../backup/backup.js';
+import db from '../core/db.js';
+import backup from '../backup/backup.js';
 import { localDay } from '../core/day.js';
 
 // The test runs on the CURRENT local day. Safe because the self-test uses an
@@ -60,7 +60,7 @@ function settle(ms) {
 }
 
 async function readLogText() {
-  const r = await PatientBackup.readLog();
+  const r = await backup.readLog();
   return r.text == null ? '' : r.text;
 }
 function logRows(text) {
@@ -179,13 +179,13 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 
   // Run against an ISOLATED database so replay can wipe/rebuild freely without
   // touching real data — which is why no destructive confirm is needed here.
-  await PatientDb.setDbName('doctor-apt-list-devtest');
-  await PatientDb.openDb();
+  await db.setDbName('doctor-apt-list-devtest');
+  await db.openDb();
   // Isolate the backup LOG too, so test rows never pollute the real log file.
   // Delete any devtest log from a prior run so each run starts fresh with a
   // header (the replay parser requires the header on line 1).
-  PatientBackup.setLogFileName('apt-list-latest-devtest.csv');
-  await PatientBackup.deleteLog().catch(() => {});
+  backup.setLogFileName('apt-list-latest-devtest.csv');
+  await backup.deleteLog().catch(() => {});
 
   const register = await import('../ui/pages/register.js');
   register.__setTestHooks({ suppressPrint: true, bypassLayoutCheck: true });
@@ -195,9 +195,9 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const b = register.__getForm();
   if (!b || !b.form) {
     rep.check('register form mounted', false, 'could not access #patient-form');
-    await PatientDb.deleteDb().catch(() => {});
-    await PatientDb.setDbName(null).catch(() => {});
-    PatientBackup.setLogFileName(null);
+    await db.deleteDb().catch(() => {});
+    await db.setDbName(null).catch(() => {});
+    backup.setLogFileName(null);
     return finish(rep);
   }
   rep.check('register form mounted', true);
@@ -206,16 +206,16 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   // identities and test-date visits). People are not auto-deleted on 0 visits,
   // so without this a prior run's rows collide with this run's lookups. Keeps
   // the self-test idempotent — green on the first run, no manual reset.
-  await PatientDb.deletePeopleByNameMob(NAME_A, MOB_A).catch(() => 0);
-  await PatientDb.deletePeopleByNameMob(NAME_B, MOB_B).catch(() => 0);
-  await PatientDb.deletePeopleByNameMob(NAME_BN, MOB_B).catch(() => 0);
-  await PatientDb.deletePeopleByNameMob('TEST PATIENT C', '0000000003').catch(() => 0);
-  await PatientDb.deletePeopleByNameMob('TEST PATIENT D', '0000000004').catch(() => 0);
-  await PatientDb.deleteVisitsByDate(TEST_DATE).catch(() => null);
-  await PatientDb.deleteVisitsByDate(shiftDate(TEST_DATE, 6)).catch(() => null);
-  await PatientDb.deleteVisitsByDate(shiftDate(TEST_DATE, 7)).catch(() => null);
+  await db.deletePeopleByNameMob(NAME_A, MOB_A).catch(() => 0);
+  await db.deletePeopleByNameMob(NAME_B, MOB_B).catch(() => 0);
+  await db.deletePeopleByNameMob(NAME_BN, MOB_B).catch(() => 0);
+  await db.deletePeopleByNameMob('TEST PATIENT C', '0000000003').catch(() => 0);
+  await db.deletePeopleByNameMob('TEST PATIENT D', '0000000004').catch(() => 0);
+  await db.deleteVisitsByDate(TEST_DATE).catch(() => null);
+  await db.deleteVisitsByDate(shiftDate(TEST_DATE, 6)).catch(() => null);
+  await db.deleteVisitsByDate(shiftDate(TEST_DATE, 7)).catch(() => null);
 
-  const st = PatientBackup.state();
+  const st = backup.state();
   const hasFolder = st.hasFolder;
   if (hasFolder) rep.check('backup folder set', true, st.folderName);
   else rep.skip('backup folder set', 'no folder — log + replay checks skipped');
@@ -266,7 +266,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err1 = await submitForm(b.form, register);
   rep.check('first visit: submit ok', !err1, err1 || '');
 
-  let v1 = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  let v1 = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.check('first visit: created at token 1', !!v1);
   rep.check('first visit: personId set', v1 && Number.isInteger(v1.visit.personId), v1 ? 'personId=' + v1.visit.personId : '');
   rep.eq('first visit: fee 300', v1 && v1.visit.fee, 300);
@@ -281,7 +281,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err2 = await submitForm(b.form, register);
   rep.check('follow-up: submit ok', !err2, err2 || '');
 
-  const v2 = await PatientDb.findVisitByDateToken(TEST_DATE, 2);
+  const v2 = await db.findVisitByDateToken(TEST_DATE, 2);
   rep.check('follow-up: created at token 2', !!v2);
   rep.eq('follow-up: same person', v2 && v2.visit.personId, pidA);
   rep.eq('follow-up: auto followup 1', v2 && v2.visit.followup, 1);
@@ -295,7 +295,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err3 = await submitForm(b.form, register);
   rep.check('new visit: submit ok', !err3, err3 || '');
 
-  const v3 = await PatientDb.findVisitByDateToken(TEST_DATE, 3);
+  const v3 = await db.findVisitByDateToken(TEST_DATE, 3);
   rep.check('new visit: created at token 3', !!v3);
   rep.check('new visit: new person id', v3 && v3.visit.personId !== pidA, v3 ? 'personId=' + v3.visit.personId : '');
   const pidB = v3 && v3.visit.personId;
@@ -309,7 +309,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err4 = await submitForm(b.form, register);
   rep.check('edit: submit ok', !err4, err4 || '');
 
-  const v1b = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1b = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('edit: age updated to 41', v1b && v1b.visit.age, 41);
   rep.eq('edit: still same person', v1b && v1b.visit.personId, pidA);
 
@@ -323,13 +323,13 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err5 = await submitForm(b.form, register);
   rep.check('reassign: submit ok', !err5, err5 || '');
 
-  const v1c = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1c = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.check(
     'reassign: visit now points at patient B',
     v1c && v1c.visit.personId === pidB,
     v1c ? 'personId=' + v1c.visit.personId + ' (B=' + pidB + ')' : 'no visit'
   );
-  const aPerson = await PatientDb.getPerson(pidA);
+  const aPerson = await db.getPerson(pidA);
   const aVisits = aPerson ? aPerson.visits : 0;
   rep.check('reassign: patient A visit count = 1', aVisits === 1, 'A.visits=' + aVisits);
 
@@ -347,9 +347,9 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err5b = await submitWithDialog(b.form, register, 'update');
   await settle(350);
   rep.check('id-dialog: submit ok', !err5b, err5b || '');
-  const bPerson = await PatientDb.getPerson(pidB);
+  const bPerson = await db.getPerson(pidB);
   rep.eq('id-dialog: patient B renamed', bPerson && bPerson.name, NAME_BN);
-  const v1d = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1d = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('id-dialog: visit still linked to B', v1d && v1d.visit.personId, pidB);
 
   // ---- 5c. REASSIGN dialog (identity collides with another patient) ----
@@ -364,7 +364,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err5cCancel = await submitWithDialog(b.form, register, 'cancel');
   await settle(350);
   rep.check('reassign-dialog: cancel submit ok', !err5cCancel, err5cCancel || '');
-  const v1e = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1e = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: cancel left personId on B', v1e && v1e.visit.personId, pidB);
   
   await settle(350);
@@ -372,7 +372,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const err5c = await submitWithDialog(b.form, register, 'reassign');
   await settle(350);
   rep.check('reassign-dialog: reassign submit ok', !err5c, err5c || '');
-  const v1f = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1f = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: visit moved to patient A', v1f && v1f.visit.personId, pidA);
   
   // Move token 1 back to patient B so downstream refund/log/read stages see
@@ -387,11 +387,11 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   await settle(150);
   const err5cBack = await submitWithDialog(b.form, register, 'reassign');
   rep.check('reassign-dialog: return-to-B submit ok', !err5cBack, err5cBack || '');
-  const v1g = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1g = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: token 1 back on patient B', v1g && v1g.visit.personId, pidB);
   rep.eq('debug: token1 age after return-to-B', v1g && v1g.visit.age, 46);
 
-  const v1h = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const v1h = await db.findVisitByDateToken(TEST_DATE, 1);
   if (!v1h) {
     rep.check('refund: token 1 visit present', false, 'no token 1 visit; cannot test refund');
     register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false });
@@ -416,49 +416,49 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   await settle(350);
   let rerr = await refundViaUI(1, 1, onProgress);
   rep.check('refund-ui: tier 1 save', !rerr, rerr || '');
-  let rr = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  let rr = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('refund-ui: tier 1 persisted', rr && rr.visit.refundTier, 1);
 
   rerr = await refundViaUI(1, 3, onProgress);
   rep.check('refund-ui: tier 3 save', !rerr, rerr || '');
-  rr = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rr = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('refund-ui: tier 3 persisted', rr && rr.visit.refundTier, 3);
 
   rerr = await refundViaUI(1, 0, onProgress);
   rep.check('refund-ui: clear (0) save', !rerr, rerr || '');
-  rr = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rr = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('refund-ui: cleared to 0', rr && rr.visit.refundTier, 0);
 
   rerr = await refundViaUI(1, 2, onProgress);
   rep.check('refund-ui: final tier 2 save', !rerr, rerr || '');
-  rr = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  rr = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('refund-ui: final tier 2', rr && rr.visit.refundTier, 2);
-  rep.eq('refund-ui: amount 200', PatientDb.refundAmountFor(rr.visit.refundTier), 200);
+  rep.eq('refund-ui: amount 200', db.refundAmountFor(rr.visit.refundTier), 200);
 
   // ---- 6b. follow-up window boundary (6 vs 7 days) ---------------------
   stage('6b. follow-up window boundary');
   const date6 = shiftDate(TEST_DATE, 6);
   const date7 = shiftDate(TEST_DATE, 7);
-  const c6 = await PatientDb.addVisit({
+  const c6 = await db.addVisit({
     name: 'TEST PATIENT C', mob: '0000000003', age: 30, gender: 'M', weight: 65,
     followup: 0, payment: 0, fee: 300, token: 1, date: date6,
   });
   const pidC = c6.rec.personId;
-  const withinC = await PatientDb.lastPaidVisitDaysFor(pidC, TEST_DATE);
+  const withinC = await db.lastPaidVisitDaysFor(pidC, TEST_DATE);
   rep.check('boundary: 6 days -> inside window', withinC && withinC.days === 6, withinC ? 'days=' + withinC.days : 'none');
 
-  const d7 = await PatientDb.addVisit({
+  const d7 = await db.addVisit({
     name: 'TEST PATIENT D', mob: '0000000004', age: 30, gender: 'M', weight: 65,
     followup: 0, payment: 0, fee: 300, token: 1, date: date7,
   });
   const pidD = d7.rec.personId;
-  const outD = await PatientDb.lastPaidVisitDaysFor(pidD, TEST_DATE);
+  const outD = await db.lastPaidVisitDaysFor(pidD, TEST_DATE);
   rep.check('boundary: 7 days -> outside window', outD && outD.days === 7, outD ? 'days=' + outD.days : 'none');
 
   // ---- 7. LOG consistency ----------------------------------------------
   if (hasFolder) {
     stage('7. log');
-    await PatientBackup.backupNow();
+    await backup.backupNow();
     await settle();
     const text = await readLogText();
     const rows = countTestRows(text);
@@ -476,8 +476,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     }
 
     stage('8. replay (wipes + rebuilds from log)');
-    const preVisits = await PatientDb.countAll();
-    const prePeople = await PatientDb.countPeople();
+    const preVisits = await db.countAll();
+    const prePeople = await db.countPeople();
     if (confirmReplay) {
       const ok = await confirmReplay({ visits: preVisits, people: prePeople });
       if (!ok) rep.skip('replay: cancelled by user', 'DB left untouched');
@@ -491,45 +491,45 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 
   // ---- 8b. read-side: tokens list + patient history --------------------
   stage('8b. read-side checks');
-  const dayRows = await PatientDb.listByDate(TEST_DATE);
+  const dayRows = await db.listByDate(TEST_DATE);
   rep.check('read: listByDate returns test day', dayRows.length >= 3, 'rows=' + dayRows.length);
   const rowT1 = dayRows.find((r) => r.token === 1);
   rep.check('read: token 1 in day list', !!rowT1);
   rep.eq('read: token 1 personId = B', rowT1 && rowT1.personId, pidB);
   rep.eq('read: token 1 refundTier = 2', rowT1 && rowT1.refundTier, 2);
 
-  const bHistory = await PatientDb.visitsForPerson(pidB);
+  const bHistory = await db.visitsForPerson(pidB);
   rep.check('read: B history has the reassigned visit', bHistory.some((v) => v.token === 1 && v.date === TEST_DATE));
-  const aHistory = await PatientDb.visitsForPerson(pidA);
+  const aHistory = await db.visitsForPerson(pidA);
   rep.check('read: A history lost token 1', !aHistory.some((v) => v.token === 1));
   rep.check('read: A history still has token 2', aHistory.some((v) => v.token === 2));
 
   // ---- 9. cleanup ------------------------------------------------------
   stage('9. cleanup (remove test rows from DB)');
   try {
-    const del = await PatientDb.deleteVisitsByDate(TEST_DATE);
-    const delC = await PatientDb.deleteVisitsByDate(date6);
-    const delD = await PatientDb.deleteVisitsByDate(date7);
-    const left = await PatientDb.listByDate(TEST_DATE);
+    const del = await db.deleteVisitsByDate(TEST_DATE);
+    const delC = await db.deleteVisitsByDate(date6);
+    const delD = await db.deleteVisitsByDate(date7);
+    const left = await db.listByDate(TEST_DATE);
     rep.check(
       'cleanup: test visits removed from DB',
       left.length === 0,
       'removed ' + (del.visits + delC.visits + delD.visits) + ' visits; ' + left.length + ' left on test day'
     );
-    const f = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+    const f = await db.findVisitByDateToken(TEST_DATE, 1);
     rep.check('cleanup: token 1 gone from DB', !f);
-    const fc = await PatientDb.findVisitByDateToken(date6, 1);
-    const fd = await PatientDb.findVisitByDateToken(date7, 1);
+    const fc = await db.findVisitByDateToken(date6, 1);
+    const fd = await db.findVisitByDateToken(date7, 1);
     rep.check('cleanup: boundary rows gone', !fc && !fd);
 
     // People are NOT auto-deleted on 0 visits, so the test must purge its own
     // fixed TEST PATIENT identities or the next run collides with them.
     let peopleRemoved = 0;
-    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_A, MOB_A);
-    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_B, MOB_B);
-    peopleRemoved += await PatientDb.deletePeopleByNameMob(NAME_BN, MOB_B);
-    peopleRemoved += await PatientDb.deletePeopleByNameMob('TEST PATIENT C', '0000000003');
-    peopleRemoved += await PatientDb.deletePeopleByNameMob('TEST PATIENT D', '0000000004');
+    peopleRemoved += await db.deletePeopleByNameMob(NAME_A, MOB_A);
+    peopleRemoved += await db.deletePeopleByNameMob(NAME_B, MOB_B);
+    peopleRemoved += await db.deletePeopleByNameMob(NAME_BN, MOB_B);
+    peopleRemoved += await db.deletePeopleByNameMob('TEST PATIENT C', '0000000003');
+    peopleRemoved += await db.deletePeopleByNameMob('TEST PATIENT D', '0000000004');
     rep.check('cleanup: test people removed from DB', true, 'people removed=' + peopleRemoved);
   } catch (e) {
     rep.check('cleanup: test visits removed from DB', false, e && e.message ? e.message : String(e));
@@ -539,19 +539,19 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   if (router && router.activateTab) router.activateTab(router.currentTab, true);
 
   // Drop the isolated test DB and restore the real DB name + log file.
-  await PatientDb.deleteDb().catch(() => {});
-  await PatientDb.setDbName(null).catch(() => {});
-  PatientBackup.setLogFileName(null);
+  await db.deleteDb().catch(() => {});
+  await db.setDbName(null).catch(() => {});
+  backup.setLogFileName(null);
 
   return finish(rep);
 }
 
 async function doReplay(rep, text, preVisits, prePeople) {
-  const ops = await PatientBackup.parseBackup(text);
-  const r = await PatientDb.replayLog(ops);
+  const ops = await backup.parseBackup(text);
+  const r = await db.replayLog(ops);
   rep.check('replay: rows restored', r.count > 0, 'count=' + r.count + ' skipped=' + r.skipped);
   rep.eq('replay: skipped = 0', r.skipped, 0);
-  const after = await PatientDb.findVisitByDateToken(TEST_DATE, 1);
+  const after = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.check('replay: token 1 restored', !!after);
   if (after) {
     rep.eq('replay: restored refundTier = 2', after.visit.refundTier, 2);
@@ -559,7 +559,7 @@ async function doReplay(rep, text, preVisits, prePeople) {
   }
   rep.check('replay: pre-replay DB had rows', preVisits > 0, 'visits=' + preVisits + ' people=' + prePeople);
   // Show what replay restored for the test day, verbatim from the DB rows.
-  const dayRows = await PatientDb.listByDate(TEST_DATE);
+  const dayRows = await db.listByDate(TEST_DATE);
   rep.info('----- RESTORED VISITS (' + dayRows.length + ') -----');
   for (const v of dayRows) rep.info(JSON.stringify(v));
 }

@@ -14,7 +14,7 @@
 //
 // Guarded by ?dev=1 at the call site (app.js). Do not import from prod pages.
 
-import { db } from '../core/db.js';
+import { rawDb } from '../core/db.js';
 
 const FIRST = [
   'Ramesh','Suresh','Mahesh','Rajesh','Naresh','Dinesh','Mukesh','Rakesh','Ganesh','Yogesh',
@@ -211,28 +211,30 @@ export async function seed({
   const people = Array.from(proj.values()).filter((p) => p.visits > 0);
 
   // 7. write in chunks, reporting progress and yielding so the UI repaints.
-  await db.transaction('rw', db.people, db.visits, async () => {
-    await db.people.clear();
-    await db.visits.clear();
+  const raw = rawDb();
+  await raw.transaction('rw', raw.people, raw.visits, async () => {
+    await raw.people.clear();
+    await raw.visits.clear();
   });
 
   const CHUNK = 5000;
   let written = 0;
   for (let i = 0; i < visits.length; i += CHUNK) {
     const slice = visits.slice(i, i + CHUNK);
-    await db.visits.bulkPut(slice);
+    await raw.visits.bulkPut(slice);
     written += slice.length;
     if (onProgress) onProgress(written, visits.length);
     await new Promise((r) => setTimeout(r, 0));
   }
-  await db.people.bulkPut(people);
+  await raw.people.bulkPut(people);
 
   return { people: people.length, visits: visits.length, days, ms: Date.now() - t0 };
 }
 
 export async function clearAll() {
-  await db.transaction('rw', db.people, db.visits, async () => {
-    await db.people.clear();
-    await db.visits.clear();
+  const raw = rawDb();
+  await raw.transaction('rw', raw.people, raw.visits, async () => {
+    await raw.people.clear();
+    await raw.visits.clear();
   });
 }

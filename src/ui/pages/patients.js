@@ -1,7 +1,7 @@
 // Patients page: unique patients (one row per person), with a drill-in
 // history modal. Visits live in the Tokens tab; this page is the registry.
 
-import { PatientDb } from '../../core/db.js';
+import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
 
 const PAGE = 50;
@@ -15,12 +15,12 @@ async function render() {
   let total;
 
   if (q) {
-    rows = await PatientDb.searchPeopleByPrefix(q, 200);
+    rows = await db.searchPeopleByPrefix(q, 200);
     total = rows.length;
     st.pager.hidden = true;
   } else {
-    total = await PatientDb.countPeople();
-    rows = await PatientDb.listPeople({ offset: st.offset, limit: PAGE });
+    total = await db.countPeople();
+    rows = await db.listPeople({ offset: st.offset, limit: PAGE });
     const pages = Math.max(1, Math.ceil(total / PAGE));
     const page = Math.floor(st.offset / PAGE) + 1;
     st.infoEl.textContent = `Page ${page} / ${pages} — ${total} patients`;
@@ -29,7 +29,7 @@ async function render() {
     st.pager.hidden = false;
   }
 
-  const counts = await PatientDb.visitCountsForPeople(rows.map((p) => p.id));
+  const counts = await db.visitCountsForPeople(rows.map((p) => p.id));
   st.cache.clear();
   for (const p of rows) st.cache.set(p.id, p);
 
@@ -61,8 +61,8 @@ async function render() {
 
 async function openHistory(personId) {
   let p = st.cache.get(personId);
-  if (!p) p = await PatientDb.getPerson(personId);
-  const visits = await PatientDb.visitsForPerson(personId);
+  if (!p) p = await db.getPerson(personId);
+  const visits = await db.visitsForPerson(personId);
   st.modalName.textContent = p ? p.name : `Patient #${personId}`;
   st.modalMeta.textContent = p
     ? `${p.mob} · Age ${p.age} · ${p.gender || '—'}${p.weight != null ? ' · ' + p.weight + ' kg' : ''}`

@@ -1,9 +1,8 @@
 // Billing page: form, autofill, submit+print. State is local; the router
 // calls mount()/unmount() and this module binds/unbinds its own listeners.
 
-import { PatientDb } from '../../core/db.js';
-import { PatientBackup } from '../../backup/backup.js';
-import { PS } from '../../print/ps.js';
+import db from '../../core/db.js';
+import ps from '../../print/ps.js';
 import { bindOff, timeAgo } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
 
@@ -47,7 +46,7 @@ function fieldValues() {
 }
 
 function refreshPreview() {
-  PS.preview(fieldValues());
+  ps.preview(fieldValues());
 }
 
 // ---- autofill (name + mobile) ----
@@ -146,7 +145,7 @@ function onNameInput() {
     return;
   }
   nameTimer = setTimeout(async () => {
-    const items = await PatientDb.searchPeopleByName(q, 8);
+    const items = await db.searchPeopleByName(q, 8);
     renderSuggest(b.nameSuggest, items, pickPerson);
   }, 120);
 }
@@ -159,7 +158,7 @@ function onMobInput() {
     return;
   }
   mobTimer = setTimeout(async () => {
-    const items = await PatientDb.searchPeopleByMob(q, 8);
+    const items = await db.searchPeopleByMob(q, 8);
     renderSuggest(b.mobSuggest, items, pickPerson);
   }, 120);
 }
@@ -183,11 +182,11 @@ function revalidateIdentity() {
     const patId = Number(b.fPatientId.value.trim()) || null;
     let personId = null;
     if (patId) {
-      const p = await PatientDb.getPerson(patId).catch(() => null);
+      const p = await db.getPerson(patId).catch(() => null);
       if (p && p.name === name && p.mob === mob) personId = p.id;
     }
     if (!personId && name && mob) {
-      const matches = await PatientDb.searchPeopleByName(name, 8).catch(() => []);
+      const matches = await db.searchPeopleByName(name, 8).catch(() => []);
       const hit = matches.find((p) => p.name === name && p.mob === mob);
       if (hit) personId = hit.id;
     }
@@ -196,8 +195,8 @@ function revalidateIdentity() {
 }
 
 async function refreshNextToken() {
-  const day = b.fDate.value || PatientDb.localDay();
-  const t = await PatientDb.nextTokenForDate(day);
+  const day = b.fDate.value || db.localDay();
+  const t = await db.nextTokenForDate(day);
   if (!b.fDate.value) b.fDate.value = day;
   b.fToken.value = String(t);
   tokenEdited = false;
@@ -212,7 +211,7 @@ async function onTokenChange() {
   const day = b.fDate.value.trim();
   const token = Number(b.fToken.value);
   if (!day || !Number.isInteger(token) || token < 1) return;
-  const found = await PatientDb.findVisitByDateToken(day, token);
+  const found = await db.findVisitByDateToken(day, token);
   if (!found) {
     loadedVisitId = null;
     setMsg(`Token ${token} is free on ${day}.`, 'ok');
@@ -274,7 +273,7 @@ function setMsg(text, kind) {
 let followupBusy = 0;
 async function applyFollowupRule(personId) {
   const my = ++followupBusy;
-  const day = (b.fDate && b.fDate.value) || PatientDb.localDay();
+  const day = (b.fDate && b.fDate.value) || db.localDay();
   if (!personId) {
     // No resolved person -> first-time patient, force paid visit.
     if (my !== followupBusy) return;
@@ -286,7 +285,7 @@ async function applyFollowupRule(personId) {
   }
   let last = null;
   try {
-    last = await PatientDb.lastPaidVisitDaysFor(personId, day);
+    last = await db.lastPaidVisitDaysFor(personId, day);
   } catch (_) {
     last = null;
   }
@@ -357,7 +356,7 @@ async function onPatIdChange() {
     setMsg('Pat ID must be a number.', 'err');
     return;
   }
-  const p = await PatientDb.getPerson(id);
+  const p = await db.getPerson(id);
   if (!p) {
     setMsg(`No patient with ID ${id}.`, 'err');
     return;
@@ -550,12 +549,12 @@ async function submitBill() {
     return;
   }
 
-  if (!testHooks.bypassLayoutCheck && (!PS.selectedLayoutId() || !PS.activeLayoutDef())) {
+  if (!testHooks.bypassLayoutCheck && (!ps.selectedLayoutId() || !ps.activeLayoutDef())) {
     setMsg('No layout — create one in Settings first.', 'err');
     return;
   }
 
-  const day = dateRaw || PatientDb.localDay();
+  const day = dateRaw || db.localDay();
   let patId = Number(b.fPatientId.value.trim()) || null;
   const weight = Number(weightRaw);
   const followup = b.fFollowup && b.fFollowup.value === '1' ? 1 : 0;
@@ -565,14 +564,14 @@ async function submitBill() {
   // If a patient is linked and the user has edited their identity, ask how
   // to proceed before writing anything.
   if (patId) {
-    const p = await PatientDb.getPerson(patId);
+    const p = await db.getPerson(patId);
     // Identity unchanged -> nothing to resolve, no dialog. Just save.
     if (p && (p.name !== name || p.mob !== mob)) {
       // If the new (name, mob) belongs to a DIFFERENT existing patient, then
       // "Update" (rename A to the new identity) would collide. Only offer
       // "Use as new" (reassign the visit to that patient) or Cancel.
       // Exact compound-index lookup — a prefix search was the wrong tool.
-      const hit = await PatientDb.findPersonByNameMob(name, mob);
+      const hit = await db.findPersonByNameMob(name, mob);
       const other = hit && hit.id !== patId ? hit : null;
       if (other) {
         const choice = await askReassign(p, other, { name, mob, age, gender });
@@ -599,20 +598,20 @@ async function submitBill() {
     date: day,
     personId: patId,
   };
-  let token = visitInput.token || (await PatientDb.nextTokenForDate(day));
+  let token = visitInput.token || (await db.nextTokenForDate(day));
   visitInput.token = token;
   let result;
   try {
-    result = await PatientDb.addVisit(visitInput);
+    result = await db.addVisit(visitInput);
   } catch (err) {
     if (err && err.name === 'DuplicateIdentityError') {
       setMsg(err.message, 'err');
       return;
     }
     if (err && err.name === 'ConstraintError') {
-      token = await PatientDb.nextTokenForDate(day);
+      token = await db.nextTokenForDate(day);
       visitInput.token = token;
-      result = await PatientDb.addVisit(visitInput);
+      result = await db.addVisit(visitInput);
     } else {
       throw err;
     }
@@ -634,7 +633,7 @@ async function submitBill() {
   if (b.fWeight && rec.weight != null) b.fWeight.value = String(rec.weight);
 
   if (!testHooks.suppressPrint) {
-    PS.print(
+    ps.print(
       {
         name: rec.name,
         mob: rec.mob,
@@ -647,7 +646,7 @@ async function submitBill() {
         date: rec.date,
         token: String(rec.token),
       },
-      () => PS.openDesigner()
+      () => ps.openDesigner()
     );
   }
   setMsg(
@@ -678,7 +677,7 @@ export function mount() {
     nameSuggest: document.getElementById('name-suggest'),
     mobSuggest: document.getElementById('mob-suggest'),
   };
-  PS.mount(b.host, { autoShow: false, openDesignerOnReady: true, seedDefaultOnReady: true });
+  ps.mount(b.host, { autoShow: false, openDesignerOnReady: true, seedDefaultOnReady: true });
   const off = bindOff();
   off.on(b.form, 'submit', onSubmit);
   off.on(b.form, 'input', refreshPreview);
@@ -720,5 +719,5 @@ export function unmount() {
   if (b && b.off) b.off.off();
   submitting = false;
   clearToast();
-  PS.reset();
+  ps.reset();
 }

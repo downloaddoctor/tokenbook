@@ -1,6 +1,6 @@
 // Tokens page: pick a day, list its visits in issue order.
 
-import { PatientDb } from '../../core/db.js';
+import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
 import { toast } from '../toast.js';
 
@@ -30,7 +30,7 @@ function clearActiveRow() {
 }
 
 function refundLabel(tier) {
-  const amt = PatientDb.refundAmountFor(tier);
+  const amt = db.refundAmountFor(tier);
   return amt > 0 ? `₹${amt}` : '';
 }
 
@@ -43,7 +43,7 @@ function ymd(d) {
 
 async function refresh() {
   const day = s.dateEl.value || ymd(new Date());
-  const rows = await PatientDb.listByDate(day);
+  const rows = await db.listByDate(day);
   s.tbody.replaceChildren();
   rowCache = new Map();
   activeRow = -1;
@@ -56,7 +56,7 @@ async function refresh() {
   for (const r of rows) {
     rowCache.set(r.id, r);
     const fee = Number(r.fee) || 0;
-    const refund = PatientDb.refundAmountFor(r.refundTier);
+    const refund = db.refundAmountFor(r.refundTier);
     const net = fee - refund;
     if (r.followup) freeCount++;
     else {
@@ -154,7 +154,7 @@ async function activateRow(visitId) {
   const choice = await openRefundDialog(visit);
   if (choice == null) return;
   try {
-    await PatientDb.setVisitRefund(visit.id, choice);
+    await db.setVisitRefund(visit.id, choice);
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
     refresh();
   } catch (err) {

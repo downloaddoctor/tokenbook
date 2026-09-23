@@ -1,8 +1,8 @@
 // Boot + global UI (topbar tabs, backup/restore buttons, initial DB open).
 // Entry point loaded from index.html as <script type="module" src="src/ui/app.js">.
 
-import { PatientDb } from '../core/db.js';
-import { PatientBackup } from '../backup/backup.js';
+import db from '../core/db.js';
+import backup from '../backup/backup.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash } from './router.js';
 import { toast } from './toast.js';
@@ -49,9 +49,9 @@ function restoreConfirm(folderName) {
 
   btnBackup.addEventListener('click', async () => {
     // No File System Access -> CSV download instead of picking a folder.
-    if (!PatientBackup.hasFsAccess) {
+    if (!backup.hasFsAccess) {
       try {
-        const r = await PatientBackup.downloadCsv();
+        const r = await backup.downloadCsv();
         toast('Backup saved: ' + r.filename, 'ok');
       } catch (err) {
         toast('Backup failed: ' + err.message, 'err');
@@ -59,7 +59,7 @@ function restoreConfirm(folderName) {
       return;
     }
     try {
-      const r = await PatientBackup.pickOrBackup();
+      const r = await backup.pickOrBackup();
       if (!r.lastAt) {
         toast('Backup folder set: ' + r.folderName, 'ok');
       } else {
@@ -69,7 +69,7 @@ function restoreConfirm(folderName) {
       // User cancelled the folder picker -> silently fall back to CSV.
       if (err && err.name === 'AbortError') {
         try {
-          const r = await PatientBackup.downloadCsv();
+          const r = await backup.downloadCsv();
           toast('Backup saved: ' + r.filename, 'ok');
         } catch (e2) {
           toast('Backup failed: ' + e2.message, 'err');
@@ -81,14 +81,14 @@ function restoreConfirm(folderName) {
   });
 
   btnRestore.addEventListener('click', async () => {
-    const st = PatientBackup.state();
+    const st = backup.state();
     if (!st.hasFolder) {
       fileRestore.click();
       return;
     }
     if (!(await restoreConfirm(st.folderName))) return;
     try {
-      const r = await PatientBackup.restoreFromFolder();
+      const r = await backup.restoreFromFolder();
       toast(restoreMsg(r.count, r.skipped, 'from ' + r.source), r.skipped ? 'err' : 'ok');
       router.activateTab(router.currentTab, true);
     } catch (err) {
@@ -102,7 +102,7 @@ function restoreConfirm(folderName) {
     fileRestore.value = '';
     if (!f) return;
     try {
-      const r = await PatientBackup.restoreFromFileObject(f);
+      const r = await backup.restoreFromFileObject(f);
       toast(restoreMsg(r.count, r.skipped, 'from ' + r.filename), r.skipped ? 'err' : 'ok');
       router.activateTab(router.currentTab, true);
     } catch (err) {
@@ -116,7 +116,7 @@ function restoreConfirm(folderName) {
       const sub = document.getElementById('log-sub');
       const body = document.getElementById('log-body');
       if (!dlg || !sub || !body) return;
-      const r = await PatientBackup.readLog();
+      const r = await backup.readLog();
       if (r.text == null) {
         sub.textContent =
           r.source === 'no-folder'
@@ -190,7 +190,7 @@ function restoreConfirm(folderName) {
   }
 
   try {
-    await PatientDb.openDb();
+    await db.openDb();
   } catch (err) {
     console.error('IndexedDB open failed', err);
     toast('Could not open local database: ' + err.message, 'err');
@@ -198,7 +198,7 @@ function restoreConfirm(folderName) {
   }
 
   try {
-    const r = await PatientBackup.init();
+    const r = await backup.init();
     if (r && r.reason === 'needs-gesture') {
       console.info('Backup folder set but permission needs a click — press Backup.');
     }

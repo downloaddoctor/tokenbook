@@ -2,11 +2,11 @@
 // The iframe is the whole page — no picker, no close button. Leaving drops
 // the embed so the next visit starts fresh.
 
-import { PS } from '../../print/ps.js';
+import ps from '../../print/ps.js';
 
 export function mount() {
   const host = document.getElementById('print-layout-ps-host');
-  PS.mount(host, {
+  ps.mount(host, {
     autoShow: false,
     openDesignerOnReady: true,
     seedDefaultOnReady: true,
@@ -14,5 +14,5 @@ export function mount() {
 }
 
 export function unmount() {
-  PS.reset();
+  ps.reset();
 }

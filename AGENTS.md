@@ -21,20 +21,20 @@ index.html loads paperstamp SDK from downloaddoctor.github.io
 Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
 
 # MODULES
-core/db.js      Dexie wrapper; ONLY public write is addVisit -> _writeVisit
+core/db.js      class PatientDb; default export = instance (`import db`); rawDb() -> Dexie for bulk tools; ONLY public write is addVisit -> _writeVisit
 core/day.js     localDay() -> 'YYYY-MM-DD' in browser TZ
-ui/app.js       boot, topbar tabs, backup/restore/log buttons
+ui/app.js       boot, topbar tabs, backup/restore/log buttons; default-imports db + backup
 ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N
 ui/dom.js       el/on/bindOff/timeAgo helpers
-ui/toast.js     transient bottom-left notifications
+ui/toast.js     class Toast; default export = instance; named exports toast/clearToast are bound methods
 ui/pages/*.js   register, tokens, patients, printLayout (each {mount,unmount})
 dev/selftest.js   dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
 ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
-print/ps.js     singleton paperstamp embed manager; host moves between pages
+print/ps.js     class Paperstamp; default export = singleton instance (`import ps`); host moves between pages
 print/defaultLayout.js  seed layout pushed when plugin has none
-backup/backup.js  File System Access folder backup; journal -> append CSV; flush serialized
+backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized
 backup/csv.js     pure CSV encode/decode for the log format
-backup/meta.js    separate IDB for persisting the directory handle
+backup/meta.js    class BackupMeta; default export = instance (`import meta`); separate IDB for the directory handle
 
 # RUNTIME-GRAPH
 app.js -> PatientDb.openDb() -> Dexie (doctor-apt-list)
@@ -69,13 +69,17 @@ paperstamp SDK (external script tag)
 No npm runtime deps; package-lock.json present (dev tooling only)
 
 # PUBLIC-API
-PatientDb (core/db.js): openDb, addVisit, setVisitRefund, replayLog ({count,skipped}),
+db (default export of core/db.js, instance of PatientDb): openDb, addVisit, setVisitRefund, replayLog ({count,skipped}),
   exportAll, listByDate, listAll, listPeople, searchPeople*, visitsForPerson,
   findVisitByDateToken, lastPaidVisitDaysFor, nextTokenForDate, setJournal, refundAmountFor
   addVisit input keys: name, mob, personId?, date, token, weight, followup, payment, fee, refundTier
-PatientBackup (backup/backup.js): init, setFolder, pickOrBackup, flush, backupNow,
-  restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state
-PS (print/ps.js): mount, reset, preview, print, openDesigner, closeDesigner, listLayouts
+backup (default export of backup/backup.js, instance of Backup): init, setFolder, pickOrBackup,
+  flush, backupNow, restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state,
+  setLogFileName, deleteLog
+ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview, print,
+  openDesigner, closeDesigner, listLayouts
+meta (default export of backup/meta.js, instance of BackupMeta): get, set, del
+rawDb() (named export of core/db.js): current Dexie instance for bulk tools (seed.js)
 register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck,answerIdentity}), __getForm, __submitForTest
 
 # CONFIG
@@ -110,6 +114,9 @@ Identity collision on (name, mob) throws DuplicateIdentityError / ConstraintErro
 seed.js bypasses _writeVisit by design (bulk) and must mirror its projection and use `date`
 
 # EXTENSION-POINTS
+Module shape: stateful modules export a class + a default instance; call sites import
+  the default (`import db from './db.js'`) and call methods on it. Pure helpers (dom.js,
+  day.js, csv.js) stay as named function exports.
 Add a page: create src/ui/pages/<name>.js exporting {mount,unmount}; register in
   src/ui/pages/index.js and add to ROUTES + PAGE_ID in src/ui/router.js
 Default print layout: edit src/print/defaultLayout.js
