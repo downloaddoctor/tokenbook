@@ -70,9 +70,9 @@ function atClinicHour(d) {
 // take minutes; the projection is computed here to match what _writeVisit
 // would have produced.
 export async function seed({
-  total = 100000,
-  days = 30,
-  patients = 10000,
+  total = 10000,
+  days = 200,
+  patients = 500,
   onProgress = null,
 } = {}) {
   const t0 = Date.now();
@@ -237,4 +237,29 @@ export async function clearAll() {
     await raw.people.clear();
     await raw.visits.clear();
   });
+}
+
+// Defaults for seed(); a blank / cancelled prompt keeps the default for that
+// field. Kept here so the UI layer stays free of seeding policy.
+export const SEED_CONFIG = { total: 10000, days: 200, patients: 500 };
+
+// Prompt for seed size (total visits, days, patient pool). Each field is
+// optional: blank / non-numeric keeps SEED_CONFIG's default. Returns null if
+// the user cancels any prompt (so the caller can abort).
+export function promptSeedConfig() {
+  const ask = (label, def) => {
+    const raw = window.prompt(`${label} (default ${def})`, String(def));
+    if (raw === null) return null; // cancelled
+    const s = raw.trim();
+    if (s === '') return def;
+    const n = Math.floor(Number(s));
+    return Number.isFinite(n) && n > 0 ? n : def;
+  };
+  const total = ask('Visits to generate', SEED_CONFIG.total);
+  if (total === null) return null; // cancelled -> abort
+  const days = ask('Days of history', SEED_CONFIG.days);
+  if (days === null) return null;
+  const patients = ask('Patient pool size', SEED_CONFIG.patients);
+  if (patients === null) return null;
+  return { total, days, patients };
 }

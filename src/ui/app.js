@@ -212,21 +212,25 @@ function restoreConfirm(folderName) {
   // Dev tools: enabled with ?dev=1. Seeding is destructive (clears DB) so it
   // stays opt-in. Add a status-bar button pair when the flag is set.
   if (new URLSearchParams(location.search).get('dev') === '1') {
-    const { seed, clearAll } = await import('../dev/seed.js');
+    const { seed, clearAll, promptSeedConfig } = await import('../dev/seed.js');
     const bar = document.getElementById('statusbar');
     const right = bar && bar.querySelector('.statusbar-right');
     if (right) {
       const bSeed = document.createElement('button');
       bSeed.type = 'button';
       bSeed.textContent = 'Seed';
-      bSeed.title = 'Generate 100,000 visits over 90 days from a pool of 20,000 patients';
+      bSeed.title = 'Generate demo visits (prompts for count, days, patient pool)';
       bSeed.addEventListener('click', async () => {
+        // Ask how much to seed. Blank / cancel keeps the default for that field.
+        const cfg = promptSeedConfig();
+        if (cfg === null) return; // user cancelled the first prompt
         bSeed.disabled = true;
         bClear.disabled = true;
-        const TOTAL = 1000;
         try {
           const r = await seed({
-            total: TOTAL,
+            total: cfg.total,
+            days: cfg.days,
+            patients: cfg.patients,
             onProgress: (n, t) => toast(`Seeding ${n.toLocaleString()}/${t.toLocaleString()} entries…`),
           });
           toast(

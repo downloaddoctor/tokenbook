@@ -80,7 +80,7 @@ function renderSuggest(ul, items, pick) {
     sub.className = 's-sub';
     const bits = [p.mob];
     if (p.age != null && p.age !== '') bits.push(String(p.age));
-    const seen = timeAgo(p.updatedAt || p.createdAt);
+    const seen = timeAgo(p.lastVisitAt || p.createdAt);
     if (seen) bits.push(seen);
     sub.textContent = bits.join(' · ');
     li.append(main, sub);
