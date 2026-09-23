@@ -47,6 +47,16 @@ const SHELL_ASSETS = [
   './src/backup/meta.js',
 ];
 
+/* Cross-origin assets cached best-effort. ONLY hosts without their own
+   service worker belong here — Dexie (unpkg) and Google Fonts. paperstamp
+   (downloaddoctor.github.io) is deliberately excluded: it ships its own SW.
+   Cache-first so the app still boots offline. */
+const RUNTIME_HOSTS = new Set([
+  'unpkg.com',
+  'fonts.googleapis.com',
+  'fonts.gstatic.com',
+]);
+
 /* ---------- Validator helpers ---------- */
 
 function validatorOf(res) {
@@ -109,26 +119,38 @@ function assetValKey(url) {
 /* HEAD every shell asset and fetch only the ones whose validator changed.
    Runs once per deploy (i.e. when the sentinel changed), never on plain
    reloads. When a validator is unavailable it falls back to fetching. */
+/* Run `fn` over `items` with at most `limit` in flight at once. */
+async function mapLimit(items, limit, fn) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function refreshChangedAssets() {
   const cache = await caches.open(SHELL_CACHE);
-  await Promise.all(
-    SHELL_ASSETS.map(async (url) => {
-      const remote = await headValidator(url);
-      const key = assetValKey(url);
-      const stored = await readStored(key);
-      /* No stored value (fresh) or a different value => refetch. */
-      if (remote && stored && remote === stored) return;
-      try {
-        const res = await fetch(url, { cache: 'reload' });
-        if (res && res.ok) {
-          await cache.put(url, res.clone());
-          await writeStored(key, remote || validatorOf(res) || '');
-        }
-      } catch (err) {
-        /* Keep the cached copy on failure. */
+  // Cap parallel HEAD/fetch at 6 (browser per-host limit) so the deploy
+  // refresh doesn't queue dozens of requests at once.
+  await mapLimit(SHELL_ASSETS, 6, async (url) => {
+    const remote = await headValidator(url);
+    const key = assetValKey(url);
+    const stored = await readStored(key);
+    /* No stored value (fresh) or a different value => refetch. */
+    if (remote && stored && remote === stored) return;
+    try {
+      const res = await fetch(url, { cache: 'reload' });
+      if (res && res.ok) {
+        await cache.put(url, res.clone());
+        await writeStored(key, remote || validatorOf(res) || '');
       }
-    })
-  );
+    } catch (err) {
+      /* Keep the cached copy on failure. */
+    }
+  });
 }
 
 /* Record per-asset validators after a bulk precache (install time). */
@@ -179,12 +201,16 @@ self.addEventListener('activate', (event) => {
    paint), refreshing that cache entry from the network in the background.
    Update detection is separate — see checkForUpdates(). */
 async function handleNavigation(request) {
-  const cached = await caches.match(request);
+  // Navigations are cached under a query- and hash-stripped key so ?dev=1
+  // and plain loads share one shell entry.
+  const url = new URL(request.url);
+  const key = url.origin + url.pathname;
+  const cached = await caches.match(key);
   if (cached) {
     fetch(request)
       .then((fresh) => {
         if (fresh && fresh.ok) {
-          caches.open(SHELL_CACHE).then((cache) => cache.put(request, fresh));
+          caches.open(SHELL_CACHE).then((cache) => cache.put(key, fresh));
         }
       })
       .catch(() => {});
@@ -194,7 +220,7 @@ async function handleNavigation(request) {
   try {
     const fresh = await fetch(request);
     const cache = await caches.open(SHELL_CACHE);
-    cache.put(request, fresh.clone());
+    cache.put(key, fresh.clone());
     return fresh;
   } catch (err) {
     const fallback =
@@ -235,6 +261,27 @@ async function checkForUpdates(clientId) {
 }
 
 /* Static local assets: cache-first. */
+function isRuntimeRequest(url) {
+  return RUNTIME_HOSTS.has(url.hostname);
+}
+
+/* Cross-origin runtime assets (Dexie): cache-first, best-effort. Opaque or
+   CORS responses are both cached so the module is available offline. */
+async function handleRuntime(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  try {
+    const fresh = await fetch(request);
+    const cache = await caches.open(RUNTIME_CACHE);
+    cache.put(request, fresh.clone());
+    return fresh;
+  } catch (err) {
+    const cached2 = await caches.match(request);
+    if (cached2) return cached2;
+    throw err;
+  }
+}
+
 async function handleLocal(request) {
   const cached = await caches.match(request);
   if (cached) return cached;

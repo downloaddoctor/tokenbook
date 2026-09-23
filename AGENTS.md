@@ -79,7 +79,8 @@ Fallback when unsupported: CSV download via db.exportAll
 localStorage: tokenBook.selectedLayoutId (paperstamp layout choice)
 
 # DEPENDENCIES
-Dexie 4.0.11 (ESM from unpkg, no bundler)
+Dexie 4.0.11 (ESM from unpkg, no bundler — cached cross-origin by sw.js)
+Inter from Google Fonts (index.html link; cached cross-origin by sw.js); body uses tabular-nums globally
 paperstamp SDK (external script tag)
 No npm runtime deps; package-lock.json present (dev tooling only)
 
