@@ -1,5 +1,5 @@
 // IndexedDB wrapper for patient records. Backed by Dexie.
-// DB: doctor-apt-list, v1. Two stores:
+// DB: tokenbook, v1. Two stores:
 //   people  — one row per unique (name, mob) identity. keyPath id, autoIncrement.
 //             unique index [name+mob]. Holds latest known age/gender. Used for
 //             uniqueness enforcement and register autofill/search.
@@ -20,7 +20,7 @@ import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
 import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../backup/csv.js';
 
-const DB_NAME = 'doctor-apt-list';
+const DB_NAME = 'tokenbook';
 
 // Refund tier step: amount = tier * STEP. Exported as a module constant so
 // billing/tokens pages can read it without instantiating anything.
@@ -32,7 +32,7 @@ export function refundAmountFor(tier) {
 class DB {
   constructor() {
     // The active Dexie instance. Swappable so the self-test can run against an
-    // isolated database (doctor-apt-list-devtest) and wipe/replay it without
+    // isolated database (tokenbook-devtest) and wipe/replay it without
     // touching real data. Default is the real DB_NAME.
     this._dbName = DB_NAME;
     this._db = new Dexie(this._dbName);

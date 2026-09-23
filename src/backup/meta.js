@@ -1,11 +1,11 @@
 // Own IDB for persisting the backup folder handle.
-// DB: apt-list-backup-meta, store kv. FileSystemDirectoryHandle is
+// DB: tokenbook-backup-meta, store kv. FileSystemDirectoryHandle is
 // structured-cloneable, so it survives reloads.
 //
 // Class shape: state (the open-promise cache) lives on the instance. External
 // code uses the default instance (`import meta from './meta.js'; meta.get(k)`).
 
-const META_DB = 'apt-list-backup-meta';
+const META_DB = 'tokenbook-backup-meta';
 const META_STORE = 'kv';
 
 class Meta {

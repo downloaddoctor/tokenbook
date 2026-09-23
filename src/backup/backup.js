@@ -1,10 +1,10 @@
 // Backup / restore to a user-chosen folder (typically a pendrive) via the
 // File System Access API.
 //
-// Logbook model: every write appends ONE line to apt-list-latest.csv. No
+// Logbook model: every write appends ONE line to tokenbook-latest.csv. No
 // rewriting. A header is written once, when the file is first created.
 // At the first write of each day, the whole latest.csv is copied to
-// apt-list-YYYY-MM-DD.csv (self-contained daily snapshot); snapshots are
+// tokenbook-YYYY-MM-DD.csv (self-contained daily snapshot); snapshots are
 // pruned to the newest KEEP_SNAPSHOTS.
 //
 // Restore reads every line of the log in file order and replays it through
@@ -25,8 +25,8 @@ import {
 import meta from './meta.js';
 import { timeAgo } from '../core/time.js';
 
-const DEFAULT_LATEST = 'apt-list-latest.csv';
-const SNAP_RE = /^apt-list-(\d{4}-\d{2}-\d{2})\.csv$/;
+const DEFAULT_LATEST = 'tokenbook-latest.csv';
+const SNAP_RE = /^tokenbook-(\d{4}-\d{2}-\d{2})\.csv$/;
 const KEEP_SNAPSHOTS = 30;
 const DEBOUNCE_MS = 2000;
 const HANDLE_KEY = 'dirHandle';
@@ -36,7 +36,7 @@ export const hasFsAccess = typeof window.showDirectoryPicker === 'function';
 class Backup {
   constructor() {
     // Active log file name. Swappable so the self-test writes its own log
-    // (apt-list-latest-devtest.csv) instead of polluting the real one.
+    // (tokenbook-latest-devtest.csv) instead of polluting the real one.
     this.LATEST = DEFAULT_LATEST;
     this._dir = null;
     this._dirty = false;
@@ -222,7 +222,7 @@ class Backup {
 
   async setFolder() {
     if (!hasFsAccess) throw new Error('File System Access not supported in this browser.');
-    const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'apt-list-backup' });
+    const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'tokenbook-backup' });
     this._dir = h;
     this._lastError = '';
     this._lastErrorName = '';
@@ -256,7 +256,7 @@ class Backup {
     this._needsHeader = false;
     this._dirty = false;
     const day = db.localDay();
-    const snap = `apt-list-${day}.csv`;
+    const snap = `tokenbook-${day}.csv`;
     if (!(await this.fileExists(this._dir, snap))) {
       await this.writeText(this._dir, snap, data.text);
       await this.pruneSnapshots(this._dir);
@@ -364,7 +364,7 @@ class Backup {
 
         // First write of the day: snapshot the whole log into a dated file.
         const day = db.localDay();
-        const snap = `apt-list-${day}.csv`;
+        const snap = `tokenbook-${day}.csv`;
         if (!(await this.fileExists(this._dir, snap))) {
           const full = await this.readLatest(this._dir);
           if (full != null) await this.writeText(this._dir, snap, full);
@@ -473,7 +473,7 @@ class Backup {
       pad(now.getMinutes()) +
       '-' +
       pad(now.getSeconds());
-    const filename = `clinic-register-${stamp}.csv`;
+    const filename = `tokenbook-${stamp}.csv`;
     const blob = new Blob([data.text], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

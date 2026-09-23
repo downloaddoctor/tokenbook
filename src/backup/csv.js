@@ -130,7 +130,7 @@ export function csvToLog(text) {
   const header = parseCsvLine(lines[0]);
   const matches = (cols) => header.length === cols.length && header.every((h, i) => h === cols[i]);
   if (!matches(LOG_COLS)) {
-    throw new Error('Not a doctor-apt-list log (unexpected header).');
+    throw new Error('Not a tokenbook log (unexpected header).');
   }
   return parseLogLines(header, lines);
 }

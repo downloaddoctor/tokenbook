@@ -9,7 +9,7 @@
 
 import { defaultLayoutDef } from './defaultLayout.js';
 
-const LS_SELECTED = 'aptList.selectedLayoutId';
+const LS_SELECTED = 'tokenBook.selectedLayoutId';
 
 class Paperstamp {
   constructor() {

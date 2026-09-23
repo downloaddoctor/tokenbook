@@ -160,7 +160,7 @@ function restoreConfirm(folderName) {
             else render((status || (ok ? 'PASS' : 'FAIL')) + ' ' + name + (detail ? '  (' + detail + ')' : ''));
           },
           // No confirm: the self-test runs on an isolated DB
-          // (doctor-apt-list-devtest) that is dropped afterwards, so replay
+          // (tokenbook-devtest) that is dropped afterwards, so replay
           // cannot destroy real data.
           confirmReplay: async () => true,
         });

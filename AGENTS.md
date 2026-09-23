@@ -1,5 +1,5 @@
 # PROJECT
-Clinic register + token/queue app for a doctor's practice
+TokenBook — token/queue register app for a doctor's practice
 Vanilla ES modules, no build step, no framework
 Runs entirely client-side; all data in browser IndexedDB
 Printing delegated to external paperstamp SDK (iframe embed)
@@ -37,7 +37,7 @@ backup/csv.js     pure CSV encode/decode for the log format
 backup/meta.js    class Meta; default export = instance (`import meta`); separate IDB for the directory handle
 
 # RUNTIME-GRAPH
-app.js -> db.openDb() -> Dexie (doctor-apt-list)
+app.js -> db.openDb() -> Dexie (tokenbook)
 app.js -> backup.init() -> db.setJournal(markDirty); validates persisted handle, clears if stale
 backup button -> pickOrBackup -> setFolder (always opens picker) -> writeFullBackup (whole DB -> latest.csv + daily snapshot)
 register submit -> db.addVisit() -> _writeVisit(log=true) -> journal -> backup.flush()
@@ -47,7 +47,7 @@ restore -> backup reads latest.csv/snapshot -> csvToLog -> db.replayLog -> addVi
 Test button -> runSelfTest -> register (form driver, print suppressed) -> tokens refund dialog -> DB/log/replay checks -> cleanup
 
 # SCHEMA
-DB doctor-apt-list (Dexie)
+DB tokenbook (Dexie)
  people: '++id, name, mob, [name+mob], updatedAt'
    unique identity = (name, mob); holds latest age/gender/weight
    visits: count of that person's visits (O(1) maintained)
@@ -56,13 +56,13 @@ DB doctor-apt-list (Dexie)
    historical snapshot of name/mob/age/gender at time of visit
    unique key = (date, token); personId -> people.id
    `date` = 'YYYY-MM-DD' local day; single field (no duplicate `day`)
-DB apt-list-backup-meta, store kv: holds FileSystemDirectoryHandle under 'dirHandle'
+DB tokenbook-backup-meta, store kv: holds FileSystemDirectoryHandle under 'dirHandle'
 
 # ENV
 Browser-only; no server, no env vars
 Requires File System Access API for folder backup (Chrome/Edge)
 Fallback when unsupported: CSV download via db.exportAll
-localStorage: aptList.selectedLayoutId (paperstamp layout choice)
+localStorage: tokenBook.selectedLayoutId (paperstamp layout choice)
 
 # DEPENDENCIES
 Dexie 4.0.11 (ESM from unpkg, no bundler)
@@ -128,6 +128,6 @@ Default print layout: edit src/print/defaultLayout.js
 Log format: LOG_COLS in src/backup/csv.js (keep parse/encode in sync; header rename is breaking)
 Journal consumers: db.setJournal(fn)
 Self-test: src/dev/selftest.js runSelfTest({onProgress,confirmReplay,router}); register test hooks gate print/dialogs
-Self-test isolation: db.setDbName('doctor-apt-list-devtest') + backup.setLogFileName('apt-list-latest-devtest.csv'); DB dropped + name/log restored after; runs on current local day; replay auto-runs (no confirm — isolated)
+Self-test isolation: db.setDbName('tokenbook-devtest') + backup.setLogFileName('tokenbook-latest-devtest.csv'); DB dropped + name/log restored after; runs on current local day; replay auto-runs (no confirm — isolated)
 db.setDbName/deleteDb + backup.setLogFileName/deleteLog are DEV/TEST ONLY (self-test isolation)
 Backup dir handle: backup/meta.js (its own IDB, not Dexie)

@@ -14,7 +14,7 @@ import { parseBackup } from '../backup/csv.js';
 import { localDay } from '../core/day.js';
 
 // The test runs on the CURRENT local day. Safe because the self-test uses an
-// isolated DB (doctor-apt-list-devtest) + isolated log (devtest csv), so there
+// isolated DB (tokenbook-devtest) + isolated log (devtest csv), so there
 // is no real data on this day to collide with; cleanup deletes by this date.
 const TEST_DATE = localDay();
 const NAME_A = 'TEST PATIENT A';
@@ -180,12 +180,12 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 
   // Run against an ISOLATED database so replay can wipe/rebuild freely without
   // touching real data — which is why no destructive confirm is needed here.
-  await db.setDbName('doctor-apt-list-devtest');
+  await db.setDbName('tokenbook-devtest');
   await db.openDb();
   // Isolate the backup LOG too, so test rows never pollute the real log file.
   // Delete any devtest log from a prior run so each run starts fresh with a
   // header (the replay parser requires the header on line 1).
-  backup.setLogFileName('apt-list-latest-devtest.csv');
+  backup.setLogFileName('tokenbook-latest-devtest.csv');
   await backup.deleteLog().catch(() => {});
 
   const register = await import('../ui/pages/register.js');
