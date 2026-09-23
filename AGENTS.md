@@ -3,6 +3,9 @@ TokenBook — token/queue register app for a doctor's practice
 Vanilla ES modules, no build step, no framework
 Runs entirely client-side; all data in browser IndexedDB
 Printing delegated to external paperstamp SDK (iframe embed)
+Offline-capable PWA (service worker + manifest); hosted on GitHub Pages
+DEPLOY RULE: touch AGENTS.md on every commit that changes a cached asset
+  (sw.js uses its validator as the deploy sentinel) or clients stay stale
 
 # DIRECTORY
 src/core/      persistence + domain logic
@@ -13,8 +16,15 @@ src/print/     paperstamp lifecycle + default layout
 src/dev/       dev-only seed/clear + selftest (opt-in, not prod)
 styles.css     single global stylesheet
 index.html     single page shell; all views are <section> toggles
+sw.js          service worker: precache SHELL_ASSETS, sentinel update check
+pw.js          SW registration + update-reload UX
+manifest.webmanifest  PWA metadata (standalone, theme #2563eb)
+favicon.svg    app icon (also referenced by manifest)
 
 # ENTRY-POINTS
+index.html -> pw.js                 PWA bootstrap: registers sw.js, handles update-reload (30s guard)
+pw.js -> sw.js                 service worker: app-shell precache + sentinel-based update check
+sw.js sentinel = ./AGENTS.md   HEAD validator diff decides which shell assets refetch
 index.html -> src/ui/app.js          boot: open DB, init backup, wire router, tab hotkeys
 Alt+H (app.js)  open history modal for the patient id in the Register form (dynamic import ui/history.js)
 Alt+R (register) open refund dialog for the loaded visit (paid only) via ui/refund.js
