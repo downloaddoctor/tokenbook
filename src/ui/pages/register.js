@@ -51,7 +51,6 @@ function refreshPreview() {
 
 // ---- autofill (name + mobile) ----
 let nameTimer = null;
-let mobTimer = null;
 let activeList = null; // { ul, items, pick, hi }
 let submitting = false; // guards against double-submit (fast clicks / Enter spam)
 let tokenEdited = false; // true once the user manually types in Token; reset on New Visit / auto-refresh
@@ -97,7 +96,6 @@ function renderSuggest(ul, items, pick) {
 
 function hideSuggests() {
   if (b.nameSuggest) b.nameSuggest.hidden = true;
-  if (b.mobSuggest) b.mobSuggest.hidden = true;
   activeList = null;
 }
 
@@ -145,28 +143,16 @@ function onNameInput() {
     return;
   }
   nameTimer = setTimeout(async () => {
-    const items = await db.searchPeopleByName(q, 8);
+    // Match by name OR mobile (same as the Patients page search), so a phone
+    // number typed here also finds the person.
+    const items = await db.searchPeopleByPrefix(q, 8);
     renderSuggest(b.nameSuggest, items, pickPerson);
-  }, 120);
-}
-
-function onMobInput() {
-  clearTimeout(mobTimer);
-  const q = b.fMob.value.trim();
-  if (q.length < 3) {
-    b.mobSuggest.hidden = true;
-    return;
-  }
-  mobTimer = setTimeout(async () => {
-    const items = await db.searchPeopleByMob(q, 8);
-    renderSuggest(b.mobSuggest, items, pickPerson);
   }, 120);
 }
 
 function onDocMouseDown(e) {
   const t = e.target;
-  if (b.nameSuggest.contains(t) || t === b.fName || b.mobSuggest.contains(t) || t === b.fMob)
-    return;
+  if (b.nameSuggest.contains(t) || t === b.fName) return;
   hideSuggests();
 }
 
@@ -179,7 +165,7 @@ function revalidateIdentity() {
   identityTimer = setTimeout(async () => {
     const name = b.fName.value.trim().toUpperCase();
     const mob = b.fMob.value.trim();
-    const patId = Number(b.fPatientId.value.trim()) || null;
+    const patId = Number(b.fPatientId.value.trim()) 
     let personId = null;
     if (patId) {
       const p = await db.getPerson(patId).catch(() => null);
@@ -680,7 +666,6 @@ export function mount() {
     msg: document.getElementById('form-msg'),
     host: document.getElementById('register-ps-host'),
     nameSuggest: document.getElementById('name-suggest'),
-    mobSuggest: document.getElementById('mob-suggest'),
   };
   ps.mount(b.host, { autoShow: false, openDesignerOnReady: true, seedDefaultOnReady: true });
   const off = bindOff();
@@ -688,7 +673,6 @@ export function mount() {
   off.on(b.form, 'input', refreshPreview);
   off.on(document.getElementById('btn-new-bill'), 'click', startNewBill);
   off.on(b.fName, 'input', onNameInput);
-  off.on(b.fMob, 'input', onMobInput);
   off.on(b.fPatientId, 'change', onPatIdChange);
   off.on(b.fToken, 'change', onTokenChange);
   off.on(b.fToken, 'blur', onTokenBlur);
@@ -713,7 +697,6 @@ export function mount() {
     }
   });
   off.on(b.fName, 'keydown', onSuggestKey);
-  off.on(b.fMob, 'keydown', onSuggestKey);
   off.on(document, 'mousedown', onDocMouseDown);
   b.off = off;
   refreshNextToken();
