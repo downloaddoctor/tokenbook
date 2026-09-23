@@ -63,7 +63,9 @@ class Paperstamp {
     });
   }
 
-  // Push the default layout into the plugin if it has none saved.
+  // If the plugin has no saved layouts, register the default and select it.
+  // register() persists a NAMED layout (and re-emits `ready`); import() would
+  // only set in-memory state, so it would never show up in the layout list.
   seedDefaultIfEmpty(cb) {
     if (!this._lp || !this._ready) {
       if (cb) cb(false);
@@ -74,20 +76,19 @@ class Paperstamp {
       const first = Object.keys(this._layoutDefs)[0];
       if (first) this.setSelectedLayoutId(first);
     };
-    this._lp.listLayoutDefs((map) => {
-      this._layoutDefs = map || {};
-      if (Object.keys(this._layoutDefs).length === 0) {
-        this._lp.import(defaultLayoutDef());
-        this._lp.listLayoutDefs((map2) => {
-          this._layoutDefs = map2 || {};
-          syncActive();
-          if (cb) cb(true);
-        });
-        return;
-      }
-      syncActive();
-      if (cb) cb(false);
-    });
+    if (Object.keys(this._layoutDefs).length === 0) {
+      // register() persists a NAMED layout and re-emits `ready`. import()
+      // only sets in-memory state (not saved), so it wouldn't appear.
+      this._lp.register(defaultLayoutDef());
+      this._lp.listLayoutDefs((map) => {
+        this._layoutDefs = map || {};
+        syncActive();
+        if (cb) cb(true);
+      });
+      return;
+    }
+    syncActive();
+    if (cb) cb(false);
   }
 
   // Mount (or remount) the paperstamp iframe into hostEl.

@@ -2,6 +2,7 @@
 // Positions are in mm; SDK uses them to render text items on the A4 page.
 export function defaultLayoutDef() {
   return {
+    name: 'Default',
     pageWmm: 210,
     pageHmm: 297,
     orientation: 'portrait',

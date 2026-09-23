@@ -189,7 +189,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   await backup.deleteLog().catch(() => {});
 
   const register = await import('../ui/pages/register.js');
-  register.__setTestHooks({ suppressPrint: true, bypassLayoutCheck: true });
+  register.__setTestHooks({ suppressPrint: true });
 
   if (router && router.activateTab) router.activateTab('register', true);
   await settle(350);
@@ -395,7 +395,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const v1h = await db.findVisitByDateToken(TEST_DATE, 1);
   if (!v1h) {
     rep.check('refund: token 1 visit present', false, 'no token 1 visit; cannot test refund');
-    register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false });
+    register.__setTestHooks({ suppressPrint: false });
     return finish(rep);
   }
 
@@ -536,7 +536,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     rep.check('cleanup: test visits removed from DB', false, e && e.message ? e.message : String(e));
   }
 
-  register.__setTestHooks({ suppressPrint: false, bypassLayoutCheck: false });
+  register.__setTestHooks({ suppressPrint: false });
   if (router && router.activateTab) router.activateTab(router.currentTab, true);
 
   // Drop the isolated test DB and restore the real DB name + log file.

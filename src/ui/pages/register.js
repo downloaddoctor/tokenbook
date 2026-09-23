@@ -14,12 +14,10 @@ let b;
 // of waiting for a click. Both default to production behavior.
 const testHooks = {
   suppressPrint: false,
-  bypassLayoutCheck: false, // self-test: skip the paperstamp layout requirement
 };
 export function __setTestHooks(hooks) {
   if (!hooks) return;
   if ('suppressPrint' in hooks) testHooks.suppressPrint = !!hooks.suppressPrint;
-  if ('bypassLayoutCheck' in hooks) testHooks.bypassLayoutCheck = !!hooks.bypassLayoutCheck;
 }
 export function __getForm() {
   return b;
@@ -537,11 +535,6 @@ async function submitBill() {
   if (feeRaw === '' || !Number.isFinite(Number(feeRaw))) missing.push('fee');
   if (missing.length) {
     setMsg('Please fill: ' + missing.join(', ') + '.', 'err');
-    return;
-  }
-
-  if (!testHooks.bypassLayoutCheck && (!ps.selectedLayoutId() || !ps.activeLayoutDef())) {
-    setMsg('No layout — create one in Settings first.', 'err');
     return;
   }
 
