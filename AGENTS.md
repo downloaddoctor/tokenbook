@@ -77,8 +77,11 @@ db (default export of core/db.js, instance of DB): openDb, addVisit, setVisitRef
 backup (default export of backup/backup.js, instance of Backup): init, setFolder, pickOrBackup,
   writeFullBackup, flush, backupNow, restoreFromFolder, restoreFromFileObject, readLog, downloadCsv, state,
   setLogFileName, deleteLog
-ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview, print,
+ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview(fieldValues, opts?), print,
   openDesigner, closeDesigner, listLayouts
+  preview() passes paperstamp previewById options { keepZoom: true } by default
+  (opts arg overrides) — typing in the form preserves the plugin's zoom/pan,
+  no reset to Fit; queued previewById jobs carry options through flush()
 meta (default export of backup/meta.js, instance of Meta): get, set, del
 rawDb() (named export of core/db.js): current Dexie instance for bulk tools (seed.js)
 register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck}), __getForm, __submitForTest

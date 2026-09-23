@@ -129,7 +129,11 @@ class Paperstamp {
         this.listLayouts(() => {
           const after = () => {
             this.flush();
-            if (openDesignerOnReady && this._activeLayoutId && this._layoutDefs[this._activeLayoutId]) {
+            if (
+              openDesignerOnReady &&
+              this._activeLayoutId &&
+              this._layoutDefs[this._activeLayoutId]
+            ) {
               this._lp.setDesignerLayout(this._activeLayoutId);
               return;
             }
@@ -170,8 +174,10 @@ class Paperstamp {
       try {
         if (job.kind === 'print') this._lp.print(job.payload);
         else if (job.kind === 'preview') this._lp.preview(job.payload);
-        else if (job.kind === 'previewById') this._lp.previewById(job.layoutId, job.fieldValues);
-        else if (job.kind === 'printById') this._lp.printById(job.layoutId, job.fieldValues, job.options);
+        else if (job.kind === 'previewById')
+          this._lp.previewById(job.layoutId, job.fieldValues, job.options);
+        else if (job.kind === 'printById')
+          this._lp.printById(job.layoutId, job.fieldValues, job.options);
         else if (job.kind === 'designer') this._lp.openDesigner();
         else if (job.kind === 'closeDesigner') this._lp.closeDesigner();
         else if (job.kind === 'listLayouts') this.listLayouts(job.cb);
@@ -181,14 +187,22 @@ class Paperstamp {
     }
   }
 
-  preview(fieldValues) {
+  // Live preview of the active layout. keepZoom preserves the plugin's
+  // current zoom/pan so typing in the form doesn't reset the view to Fit.
+  preview(fieldValues, opts) {
     if (!this._lp) return;
     if (!this._activeLayoutId || !this._layoutDefs[this._activeLayoutId]) return;
+    const options = { keepZoom: true, ...(opts || {}) };
     if (!this._ready) {
-      this._pending.push({ kind: 'previewById', layoutId: this._activeLayoutId, fieldValues });
+      this._pending.push({
+        kind: 'previewById',
+        layoutId: this._activeLayoutId,
+        fieldValues,
+        options,
+      });
       return;
     }
-    this._lp.previewById(this._activeLayoutId, fieldValues);
+    this._lp.previewById(this._activeLayoutId, fieldValues, options);
   }
 
   print(fieldValues, onPrinted) {
@@ -203,7 +217,12 @@ class Paperstamp {
     if (typeof onPrinted === 'function') this._printDoneCbs.push(onPrinted);
     const options = { silent: false };
     if (!this._ready) {
-      this._pending.push({ kind: 'printById', layoutId: this._activeLayoutId, fieldValues, options });
+      this._pending.push({
+        kind: 'printById',
+        layoutId: this._activeLayoutId,
+        fieldValues,
+        options,
+      });
       return;
     }
     this._lp.printById(this._activeLayoutId, fieldValues, options);
