@@ -215,7 +215,7 @@ async function onTokenChange() {
   if (!found) {
     loadedVisitId = null;
     setMsg(`Token ${token} is free on ${day}.`, 'ok');
-    startNewBill(false)
+    startNewBill(false, false); // keep the user's chosen day
     return;
   }
   const { visit, person } = found;
@@ -377,7 +377,9 @@ async function onPatIdChange() {
 
 // Prepare a fresh bill for the next patient. Called by the New-bill button
 // and by Alt+N via app.js.
-export function startNewBill(nextToken = true) {
+// Reset the form for a new bill. resetDate=false keeps the current date (used
+// when the caller is mid-edit on a specific day, e.g. a free token lookup).
+export function startNewBill(nextToken = true, resetDate = true) {
   b.fName.value = '';
   b.fMob.value = '';
   b.fAge.value = '';
@@ -389,12 +391,14 @@ export function startNewBill(nextToken = true) {
   b.fFee.value = '300';
   setFollowupNote('');
   b.fPatientId.value = '';
+  // A fresh bill starts on today's date, so the token is for today.
+  if (resetDate && b.fDate) b.fDate.value = db.localDay();
   tokenEdited = false;
   loadedVisitId = null;
   hideSuggests();
   setMsg('');
   b.fName.focus();
-  if(nextToken) refreshNextToken();
+  if (nextToken) refreshNextToken();
 }
 
 async function onSubmit(e) {
