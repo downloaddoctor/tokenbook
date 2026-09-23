@@ -11,6 +11,9 @@
   --hover: #f3f4f6;
   --accent-soft: #eef2ff;
   --topbar-h: 52px;
+  --control-h: 36px;
+  --control-pad-x: 10px;
+  --control-radius: 6px;
 }
 * {
   box-sizing: border-box;
@@ -204,11 +207,22 @@ input[type='date'],
 input[type='search'],
 input[type='email'],
 input[type='url'],
+input[type='password'],
 select {
   font: inherit;
-  padding: 8px 10px;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
+  background: #fff;
+  color: var(--ink);
+  line-height: 1.2;
+}
+textarea {
+  font: inherit;
+  padding: 8px var(--control-pad-x);
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
   background: #fff;
   color: var(--ink);
 }
@@ -227,9 +241,10 @@ select:focus {
 
 button {
   font: inherit;
-  padding: 8px 12px;
+  height: var(--control-h);
+  padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   background: #fff;
   color: var(--ink);
   cursor: pointer;
@@ -437,7 +452,7 @@ tbody tr.active:hover {
   padding: 12px 20px 16px;
   border-top: 1px solid var(--line);
 }
-.modal-actions button { padding: 8px 14px; }
+.modal-actions button { height: var(--control-h); padding: 0 14px; }
 .log-view {
   margin: 0;
   max-height: min(60vh, 480px);
@@ -473,8 +488,8 @@ tbody tr.active:hover {
 }
 .inline input,
 .inline select {
-  font-size: 13px;
-  padding: 6px 8px;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
 }
 .inline input[type='search'] {
   min-width: 220px;
@@ -484,6 +499,7 @@ tbody tr.active:hover {
 input[type='search'] {
   -webkit-appearance: none;
   appearance: none;
+  min-width: 0;
 }
 input[type='search']::-webkit-search-cancel-button {
   -webkit-appearance: none;
@@ -621,9 +637,10 @@ tbody tr:last-child td {
 #patient-form > label > input,
 #patient-form > label > select {
   width: 100%;
-  padding: 8px 10px;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   font: inherit;
   color: var(--ink);
   background: var(--card);
