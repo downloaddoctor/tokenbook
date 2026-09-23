@@ -558,7 +558,7 @@ class DB {
         if (!p) continue;
         await this._recomputePerson(pid);
       }
-      return { visits: rows.length, people: 0 };
+      return { visits: rows.length };
     });
   }
 
@@ -624,7 +624,9 @@ class DB {
       seen.add(p.id);
       out.push(p);
     }
-    out.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    out.sort((a, b) =>
+      (b.lastVisitAt || b.updatedAt || '').localeCompare(a.lastVisitAt || a.updatedAt || '')
+    );
     return out.slice(0, limit);
   }
 

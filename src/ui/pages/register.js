@@ -1,4 +1,4 @@
-// Billing page: form, autofill, submit+print. State is local; the router
+// Register page: form, autofill, submit+print. State is local; the router
 // calls mount()/unmount() and this module binds/unbinds its own listeners.
 
 import db from '../../core/db.js';

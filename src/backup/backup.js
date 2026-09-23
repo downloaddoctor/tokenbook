@@ -30,9 +30,7 @@ const KEEP_SNAPSHOTS = 30;
 const DEBOUNCE_MS = 2000;
 const HANDLE_KEY = 'dirHandle';
 
-export const hasFsAccess =
-  typeof window.showDirectoryPicker === 'function' &&
-  typeof window.showSaveFilePicker === 'function';
+export const hasFsAccess = typeof window.showDirectoryPicker === 'function';
 
 class Backup {
   constructor() {
