@@ -18,6 +18,9 @@ class Paperstamp {
     this._ready = false;
     this._layoutDefs = {}; // name -> layoutDef, from listLayoutDefs()
     this._activeLayoutId = localStorage.getItem(LS_SELECTED) || '';
+    // Minimal designer mode. Per-mount: Register opts in for quick
+    // position tweaks; Print Layout uses the full designer.
+    this._designerMinimal = false;
     this._pending = []; // queued jobs while !ready
     this._printDoneCbs = []; // one-shot callbacks fired after each print completes
   }
@@ -42,6 +45,12 @@ class Paperstamp {
   setSelectedLayoutId(id) {
     this._activeLayoutId = id || '';
     localStorage.setItem(LS_SELECTED, this._activeLayoutId);
+  }
+
+  // Minimal mode: set per-mount (Register opts in). paperstamp expects the
+  // flag per-call, so every openDesigner / setDesignerLayout carries it.
+  designerMinimal() {
+    return this._designerMinimal;
   }
 
   // Ask the plugin for its saved layouts. cb(map) where map = {name: layoutDef}.
@@ -94,14 +103,24 @@ class Paperstamp {
   // Mount (or remount) the paperstamp iframe into hostEl.
   mount(
     hostEl,
-    { force = false, autoShow = true, openDesignerOnReady = false, seedDefaultOnReady = false } = {}
+    {
+      force = false,
+      autoShow = true,
+      openDesignerOnReady = false,
+      seedDefaultOnReady = false,
+      minimal = false,
+    } = {}
   ) {
     if (!hostEl) return;
     if (typeof window.PaperStamp === 'undefined') {
       this._setStatus('SDK not loaded');
       return;
     }
-    if (this._lp && this._currentHost === hostEl && !force) return;
+    if (this._lp && this._currentHost === hostEl && !force) {
+      this._designerMinimal = !!minimal;
+      return;
+    }
+    this._designerMinimal = !!minimal;
 
     if (this._lp) {
       try {
@@ -134,10 +153,12 @@ class Paperstamp {
               this._activeLayoutId &&
               this._layoutDefs[this._activeLayoutId]
             ) {
-              this._lp.setDesignerLayout(this._activeLayoutId);
+              this._lp.setDesignerLayout(this._activeLayoutId, {
+                minimal: this._designerMinimal,
+              });
               return;
             }
-            if (openDesignerOnReady) this._lp.openDesigner();
+            if (openDesignerOnReady) this._lp.openDesigner({ minimal: this._designerMinimal });
           };
           if (seedDefaultOnReady) {
             this.seedDefaultIfEmpty(after);
@@ -178,7 +199,8 @@ class Paperstamp {
           this._lp.previewById(job.layoutId, job.fieldValues, job.options);
         else if (job.kind === 'printById')
           this._lp.printById(job.layoutId, job.fieldValues, job.options);
-        else if (job.kind === 'designer') this._lp.openDesigner();
+        else if (job.kind === 'designer')
+          this._lp.openDesigner({ minimal: this._designerMinimal });
         else if (job.kind === 'closeDesigner') this._lp.closeDesigner();
         else if (job.kind === 'listLayouts') this.listLayouts(job.cb);
       } catch (e) {
@@ -215,7 +237,7 @@ class Paperstamp {
       return;
     }
     if (typeof onPrinted === 'function') this._printDoneCbs.push(onPrinted);
-    const options = { silent: false };
+    const options = { silent: false, keepZoom: true };
     if (!this._ready) {
       this._pending.push({
         kind: 'printById',
@@ -228,17 +250,18 @@ class Paperstamp {
     this._lp.printById(this._activeLayoutId, fieldValues, options);
   }
 
-  openDesigner() {
+  openDesigner(opts) {
     if (!this._lp) {
       this._setStatus('iframe not mounted');
       return;
     }
+    const options = { minimal: this._designerMinimal, ...(opts || {}) };
     if (!this._ready) {
-      this._pending.push({ kind: 'designer' });
+      this._pending.push({ kind: 'designer', options });
       this._setStatus('designer pending');
       return;
     }
-    this._lp.openDesigner();
+    this._lp.openDesigner(options);
     this._setStatus('designer open');
   }
 

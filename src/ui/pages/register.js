@@ -660,7 +660,12 @@ export function mount() {
     host: document.getElementById('register-ps-host'),
     nameSuggest: document.getElementById('name-suggest'),
   };
-  ps.mount(b.host, { autoShow: false, openDesignerOnReady: true, seedDefaultOnReady: true });
+  ps.mount(b.host, {
+    autoShow: false,
+    openDesignerOnReady: true,
+    seedDefaultOnReady: true,
+    minimal: true,
+  });
   const off = bindOff();
   off.on(b.form, 'submit', onSubmit);
   off.on(b.form, 'input', refreshPreview);
