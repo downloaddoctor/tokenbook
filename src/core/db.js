@@ -29,7 +29,7 @@ export function refundAmountFor(tier) {
   return normalizeRefundTier(tier) * REFUND_TIER_STEP;
 }
 
-class PatientDb {
+class DB {
   constructor() {
     // The active Dexie instance. Swappable so the self-test can run against an
     // isolated database (doctor-apt-list-devtest) and wipe/replay it without
@@ -764,13 +764,13 @@ class PatientDb {
   }
 }
 
-const patientDb = new PatientDb();
+const clinicDb = new DB();
 
 // Raw Dexie accessor for bulk tools (seed.js). Returns whatever the current
 // instance is — after setDbName() this points at the swapped DB.
 export function rawDb() {
-  return patientDb.raw();
+  return clinicDb.raw();
 }
 
-export default patientDb;
-export { PatientDb };
+export default clinicDb;
+export { DB };

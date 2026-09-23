@@ -21,7 +21,7 @@ index.html loads paperstamp SDK from downloaddoctor.github.io
 Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
 
 # MODULES
-core/db.js      class PatientDb; default export = instance (`import db`); rawDb() -> Dexie for bulk tools; ONLY public write is addVisit -> _writeVisit
+core/db.js      class DB; default export = instance (`import db`); rawDb() -> Dexie for bulk tools; ONLY public write is addVisit -> _writeVisit
 core/day.js     localDay() -> 'YYYY-MM-DD' in browser TZ
 ui/app.js       boot, topbar tabs, backup/restore/log buttons; default-imports db + backup
 ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N
@@ -34,15 +34,15 @@ print/ps.js     class Paperstamp; default export = singleton instance (`import p
 print/defaultLayout.js  seed layout pushed when plugin has none
 backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized
 backup/csv.js     pure CSV encode/decode for the log format
-backup/meta.js    class BackupMeta; default export = instance (`import meta`); separate IDB for the directory handle
+backup/meta.js    class Meta; default export = instance (`import meta`); separate IDB for the directory handle
 
 # RUNTIME-GRAPH
-app.js -> PatientDb.openDb() -> Dexie (doctor-apt-list)
-app.js -> PatientBackup.init() -> PatientDb.setJournal(markDirty)
-register submit -> PatientDb.addVisit() -> _writeVisit(log=true) -> journal -> backup.flush()
+app.js -> db.openDb() -> Dexie (doctor-apt-list)
+app.js -> backup.init() -> db.setJournal(markDirty)
+register submit -> db.addVisit() -> _writeVisit(log=true) -> journal -> backup.flush()
   -> PS.print() -> paperstamp iframe -> onDone
 router.activateTab -> pages[name].mount()/unmount()
-restore -> backup reads latest.csv/snapshot -> csvToLog -> PatientDb.replayLog -> addVisit({preserve}) -> _writeVisit(log=false)
+restore -> backup reads latest.csv/snapshot -> csvToLog -> db.replayLog -> addVisit({preserve}) -> _writeVisit(log=false)
 Test button -> runSelfTest -> register (form driver, print suppressed) -> tokens refund dialog -> DB/log/replay checks -> cleanup
 
 # SCHEMA
@@ -60,7 +60,7 @@ DB apt-list-backup-meta, store kv: holds FileSystemDirectoryHandle under 'dirHan
 # ENV
 Browser-only; no server, no env vars
 Requires File System Access API for folder backup (Chrome/Edge)
-Fallback when unsupported: CSV download via PatientDb.exportAll
+Fallback when unsupported: CSV download via db.exportAll
 localStorage: aptList.selectedLayoutId (paperstamp layout choice)
 
 # DEPENDENCIES
@@ -69,7 +69,7 @@ paperstamp SDK (external script tag)
 No npm runtime deps; package-lock.json present (dev tooling only)
 
 # PUBLIC-API
-db (default export of core/db.js, instance of PatientDb): openDb, addVisit, setVisitRefund, replayLog ({count,skipped}),
+db (default export of core/db.js, instance of DB): openDb, addVisit, setVisitRefund, replayLog ({count,skipped}),
   exportAll, listByDate, listAll, listPeople, searchPeople*, visitsForPerson,
   findVisitByDateToken, lastPaidVisitDaysFor, nextTokenForDate, setJournal, refundAmountFor
   addVisit input keys: name, mob, personId?, date, token, weight, followup, payment, fee, refundTier
@@ -78,9 +78,9 @@ backup (default export of backup/backup.js, instance of Backup): init, setFolder
   setLogFileName, deleteLog
 ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview, print,
   openDesigner, closeDesigner, listLayouts
-meta (default export of backup/meta.js, instance of BackupMeta): get, set, del
+meta (default export of backup/meta.js, instance of Meta): get, set, del
 rawDb() (named export of core/db.js): current Dexie instance for bulk tools (seed.js)
-register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck,answerIdentity}), __getForm, __submitForTest
+register test hooks: __setTestHooks({suppressPrint,bypassLayoutCheck}), __getForm, __submitForTest
 
 # CONFIG
 .prettierrc: singleQuote, semi, printWidth 100, eol lf, trailingComma es5
@@ -121,8 +121,8 @@ Add a page: create src/ui/pages/<name>.js exporting {mount,unmount}; register in
   src/ui/pages/index.js and add to ROUTES + PAGE_ID in src/ui/router.js
 Default print layout: edit src/print/defaultLayout.js
 Log format: LOG_COLS in src/backup/csv.js (keep parse/encode in sync; header rename is breaking)
-Journal consumers: PatientDb.setJournal(fn)
+Journal consumers: db.setJournal(fn)
 Self-test: src/dev/selftest.js runSelfTest({onProgress,confirmReplay,router}); register test hooks gate print/dialogs
-Self-test isolation: setDbName('doctor-apt-list-devtest') + PatientBackup.setLogFileName('apt-list-latest-devtest.csv'); DB dropped + name/log restored after; runs on current local day; replay auto-runs (no confirm — isolated)
-PatientDb.setDbName/deleteDb + PatientBackup.setLogFileName/deleteLog are DEV/TEST ONLY (self-test isolation)
+Self-test isolation: db.setDbName('doctor-apt-list-devtest') + backup.setLogFileName('apt-list-latest-devtest.csv'); DB dropped + name/log restored after; runs on current local day; replay auto-runs (no confirm — isolated)
+db.setDbName/deleteDb + backup.setLogFileName/deleteLog are DEV/TEST ONLY (self-test isolation)
 Backup dir handle: backup/meta.js (its own IDB, not Dexie)

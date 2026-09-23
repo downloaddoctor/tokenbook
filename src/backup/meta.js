@@ -8,7 +8,7 @@
 const META_DB = 'apt-list-backup-meta';
 const META_STORE = 'kv';
 
-class BackupMeta {
+class Meta {
   constructor() {
     this._metaPromise = null;
   }
@@ -60,7 +60,7 @@ class BackupMeta {
   }
 }
 
-const backupMeta = new BackupMeta();
+const metaInstance = new Meta();
 
-export default backupMeta;
-export { BackupMeta };
+export default metaInstance;
+export { Meta };
