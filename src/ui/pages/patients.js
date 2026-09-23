@@ -6,9 +6,32 @@ import { bindOff } from '../dom.js';
 
 const PAGE = 50;
 let st;
+let activeRow = -1; // index of the keyboard-highlighted row in tbody
+
+function rowEls() {
+  return st && st.tbody ? Array.from(st.tbody.children) : [];
+}
+
+function setActiveRow(i) {
+  const rows = rowEls();
+  if (!rows.length) {
+    activeRow = -1;
+    return;
+  }
+  i = Math.max(0, Math.min(i, rows.length - 1));
+  for (let k = 0; k < rows.length; k++) rows[k].classList.toggle('active', k === i);
+  activeRow = i;
+  rows[i].scrollIntoView({ block: 'nearest' });
+}
+
+function clearActiveRow() {
+  for (const tr of rowEls()) tr.classList.remove('active');
+  activeRow = -1;
+}
 
 async function render() {
   st.tbody.replaceChildren();
+  activeRow = -1;
 
   const q = st.searchEl.value.trim();
   let rows;
@@ -124,6 +147,16 @@ export function mount() {
       render();
     }, 150);
   });
+  // ArrowDown from the search box jumps into the first row. Blur the
+  // input so the document-level handler (which ignores INPUT events) takes
+  // over for subsequent arrows.
+  off.on(st.searchEl, 'keydown', (e) => {
+    if (e.key !== 'ArrowDown') return;
+    if (!rowEls().length) return;
+    e.preventDefault();
+    st.searchEl.blur();
+    setActiveRow(0);
+  });
 
   off.on(st.prevBtn, 'click', () => {
     st.offset = Math.max(0, st.offset - PAGE);
@@ -138,6 +171,7 @@ export function mount() {
   off.on(st.tbody, 'click', (e) => {
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
+    setActiveRow(rowEls().indexOf(tr));
     openHistory(Number(tr.dataset.id));
   });
 
@@ -146,7 +180,60 @@ export function mount() {
     if (e.target === st.modal) closeHistory();
   });
   off.on(document, 'keydown', (e) => {
-    if (e.key === 'Escape' && !st.modal.hidden) closeHistory();
+    if (e.key === 'Escape' && !st.modal.hidden) {
+      closeHistory();
+      return;
+    }
+    if (!st.modal.hidden) return;
+    if (!st.tbody || !rowEls().length) return;
+    const t = e.target;
+    if (
+      t &&
+      (t.tagName === 'INPUT' ||
+        t.tagName === 'SELECT' ||
+        t.tagName === 'TEXTAREA' ||
+        t.isContentEditable)
+    )
+      return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const rows = rowEls();
+      if (activeRow >= rows.length - 1) {
+        // Bottom of the list -> hand focus to the pager's Next button.
+        clearActiveRow();
+        if (st.nextBtn && !st.nextBtn.disabled && !st.pager.hidden) {
+          st.nextBtn.focus();
+          return;
+        }
+        return;
+      }
+      setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      // Coming back from the Next button -> re-select the last row.
+      if (st.nextBtn && t === st.nextBtn) {
+        setActiveRow(rowEls().length - 1);
+        return;
+      }
+      if (activeRow <= 0) {
+        // Top of the list -> hand focus to the search input.
+        clearActiveRow();
+        if (st.searchEl) st.searchEl.focus();
+        return;
+      }
+      setActiveRow(activeRow - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setActiveRow(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setActiveRow(rowEls().length - 1);
+    } else if (e.key === 'Enter') {
+      const rows = rowEls();
+      if (activeRow < 0 || activeRow >= rows.length) return;
+      e.preventDefault();
+      openHistory(Number(rows[activeRow].dataset.id));
+    }
   });
 
   st.off = off;
