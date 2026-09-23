@@ -17,6 +17,7 @@ index.html     single page shell; all views are <section> toggles
 # ENTRY-POINTS
 index.html -> src/ui/app.js          boot: open DB, init backup, wire router, tab hotkeys
 Alt+H (app.js)  open history modal for the patient id in the Register form (dynamic import ui/history.js)
+Alt+R (register) open refund dialog for the loaded visit (paid only) via ui/refund.js
 index.html loads paperstamp SDK from downloaddoctor.github.io
 ?dev=1 query    enables Seed/Clear buttons (dynamic import src/dev/seed.js)
 Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
@@ -30,6 +31,7 @@ ui/dom.js       el/on/bindOff/timeAgo helpers
 ui/toast.js     class Toast; default export = instance; named exports toast/clearToast are bound methods
 ui/pages/*.js   register, tokens, patients, printLayout (each {mount,unmount})
 ui/history.js   reusable patient-history modal (visit timeline); openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit in Register; opened by Patients rows and Register Alt+H
+ui/refund.js    reusable refund dialog; openRefundDialog(visit) -> tier|null, refundLabel(tier); own DOM; used by Tokens (click/Enter) and Register Alt+R
 dev/selftest.js   dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
 ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
 print/ps.js     class Paperstamp; default export = singleton instance (`import ps`); host moves between pages

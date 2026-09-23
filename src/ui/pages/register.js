@@ -5,6 +5,7 @@ import db from '../../core/db.js';
 import ps from '../../print/ps.js';
 import { bindOff, timeAgo } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
+import { openRefundFor, refundLabel } from '../refund.js';
 
 let b;
 
@@ -248,6 +249,34 @@ export async function editVisit(visit) {
   if (visit.personId != null) person = await db.getPerson(visit.personId);
   loadVisitIntoForm(visit, person);
   return true;
+}
+
+// Alt+R on the Register tab: open the refund dialog for the visit currently
+// loaded in the form. Only paid visits can be refunded.
+async function refundCurrentVisit() {
+  if (!loadedVisitId) {
+    toast('No saved visit loaded to refund.', 'err');
+    return;
+  }
+  const found = await db.findVisitByDateToken(b.fDate.value.trim(), Number(b.fToken.value));
+  const visit = found && found.visit;
+  if (!visit || visit.id !== loadedVisitId) {
+    toast('Could not reload the visit.', 'err');
+    return;
+  }
+  if (visit.followup) {
+    toast('Free follow-up visit — no refund.', 'err');
+    return;
+  }
+  try {
+    const choice = await openRefundFor(visit);
+    if (choice == null) return;
+    toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
+    const refound = await db.findVisitByDateToken(visit.date, visit.token);
+    if (refound) loadVisitIntoForm(refound.visit, refound.person);
+  } catch (err) {
+    toast('Refund failed: ' + err.message, 'err');
+  }
 }
 
 // Date change: if token has not been hand-edited, recompute the next token
@@ -623,6 +652,9 @@ async function submitBill() {
     }
   }
   const { rec, created } = result;
+  // The form now reflects a committed visit — treat it as loaded so actions
+  // that operate on "the current visit" (Alt+R refund) work without a re-pick.
+  loadedVisitId = rec.id;
   // Echo the resolved person id back into the form so the next Save for the
   // same patient carries an explicit personId (new patients get an id here).
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
@@ -698,6 +730,14 @@ export function mount() {
   off.on(b.fToken, 'blur', onTokenBlur);
   off.on(b.fDate, 'change', onDateChange);
   off.on(b.fDate, 'input', onDateChange);
+  // Alt+R: refund the visit currently loaded in the form.
+  off.on(document, 'keydown', (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== 'r' && e.key !== 'R') return;
+    if (document.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    refundCurrentVisit();
+  });
   if (b.fFollowup) off.on(b.fFollowup, 'change', onFollowupChange);
   if (b.fFee)
     off.on(b.fFee, 'input', () => {

@@ -3,6 +3,7 @@
 import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
 import { toast } from '../toast.js';
+import { openRefundFor, refundLabel } from '../refund.js';
 
 
 let s;
@@ -30,10 +31,7 @@ function clearActiveRow() {
   activeRow = -1;
 }
 
-function refundLabel(tier) {
-  const amt = db.refundAmountFor(tier);
-  return amt > 0 ? `₹${amt}` : '';
-}
+
 
 function ymd(d) {
   const y = d.getFullYear();
@@ -109,34 +107,6 @@ async function refresh() {
   }
 }
 
-// Open the refund dialog for a visit; returns the chosen tier or null.
-function openRefundDialog(visit) {
-  return new Promise((resolve) => {
-    const dlg = document.getElementById('refund-dialog');
-    const sub = document.getElementById('refund-sub');
-    const sel = document.getElementById('refund-tier');
-    if (!dlg || !sub || !sel) return resolve(null);
-    sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${visit.fee != null ? visit.fee : 0}`;
-    sel.value = String(visit.refundTier || '0');
-    const onClose = () => {
-      dlg.removeEventListener('close', onClose);
-      sel.removeEventListener('change', onSelChange);
-      resolve(dlg.returnValue === 'save' ? sel.value : null);
-    };
-    const saveBtn = dlg.querySelector('#refund-save');
-    // Once a tier is picked, jump focus to Save. Tab from Save goes to Cancel
-    // (DOM order: Cancel then Save; Shift+Tab from Save also reaches Cancel).
-    const onSelChange = () => {
-      if (saveBtn) saveBtn.focus();
-    };
-    dlg.returnValue = '';
-    dlg.addEventListener('close', onClose);
-    sel.addEventListener('change', onSelChange);
-    dlg.showModal();
-    sel.focus();
-  });
-}
-
 async function onRowClick(e) {
   const tr = e.target.closest('tr[data-id]');
   if (!tr) return;
@@ -152,10 +122,9 @@ async function activateRow(visitId) {
     toast('Free follow-up visit — no refund.', 'err');
     return;
   }
-  const choice = await openRefundDialog(visit);
-  if (choice == null) return;
   try {
-    await db.setVisitRefund(visit.id, choice);
+    const choice = await openRefundFor(visit);
+    if (choice == null) return;
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
     refresh();
   } catch (err) {
