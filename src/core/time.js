@@ -1,0 +1,29 @@
+// Relative-time formatting. Accepts an ISO string, epoch-ms number, or Date.
+// Two output styles:
+//   default      -> 'just now', '5 min ago', '2 hours ago', '3 days ago', months, years
+//   compact:true -> 'just now', '5m ago', '2h ago', '3d ago' (no months/years)
+// `fallback` is returned when the input can't be parsed ('' by default; the
+// backup status line uses 'never').
+
+export function timeAgo(when, { compact = false, fallback = '' } = {}) {
+  const t = when instanceof Date ? when.getTime() : typeof when === 'number' ? when : Date.parse(when || '');
+  if (!t) return fallback;
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return 'just now';
+  const m = s / 60;
+  if (compact) {
+    if (m < 60) return Math.round(m) + 'm ago';
+    const h = m / 60;
+    if (h < 24) return Math.round(h) + 'h ago';
+    return Math.round(h / 24) + 'd ago';
+  }
+  if (m < 60) return Math.round(m) + ' min ago';
+  const h = m / 60;
+  if (h < 24) return Math.round(h) + (Math.round(h) === 1 ? ' hour ago' : ' hours ago');
+  const d = h / 24;
+  if (d < 30) return Math.round(d) + (Math.round(d) === 1 ? ' day ago' : ' days ago');
+  const mo = d / 30;
+  if (mo < 12) return Math.round(mo) + (Math.round(mo) === 1 ? ' month ago' : ' months ago');
+  const y = Math.round(mo / 12);
+  return y + (y === 1 ? ' year ago' : ' years ago');
+}

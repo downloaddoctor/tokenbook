@@ -23,6 +23,7 @@ import {
   parseBackup,
 } from './csv.js';
 import meta from './meta.js';
+import { timeAgo } from '../core/time.js';
 
 const DEFAULT_LATEST = 'apt-list-latest.csv';
 const SNAP_RE = /^apt-list-(\d{4}-\d{2}-\d{2})\.csv$/;
@@ -60,16 +61,7 @@ class Backup {
   // ---------- status line ----------
 
   timeAgo(when) {
-    const t = typeof when === 'number' ? when : Date.parse(when || '');
-    if (!t) return 'never';
-    const s = Math.max(0, (Date.now() - t) / 1000);
-    if (s < 45) return 'just now';
-    const m = s / 60;
-    if (m < 60) return Math.round(m) + 'm ago';
-    const h = m / 60;
-    if (h < 24) return Math.round(h) + 'h ago';
-    const d = h / 24;
-    return Math.round(d) + 'd ago';
+    return timeAgo(when, { compact: true, fallback: 'never' });
   }
 
   updateStatus() {

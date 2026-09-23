@@ -36,21 +36,5 @@ export function setClass(node, cls, on) {
   else node.classList.remove(cls);
 }
 
-// Relative time, GitHub-style: 'just now', '5 min ago', '2 hours ago', etc.
-// Accepts an ISO string (or ms/Date). Returns '' if unparseable.
-export function timeAgo(when) {
-  const t = typeof when === 'number' ? when : Date.parse(when || '');
-  if (!t) return '';
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 45) return 'just now';
-  const m = s / 60;
-  if (m < 60) return Math.round(m) + ' min ago';
-  const h = m / 60;
-  if (h < 24) return Math.round(h) + (Math.round(h) === 1 ? ' hour ago' : ' hours ago');
-  const d = h / 24;
-  if (d < 30) return Math.round(d) + (Math.round(d) === 1 ? ' day ago' : ' days ago');
-  const mo = d / 30;
-  if (mo < 12) return Math.round(mo) + (Math.round(mo) === 1 ? ' month ago' : ' months ago');
-  const y = Math.round(mo / 12);
-  return y + (y === 1 ? ' year ago' : ' years ago');
-}
+// Relative time lives in core/time.js; re-exported here for existing callers.
+export { timeAgo } from '../core/time.js';
