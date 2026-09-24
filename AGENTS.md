@@ -4,8 +4,10 @@ Vanilla ES modules, no build step, no framework
 Runs entirely client-side; all data in browser IndexedDB
 Printing delegated to external paperstamp SDK (iframe embed)
 Offline-capable PWA (service worker + manifest); hosted on GitHub Pages
-DEPLOY RULE: touch AGENTS.md on every commit that changes a cached asset
+DEPLOY RULE: bump version.txt on every deploy that changes a cached asset
   (sw.js uses its validator as the deploy sentinel) or clients stay stale
+  .githooks/pre-commit does this automatically (enable: git config core.hooksPath .githooks)
+  version.txt is NOT precached — the SW HEADs it to detect deploys
 
 # DIRECTORY
 src/core/      persistence + domain logic

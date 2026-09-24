@@ -2,19 +2,20 @@
 
    Static site, no build step.
 
-   Invalidation model: AGENTS.md is the deploy sentinel and must be touched
-   on every commit that changes a cached asset (see AGENTS.md). On each page
-   reload we HEAD ./AGENTS.md; if its validator (ETag/Last-Modified) differs
-   from the stored one, each shell asset is HEAD-checked and only the changed
-   ones are re-fetched. If the sentinel is unchanged, everything is served
-   from cache. AGENTS.md is trusted fully — a missed touch means a stale file
-   until the next AGENTS.md change. */
+   Invalidation model: version.txt is the deploy sentinel and must be bumped
+   on every deploy that changes a cached asset. On each page reload we HEAD
+   ./version.txt; if its validator (ETag/Last-Modified) differs from the
+   stored one, each shell asset is HEAD-checked and only the changed ones are
+   re-fetched. If the sentinel is unchanged, everything is served from cache.
+   version.txt is trusted fully — a missed bump means a stale file until the
+   next bump. version.txt itself is NOT cached (the HEAD diff must see the
+   fresh validator). */
 
 const SHELL_CACHE = 'tokenbook-shell';
 const RUNTIME_CACHE = 'tokenbook-runtime';
 const META_CACHE = 'tokenbook-meta';
 
-const SENTINEL_URL = './AGENTS.md';
+const SENTINEL_URL = './version.txt';
 const SENTINEL_KEY = 'https://tokenbook.local/__sentinel__';
 const ASSET_VAL_PREFIX = 'https://tokenbook.local/__val__/';
 const LAST_CHECK_KEY = 'https://tokenbook.local/__lastcheck__';
@@ -232,8 +233,8 @@ async function handleNavigation(request) {
 
 /* Background update check, run via event.waitUntil so it never delays the
    navigation response. Skips entirely if the last check was under
-   CHECK_GUARD_MS ago (no AGENTS.md fetch on rapid repeat opens). Otherwise
-   HEADs the AGENTS.md sentinel; if changed, HEAD-diffs shell assets,
+   CHECK_GUARD_MS ago (no version.txt fetch on rapid repeat opens). Otherwise
+   HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
    refetches the changed ones, then tells the requesting client to reload
    so it picks up the fresh version. */
 async function checkForUpdates(clientId) {
