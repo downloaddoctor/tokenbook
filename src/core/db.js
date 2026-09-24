@@ -395,21 +395,29 @@ class DB {
   }
 
   // Newest-first walk of a person's visits; returns the last PAID (followup=0) one.
+  // Walks the [personId+createdAt] index backwards and stops at the first paid
+  // visit — O(k), not O(N). Loads a small page at a time so a person with many
+  // free follow-ups still doesn't scan the whole history in one shot.
   async _lastPaidVisitDaysFor(personId, date) {
     if (!personId) return null;
     const db = this._db;
-    const rows = await db.visits.where('personId').equals(personId).toArray();
-    if (!rows.length) return null;
-    rows.sort((a, b) => {
-      const ad = a.date || '';
-      const bd = b.date || '';
-      if (ad !== bd) return bd.localeCompare(ad);
-      return (b.token || 0) - (a.token || 0);
-    });
-    for (const v of rows) {
-      if (!v.followup) return { visit: v, days: this._daysBetween(v.date, date) };
+    const PAGE = 50;
+    let hi = [personId, Dexie.maxKey];
+    for (;;) {
+      const batch = await db.visits
+        .where('[personId+createdAt]')
+        .between([personId, Dexie.minKey], hi)
+        .reverse()
+        .limit(PAGE)
+        .toArray();
+      if (!batch.length) return null;
+      for (const v of batch) {
+        if (!v.followup) return { visit: v, days: this._daysBetween(v.date, date) };
+      }
+      if (batch.length < PAGE) return null;
+      // Continue below the oldest row we just saw (exclusive upper bound).
+      hi = [personId, batch[batch.length - 1].createdAt];
     }
-    return null;
   }
 
   // Public alias for register + self-test.

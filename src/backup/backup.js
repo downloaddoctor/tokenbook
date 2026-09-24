@@ -441,13 +441,27 @@ class Backup {
         if (this._needsHeader) payload += csvHeaderLine() + '\n';
         for (const entry of this._pending) payload += this.formatLogEntry(entry) + '\n';
 
-        const before = exists ? await this.readLatest(this._dir) : null;
+        // Size-before: O(1) metadata read, no full-file text load.
+        let beforeSize = 0;
+        try {
+          const fh = await this._dir.getFileHandle(this.LATEST);
+          beforeSize = (await fh.getFile()).size;
+        } catch {
+          beforeSize = 0; // file doesn't exist yet — will be created by appendText
+        }
+
         await this.appendText(this._dir, this.LATEST, payload);
 
-        // Verify the append: re-read and confirm byte length grew by payload size.
-        const after = await this.readLatest(this._dir);
-        const expectedLen = (before != null ? before.length : 0) + payload.length;
-        if (after == null || after.length !== expectedLen) {
+        // Verify the append: O(1) size check on the file handle, no re-read.
+        let afterSize = -1;
+        try {
+          const fh = await this._dir.getFileHandle(this.LATEST);
+          afterSize = (await fh.getFile()).size;
+        } catch {
+          afterSize = -1;
+        }
+        const expectedLen = beforeSize + new Blob([payload]).size;
+        if (afterSize !== expectedLen) {
           this._lastError = 'append verification failed';
           return;
         }
