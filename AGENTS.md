@@ -160,7 +160,8 @@ Follow-up window = 6 calendar days anchored on last PAID visit; fee forced to 0 
 Rule lives ONLY in core/billing.js (evaluateFollowup); register form, db._resolveBilling, and dev/seed all call it.
 Refund tier N: amount = N*100. 0 = none. Refunds do NOT touch the fee field.
 Log is append-only; delimiter '|'; timestamps epoch-seconds; header rename is breaking.
-Restore = replayLog over log lines; clears both stores in one rw transaction; skips bad rows (returns {count, skipped}).
+Restore = replayLog over log lines; clears both stores in one rw transaction; skips bad rows (returns {count, skipped, skippedRows}); skippedRows from csvToLog/parseBackup carries {lineNo, reason, raw}.
+Public helper return shapes are load-bearing: csvToLog/parseBackup return {ops, skippedRows} (not an array); replayLog(ops, {skippedRows, onProgress}) — changing any of these requires updating backup.js, ui/app.js, dev/selftest.js. No type checker; selftest catches it.
 flush() serialized via _flushPromise; backupNow never no-ops; append verified by byte-length.
 Backup button ALWAYS opens the picker (pickOrBackup -> setFolder -> writeFullBackup). Auto-backup (markDirty) appends to the current folder.
 init() probes persisted handle (validateHandle) and clears it if stale (isStaleHandleError).

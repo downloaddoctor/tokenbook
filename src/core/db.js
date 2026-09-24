@@ -666,17 +666,38 @@ class DB {
   }
 
   // Wipe stores, then replay every row through the SAME write path that produced
-  // it: addVisit({preserve}). Returns {count, skipped}.
-  async replayLog(ops) {
+  // it: addVisit({preserve}). Returns {count, skipped, skippedRows}.
+  // `skippedRows` is an optional passthrough from csvToLog (line-level detail);
+  // when omitted, replay-level skips are reported without line info.
+  // `onProgress` (optional) is called SYNCHRONOUSLY inside the tx every ~250
+  // rows and once at the end: { processed, total, restored, skipped }.
+  // Must NOT await/yield — Dexie would auto-commit an idle transaction.
+  async replayLog(ops, { skippedRows = [], onProgress = null } = {}) {
     const db = this._db;
     return await db.transaction('rw', db.people, db.visits, async () => {
       await db.people.clear();
       await db.visits.clear();
+      const total = ops.length;
+      const TICK = 250;
       let n = 0;
       let skipped = 0;
+      let processed = 0;
+      const replayed = [];
+      const tick = (force) => {
+        if (!onProgress) return;
+        if (!force && processed % TICK !== 0) return;
+        try {
+          onProgress({ processed, total, restored: n, skipped });
+        } catch {
+          /* progress is best-effort — never let it break the tx */
+        }
+      };
       for (const op of ops) {
+        processed++;
         if (op.personId == null || !op.date || !Number.isInteger(op.token) || op.token < 1) {
           skipped++;
+          replayed.push({ reason: 'replay rejected (missing personId/date/token)', raw: '' });
+          tick(false);
           continue;
         }
         await this.addVisit({
@@ -699,8 +720,10 @@ class DB {
           },
         });
         n++;
+        tick(false);
       }
-      return { count: n, skipped };
+      tick(true);
+      return { count: n, skipped, skippedRows: skippedRows.concat(replayed) };
     });
   }
 

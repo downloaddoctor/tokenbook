@@ -541,7 +541,7 @@ class Backup {
     this._needsHeader = false;
   }
 
-  async restoreFromFolder() {
+  async restoreFromFolder({ onProgress = null } = {}) {
     if (!this._dir) throw new Error('No backup folder set.');
     const perm = await this._dir.queryPermission({ mode: 'readwrite' });
     if (perm !== 'granted') {
@@ -556,25 +556,106 @@ class Backup {
       if (!text) throw new Error('No backup files in that folder.');
     }
     let ops;
+    let skippedRows = [];
     try {
-      ops = csvToLog(text);
+      const parsed = csvToLog(text);
+      ops = parsed.ops;
+      skippedRows = parsed.skippedRows;
     } catch (e) {
       const snap = await this.readNewestSnapshot(this._dir);
       if (!snap) throw e;
-      ops = csvToLog(snap);
+      const parsed = csvToLog(snap);
+      ops = parsed.ops;
+      skippedRows = parsed.skippedRows;
       source = 'snapshot';
     }
     this.resetPendingForRestore();
-    const r = await db.replayLog(ops);
-    return { source, count: r.count, skipped: r.skipped, folderName: this._dir.name || '' };
+    const r = await db.replayLog(ops, { skippedRows, onProgress });
+    return {
+      source,
+      count: r.count,
+      skipped: r.skipped,
+      skippedRows: r.skippedRows,
+      folderName: this._dir.name || '',
+    };
   }
 
-  async restoreFromFileObject(file) {
+  async restoreFromFileObject(file, { onProgress = null } = {}) {
     const text = await file.text();
-    const ops = parseBackup(text, file.name);
+    const parsed = parseBackup(text, file.name);
     this.resetPendingForRestore();
-    const r = await db.replayLog(ops);
-    return { mode: 'upload', filename: file.name, count: r.count, skipped: r.skipped };
+    const r = await db.replayLog(parsed.ops, { skippedRows: parsed.skippedRows, onProgress });
+    return {
+      mode: 'upload',
+      filename: file.name,
+      count: r.count,
+      skipped: r.skipped,
+      skippedRows: r.skippedRows,
+    };
+  }
+
+  // Append a restore-error report to error.log in the backup folder, if set.
+  async writeErrorLog(text) {
+    if (!this._dir) return false;
+    try {
+      const fh = await this._dir.getFileHandle('error.log', { create: true });
+      const file = await fh.getFile();
+      const w = await fh.createWritable({ keepExistingData: true });
+      await w.seek(file.size);
+      await w.write(text);
+      await w.close();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Always-download a fresh restore-error report. Returns the filename.
+  downloadErrorLog(text) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp =
+      db.localDay(now) +
+      'T' +
+      pad(now.getHours()) +
+      '-' +
+      pad(now.getMinutes()) +
+      '-' +
+      pad(now.getSeconds());
+    const filename = `tokenbook-restore-errors-${stamp}.log`;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return filename;
+  }
+
+  // Build the error report text, write it to the backup folder (if set) AND
+  // download it. Returns { text, filename } — folder write is fire-and-forget.
+  reportRestoreErrors({ source, folderName, skippedRows }) {
+    if (!skippedRows || !skippedRows.length) return null;
+    const lines = [];
+    lines.push(`=== Restore ${new Date().toISOString()} · source=${source || '?'}${folderName ? ' · folder=' + folderName : ''} ===`);
+    for (const r of skippedRows) {
+      lines.push(`line ${r.lineNo != null ? r.lineNo : '?'}: ${r.reason}`);
+      if (r.raw) lines.push(`  raw: ${r.raw}`);
+    }
+    lines.push('');
+    const text = lines.join('\n');
+    // Fire-and-forget: folder write is best-effort and must not block the UI.
+    this.writeErrorLog(text).catch(() => {});
+    let filename = null;
+    try {
+      filename = this.downloadErrorLog(text);
+    } catch {
+      filename = null;
+    }
+    return { text, filename };
   }
 
   // Fallback export: download the whole DB as a fresh log CSV.

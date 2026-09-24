@@ -541,8 +541,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 }
 
 async function doReplay(rep, text, preVisits, prePeople) {
-  const ops = parseBackup(text);
-  const r = await db.replayLog(ops);
+  const parsed = parseBackup(text);
+  const r = await db.replayLog(parsed.ops, { skippedRows: parsed.skippedRows });
   rep.check('replay: rows restored', r.count > 0, 'count=' + r.count + ' skipped=' + r.skipped);
   rep.eq('replay: skipped = 0', r.skipped, 0);
   const after = await db.findVisitByDateToken(TEST_DATE, 1);

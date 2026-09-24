@@ -114,6 +114,8 @@ function numOrNull(v) {
 }
 
 // Decode a logbook file (header + full rows) into replay ops.
+// Returns { ops, skippedRows } where skippedRows = [{ lineNo, reason, raw }].
+// lineNo is 1-based in the original file (header = line 1).
 export function csvToLog(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (!lines.length) throw new Error('Empty backup file.');
@@ -129,17 +131,35 @@ function parseLogLines(header, lines) {
   const col = Object.fromEntries(header.map((h, i) => [h, i]));
   const has = (k) => col[k] != null;
   const ops = [];
+  const skippedRows = [];
+  const skip = (lineNo, reason, raw) => skippedRows.push({ lineNo, reason, raw });
   for (let i = 1; i < lines.length; i++) {
-    const f = parseCsvLine(lines[i]);
+    const lineNo = i + 1; // header is line 1
+    const raw = lines[i];
+    const f = parseCsvLine(raw);
     // Short row = malformed/truncated. Skip rather than abort the whole atomic restore.
-    if (f.length < header.length) continue;
+    if (f.length < header.length) {
+      skip(lineNo, `short row (${f.length} fields, expected ${header.length})`, raw);
+      continue;
+    }
     const token = Number(f[col.token]);
     const date = f[col.date] || '';
     // Row needs (date, token, personId) to be replayable — skip corrupt lines
     // rather than throw mid-replay.
     const personIdRaw = f[col.personId];
     const personId = personIdRaw === '' || personIdRaw == null ? null : Number(personIdRaw);
-    if (!date || !Number.isInteger(token) || token < 1 || personId == null) continue;
+    if (!date) {
+      skip(lineNo, 'missing date', raw);
+      continue;
+    }
+    if (!Number.isInteger(token) || token < 1) {
+      skip(lineNo, `invalid token (token=${JSON.stringify(f[col.token])})`, raw);
+      continue;
+    }
+    if (personId == null) {
+      skip(lineNo, `invalid personId (personId=${JSON.stringify(personIdRaw)})`, raw);
+      continue;
+    }
     ops.push({
       date,
       token,
@@ -157,7 +177,7 @@ function parseLogLines(header, lines) {
       refundTier: col.refundTier != null ? normalizeRefundTier(f[col.refundTier]) : 0,
     });
   }
-  return ops;
+  return { ops, skippedRows };
 }
 
 // Accepts a log CSV and returns replay ops. Logbook-only (no legacy formats);

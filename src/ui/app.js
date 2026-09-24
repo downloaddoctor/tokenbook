@@ -15,6 +15,47 @@ function restoreMsg(count, skipped, tail) {
   return skipped ? base + ' Skipped ' + skipped + ' bad row(s).' : base;
 }
 
+// Reusable progress toast during a restore. Single toast (replaced each tick),
+// cleared by done() so the final report isn't stacked behind it.
+function mkProgressToast() {
+  let active = false;
+  return {
+    update({ processed, total, restored, skipped }) {
+      active = true;
+      toast(
+        'Restoring ' + processed + '/' + total + ' · ok ' + restored + ' · skip ' + skipped,
+        'warn',
+      );
+    },
+    done() {
+      if (active) toast('');
+      active = false;
+    },
+  };
+}
+
+// Report a restore result: toast, console dump of skip detail, and an
+// error.log (folder + download) when rows were skipped.
+function reportRestore(r, tail) {
+  if (!r.skipped) {
+    toast(restoreMsg(r.count, 0, tail), 'ok');
+    return;
+  }
+  const rep = backup.reportRestoreErrors({
+    source: r.source || r.filename || tail,
+    folderName: r.folderName || '',
+    skippedRows: r.skippedRows || [],
+  });
+  // Console dump — always available, even if the file write failed.
+  console.warn('[restore] skipped rows:', r.skippedRows || []);
+  if (rep) {
+    console.warn('[restore] error report:\n' + rep.text);
+    if (rep.filename) console.warn('[restore] downloaded ' + rep.filename);
+  }
+  const suffix = rep && rep.filename ? ' — see ' + rep.filename : '';
+  toast(restoreMsg(r.count, r.skipped, tail) + suffix, 'err');
+}
+
 // Styled confirm before a destructive restore. Reads the incoming log first and
 // shows "N visits, M patients" so the operator can verify the source. Resolves
 // true if confirmed, false on cancel/Esc/backdrop.
@@ -133,20 +174,27 @@ function restoreConfirm(folderName, summary) {
     try {
       const lg = await backup.readLog();
       if (lg.text) {
-        const ops = csvToLog(lg.text);
+        const parsed = csvToLog(lg.text);
         const people = new Set();
-        for (const op of ops) if (op.personId != null) people.add(op.personId);
-        summary = { visits: ops.length, people: people.size, skipped: 0 };
+        for (const op of parsed.ops) if (op.personId != null) people.add(op.personId);
+        summary = {
+          visits: parsed.ops.length,
+          people: people.size,
+          skipped: parsed.skippedRows.length,
+        };
       }
     } catch (_) {
       summary = null; // unreadable/invalid log -> confirm still proceeds, no counts
     }
     if (!(await restoreConfirm(st.folderName, summary))) return;
+    const p = mkProgressToast();
     try {
-      const r = await backup.restoreFromFolder();
-      toast(restoreMsg(r.count, r.skipped, 'from ' + r.source), r.skipped ? 'err' : 'ok');
+      const r = await backup.restoreFromFolder({ onProgress: p.update });
+      p.done();
+      reportRestore(r, 'from ' + r.source);
       router.activateTab(router.currentTab, true);
     } catch (err) {
+      p.done();
       if (err && err.name === 'AbortError') return;
       toast('Restore failed: ' + err.message, 'err');
     }
@@ -156,11 +204,14 @@ function restoreConfirm(folderName, summary) {
     const f = fileRestore.files && fileRestore.files[0];
     fileRestore.value = '';
     if (!f) return;
+    const p = mkProgressToast();
     try {
-      const r = await backup.restoreFromFileObject(f);
-      toast(restoreMsg(r.count, r.skipped, 'from ' + r.filename), r.skipped ? 'err' : 'ok');
+      const r = await backup.restoreFromFileObject(f, { onProgress: p.update });
+      p.done();
+      reportRestore(r, 'from ' + r.filename);
       router.activateTab(router.currentTab, true);
     } catch (err) {
+      p.done();
       toast('Restore failed: ' + err.message, 'err');
     }
   });
