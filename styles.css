@@ -108,6 +108,25 @@ button.primary .kbd {
   color: var(--accent-ink);
   border-color: rgba(255, 255, 255, 0.5);
 }
+/* Shortcut hints pinned to the bottom of the Register card. */
+.register-hints {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+  margin-top: 20px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  pointer-events: none;
+}
+.kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  pointer-events: auto;
+}
 /* status bar (fixed bottom, VS Code-ish) */
 #statusbar {
   position: fixed;
@@ -306,10 +325,12 @@ tbody tr.active:hover {
   min-width: 0;
 }
 .split-left {
+  position: relative;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 16px;
+  padding-bottom: 0;
 }
 .split-right {
   background: var(--card);
