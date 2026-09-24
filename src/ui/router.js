@@ -4,6 +4,13 @@
 
 export const ROUTES = ['register', 'tokens', 'patients', 'printLayout'];
 
+// Primary input focused when a tab is activated via the Alt+1..4 shortcut.
+// Missing / printLayout -> no focus change.
+const FOCUS_ON_ACTIVATE = {
+  register: 'f-name',
+  patients: 'patients-search',
+};
+
 // Module-level holder so page modules can ask the router to switch tabs
 // without threading a reference through mount(). Set once in app.js.
 let _router = null;
@@ -72,10 +79,17 @@ export function createRouter({ pages, onNewBill } = {}) {
         if (typeof onNewBill === 'function') onNewBill();
         return;
       }
+      if (!e.altKey) return; // Alt+1..4 switches tabs and focuses its input
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > ROUTES.length) return;
       e.preventDefault();
-      activateTab(ROUTES[n - 1]);
+      const name = ROUTES[n - 1];
+      // Only (re)mount when actually switching tabs; if we're already here,
+      // just focus the input without reloading the page.
+      if (name !== currentTab) activateTab(name);
+      const id = FOCUS_ON_ACTIVATE[name];
+      const target = id && document.getElementById(id);
+      if (target) target.focus();
     });
   }
 
