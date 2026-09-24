@@ -789,16 +789,49 @@ tbody tr:last-child td {
   font-size: 13px;
   color: var(--ink);
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
 }
 .suggest-list li:hover,
 .suggest-list li.hl {
   background: #e0e7ff;
 }
-.suggest-list li .s-sub {
+/* Row 1: name (flexible) · ago (fixed, right) */
+.suggest-list li .s-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.suggest-list li .s-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggest-list li .s-ago {
+  flex: 0 0 auto;
+  min-width: 5ch;
+  text-align: right;
   color: var(--muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* Row 2: mob (fixed) · age (fixed) */
+.suggest-list li .s-sub {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.suggest-list li .s-mob {
+  flex: 0 0 auto;
+  min-width: 11ch;
+}
+.suggest-list li .s-age {
+  flex: 0 0 auto;
+  min-width: 4ch;
 }
 
 /* responsive */

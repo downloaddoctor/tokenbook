@@ -72,15 +72,27 @@ function renderSuggest(ul, items, pick) {
   const list = { ul, items, pick, hi: -1 };
   items.forEach((p, i) => {
     const li = document.createElement('li');
+
     const main = document.createElement('span');
-    main.textContent = p.name;
+    main.className = 's-main';
+    const name = document.createElement('span');
+    name.className = 's-name';
+    name.textContent = p.name;
+    const ago = document.createElement('span');
+    ago.className = 's-ago';
+    ago.textContent = timeAgo(p.lastVisitAt || p.createdAt) || '';
+    main.append(name, ago);
+
     const sub = document.createElement('span');
     sub.className = 's-sub';
-    const bits = [p.mob];
-    if (p.age != null && p.age !== '') bits.push(String(p.age));
-    const seen = timeAgo(p.lastVisitAt || p.createdAt);
-    if (seen) bits.push(seen);
-    sub.textContent = bits.join(' · ');
+    const mob = document.createElement('span');
+    mob.className = 's-mob';
+    mob.textContent = p.mob || '';
+    const age = document.createElement('span');
+    age.className = 's-age';
+    age.textContent = p.age != null && p.age !== '' ? String(p.age) : '';
+    sub.append(mob, age);
+
     li.append(main, sub);
     li.addEventListener('mousedown', (e) => {
       e.preventDefault();
