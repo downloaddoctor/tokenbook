@@ -1,17 +1,16 @@
-// Tiny DOM helpers. No framework, no globals.
+// Tiny DOM helpers — no framework, no globals.
 
 export function el(id) {
   return document.getElementById(id);
 }
 
-// Attach a listener and return a remover.
+// Attach a listener; returns a remover.
 export function on(target, type, fn, opts) {
   target.addEventListener(type, fn, opts);
   return () => target.removeEventListener(type, fn, opts);
 }
 
-// Collector for listener teardown. Mirrors the previous bindOff() pattern
-// (used by every Pages.* module): mount binds, unmount calls off().
+// Mount/unmount listener collector. Pages call on(...) in mount, off() in unmount.
 export function bindOff() {
   const offs = [];
   return {
@@ -36,5 +35,5 @@ export function setClass(node, cls, on) {
   else node.classList.remove(cls);
 }
 
-// Relative time lives in core/time.js; re-exported here for existing callers.
+// Re-export; canonical location is core/time.js.
 export { timeAgo } from '../core/time.js';

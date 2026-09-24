@@ -1,15 +1,14 @@
-// Dev-only seed / clear. Generates realistic visit history so the Patients
-// list, history modal, restore, and pagination can be exercised at scale.
+// Dev-only seed / clear. Generates realistic visit history for Patients list,
+// history modal, restore, and pagination at scale.
 //
-// NOTE: this BULK-WRITES visits + the people projection directly, bypassing
-// _writeVisit. That is deliberate — replaying 100k rows through the per-row
-// write path takes minutes and gives no progress. The projection built here
-// must therefore MATCH what _writeVisit produces:
-//   people.visits       = count of that person's visits
-//   people.lastVisitAt  = max(createdAt) over those visits
-//   people.name/mob/age/gender/weight = snapshot of the NEWEST visit
-//   people.createdAt    = min(createdAt) over those visits
-//   people.updatedAt    = max(createdAt) over those visits (row-touch proxy)
+// BULK-WRITES visits + people directly, bypassing _writeVisit on purpose
+// (replaying 100k rows through the per-row path takes minutes). The projection
+// here MUST MATCH what _writeVisit produces:
+//   people.visits      = count of that person's visits
+//   people.lastVisitAt = max(createdAt) over those visits
+//   people.name/mob/age/gender/weight = newest visit's snapshot
+//   people.createdAt   = min(createdAt) over those visits
+//   people.updatedAt   = max(createdAt) over those visits (row-touch proxy)
 // If _writeVisit's projection logic changes, update this file to match.
 //
 // Guarded by ?dev=1 at the call site (app.js). Do not import from prod pages.
@@ -55,20 +54,18 @@ function localDayOf(d) {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 }
-// Random time-of-day within clinic hours (09:00 – 19:00), so createdAt has
-// a plausible ordering within a day.
+// Random time within clinic hours (09:00–19:00), so createdAt has a plausible
+// order within a day.
 function atClinicHour(d) {
   const out = new Date(d);
   out.setHours(9 + randInt(10), randInt(60), randInt(60), 0);
   return out;
 }
 
-// Generate `total` visits across `days`, drawn from a pool of `patients`
-// identities. Writes in chunks with an onProgress(written, total) callback so
-// the UI can show a live counter. Bulk-writes final rows directly (not via
-// addVisit) because replaying 100k rows through the per-row write path would
-// take minutes; the projection is computed here to match what _writeVisit
-// would have produced.
+// Generate `total` visits across `days` from a pool of `patients` identities.
+// Writes in chunks with an onProgress(written, total) callback. Bulk-writes
+// final rows directly (not via addVisit) for speed; projection computed to
+// match what _writeVisit would produce.
 export async function seed({
   total = 10000,
   days = 200,
@@ -239,13 +236,12 @@ export async function clearAll() {
   });
 }
 
-// Defaults for seed(); a blank / cancelled prompt keeps the default for that
-// field. Kept here so the UI layer stays free of seeding policy.
+// Defaults for seed(); blank/cancelled prompt keeps the default per field.
+// Kept here so the UI layer stays free of seeding policy.
 export const SEED_CONFIG = { total: 10000, days: 200, patients: 500 };
 
-// Prompt for seed size (total visits, days, patient pool). Each field is
-// optional: blank / non-numeric keeps SEED_CONFIG's default. Returns null if
-// the user cancels any prompt (so the caller can abort).
+// Prompt for seed size. Blank/non-numeric keeps the default. Returns null if
+// the user cancels any prompt.
 export function promptSeedConfig() {
   const ask = (label, def) => {
     const raw = window.prompt(`${label} (default ${def})`, String(def));
@@ -256,7 +252,7 @@ export function promptSeedConfig() {
     return Number.isFinite(n) && n > 0 ? n : def;
   };
   const total = ask('Visits to generate', SEED_CONFIG.total);
-  if (total === null) return null; // cancelled -> abort
+  if (total === null) return null;
   const days = ask('Days of history', SEED_CONFIG.days);
   if (days === null) return null;
   const patients = ask('Patient pool size', SEED_CONFIG.patients);

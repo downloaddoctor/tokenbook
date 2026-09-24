@@ -1,10 +1,7 @@
 // Reusable refund dialog: pick a refund tier for a visit.
-// Self-contained — resolves the <dialog id="refund-dialog"> from index.html
-// lazily so it can be opened from any page (Tokens click/Enter, Register Alt+R).
-//
-// openRefundDialog(visit) -> Promise<string|null>
-//   resolves the chosen tier as a string ('0'..'3') on Save, or null if the
-//   dialog was cancelled / dismissed.
+// Self-contained — resolves <dialog id="refund-dialog"> lazily so it can be
+// opened from any page. openRefundDialog(visit) -> Promise<string|null>
+// ('0'..'3' on Save, null on cancel/dismiss).
 
 import db from '../core/db.js';
 
@@ -12,8 +9,8 @@ function el(id) {
   return document.getElementById(id);
 }
 
-// Show the refund dialog for `visit`. Does not write to the DB — callers
-// apply the returned tier via db.setVisitRefund.
+// Show the refund dialog. Does NOT write — callers apply the tier via
+// db.setVisitRefund (or use openRefundFor which does both).
 export function openRefundDialog(visit) {
   return new Promise((resolve) => {
     const dlg = el('refund-dialog');
@@ -27,8 +24,7 @@ export function openRefundDialog(visit) {
     sel.value = String(visit.refundTier || '0');
 
     const saveBtn = dlg.querySelector('#refund-save');
-    // Once a tier is picked, jump focus to Save. Tab from Save goes to Cancel
-    // (DOM order: Cancel then Save; Shift+Tab from Save also reaches Cancel).
+    // After picking a tier, jump focus to Save (Tab/Shift+Tab then reaches Cancel).
     const onSelChange = () => {
       if (saveBtn) saveBtn.focus();
     };
@@ -51,9 +47,8 @@ export function refundLabel(tier) {
   return amt > 0 ? `₹${amt}` : '';
 }
 
-// Convenience: show the dialog AND persist the choice. Returns the new tier
-// (string) or null if cancelled / unchanged. Callers only need to refresh
-// their own view — the DB write happens here.
+// Show the dialog AND persist the choice. Returns the new tier (string) or null
+// if cancelled/unchanged. Callers only need to refresh their own view.
 export async function openRefundFor(visit) {
   if (!visit) return null;
   if (visit.followup) return null; // free follow-ups have nothing to refund

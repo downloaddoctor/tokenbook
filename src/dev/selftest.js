@@ -1,21 +1,19 @@
 // Dev self-test: drives the REAL Register form (Save & Print) through first
-// visit, follow-up, new visit, edit and reassign; exercises the Tokens refund
-// dialog; checks the follow-up window boundary; then verifies the DB, the
-// read-side (tokens list + patient history) and the backup log. Reports
-// progress and a final per-check pass/fail.
+// visit, follow-up, new visit, edit, and reassign; exercises the Tokens refund
+// dialog; checks the follow-up window boundary; verifies DB + read-side +
+// backup log. Reports progress and per-check pass/fail.
 //
 // Runs on the current local day against an ISOLATED DB + log, so it never
-// touches real data. NOT imported by prod pages; wired from app.js.
-// Replay auto-runs (safe: isolated DB is dropped afterwards).
+// touches real data. Wired from app.js (not imported by prod pages). Replay
+// auto-runs (safe: isolated DB is dropped afterwards).
 
 import db from '../core/db.js';
 import backup from '../backup/backup.js';
 import { parseBackup } from '../backup/csv.js';
 import { localDay } from '../core/day.js';
 
-// The test runs on the CURRENT local day. Safe because the self-test uses an
-// isolated DB (tokenbook-devtest) + isolated log (devtest csv), so there
-// is no real data on this day to collide with; cleanup deletes by this date.
+// Runs on the CURRENT local day. Isolated DB (tokenbook-devtest) + isolated log
+// (devtest csv), so no real data on this day to collide with.
 const TEST_DATE = localDay();
 const NAME_A = 'TEST PATIENT A';
 const MOB_A = '0000000001';
@@ -87,8 +85,7 @@ function setVal(el, value, type) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-// Submit via the register module's direct path so errors surface. Returns an
-// error message string, or null on success.
+// Submit via register's direct path so errors surface. Returns error string or null.
 async function submitForm(form, register) {
   if (register && register.__submitForTest) {
     try {
@@ -104,10 +101,9 @@ async function submitForm(form, register) {
 }
 
 // Real-click driver for the identity dialog: submitBill() awaits the dialog's
-// close event, so the button must be clicked WHILE the submit promise is
-// pending. `choice` is the button's value ('update' | 'new' | 'cancel' |
-// 'reassign'). Resolves once the dialog has been opened and clicked, or with
-// an error string if the dialog never appeared.
+// close event, so the button must be clicked WHILE submit is pending. `choice`
+// is the button's value ('update'|'new'|'cancel'|'reassign'). Resolves once the
+// dialog has opened and been clicked, or with an error string.
 async function clickDialog(choice, timeoutMs) {
   const deadline = Date.now() + (timeoutMs == null ? 3000 : timeoutMs);
   while (Date.now() < deadline) {
@@ -126,8 +122,7 @@ async function clickDialog(choice, timeoutMs) {
   return 'identity dialog did not open for choice=' + choice;
 }
 
-// Submit and answer a dialog in parallel: kick off the submit, click the
-// dialog button, then await the submit result.
+// Submit and answer a dialog in parallel.
 async function submitWithDialog(form, register, choice) {
   const submitP = submitForm(form, register);
   const clickP = clickDialog(choice);
@@ -178,13 +173,12 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const rep = makeReporter(onProgress);
   const stage = (s) => onProgress && onProgress('#stage', true, s);
 
-  // Run against an ISOLATED database so replay can wipe/rebuild freely without
-  // touching real data — which is why no destructive confirm is needed here.
+  // Isolated DB so replay can wipe/rebuild freely without touching real data —
+  // which is why no destructive confirm is needed.
   await db.setDbName('tokenbook-devtest');
   await db.openDb();
-  // Isolate the backup LOG too, so test rows never pollute the real log file.
-  // Delete any devtest log from a prior run so each run starts fresh with a
-  // header (the replay parser requires the header on line 1).
+  // Isolate the backup LOG too. Delete any devtest log from a prior run so each
+  // run starts fresh with a header (parser requires header on line 1).
   backup.setLogFileName('tokenbook-latest-devtest.csv');
   await backup.deleteLog().catch(() => {});
 
@@ -203,10 +197,9 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   }
   rep.check('register form mounted', true);
 
-  // Pre-clean: purge any residue from a previous run (its fixed TEST PATIENT
-  // identities and test-date visits). People are not auto-deleted on 0 visits,
-  // so without this a prior run's rows collide with this run's lookups. Keeps
-  // the self-test idempotent — green on the first run, no manual reset.
+  // Pre-clean: purge residue from a previous run (fixed identities + test-date
+  // visits). People are not auto-deleted on 0 visits, so without this a prior
+  // run's rows collide with this run's lookups. Keeps the self-test idempotent.
   await db.deletePeopleByNameMob(NAME_A, MOB_A).catch(() => 0);
   await db.deletePeopleByNameMob(NAME_B, MOB_B).catch(() => 0);
   await db.deletePeopleByNameMob(NAME_BN, MOB_B).catch(() => 0);
@@ -222,9 +215,9 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   else rep.skip('backup folder set', 'no folder — log + replay checks skipped');
 
   // Fill the register form. `date` sets the day (defaults to TEST_DATE);
-  // `token` sets the token field (triggers edit-mode load when a visit exists);
-  // `patientId` sets the hidden person id (used for reassign). Identity and
-  // billing fields are optional.
+  // `token` sets the token (triggers edit-mode load when a visit exists);
+  // `patientId` sets the hidden person id (for reassign). Identity + billing
+  // fields are optional.
   const fill = async ({ date, token, patientId, name, mob, age, gender, weight, payment, followup } = {}) => {
     if (date) {
       setVal(b.fDate, date || TEST_DATE);
@@ -336,8 +329,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 
   // ---- 5b. IDENTITY-CHANGE dialog (edit a linked patient's name) -------
   // Load token 1 (now patient B), change the name so it no longer matches B,
-  // then CLICK the real dialog's "Update patient" button. The person's name
-  // should change and the visit must stay linked to B.
+  // then CLICK "Update patient". Person's name should change; visit stays on B.
   stage('5b. identity-change dialog (update)');
   register.startNewBill();
   await settle(350);
@@ -354,9 +346,9 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.eq('id-dialog: visit still linked to B', v1d && v1d.visit.personId, pidB);
 
   // ---- 5c. REASSIGN dialog (identity collides with another patient) ----
-  // Change the linked patient B's identity to patient A's name + mobile. This
-  // collides, so the reassign dialog appears. Click its Cancel first (must
-  // change nothing), then click Reassign (visit moves to patient A).
+  // Change linked patient B's identity to patient A's name+mobile. Collision ->
+  // reassign dialog appears. Click Cancel first (must change nothing), then
+  // Reassign (visit moves to patient A).
   stage('5c. reassign dialog (collision)');
   register.startNewBill();
   await settle(350);
@@ -377,8 +369,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.eq('reassign-dialog: visit moved to patient A', v1f && v1f.visit.personId, pidA);
   
   // Move token 1 back to patient B so downstream refund/log/read stages see
-  // the state they assert (token 1 -> B). B was renamed in stage 5b, so its
-  // current identity is (TEST PATIENT B2, MOB_B).
+  // the state they assert. B was renamed in stage 5b to (TEST PATIENT B2, MOB_B).
   register.startNewBill();
   await settle(350);
   await fill({ date: TEST_DATE, token: 1 });
@@ -523,8 +514,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     const fd = await db.findVisitByDateToken(date7, 1);
     rep.check('cleanup: boundary rows gone', !fc && !fd);
 
-    // People are NOT auto-deleted on 0 visits, so the test must purge its own
-    // fixed TEST PATIENT identities or the next run collides with them.
+    // People are NOT auto-deleted on 0 visits, so the test purges its own fixed
+    // identities or the next run collides.
     let peopleRemoved = 0;
     peopleRemoved += await db.deletePeopleByNameMob(NAME_A, MOB_A);
     peopleRemoved += await db.deletePeopleByNameMob(NAME_B, MOB_B);
@@ -559,7 +550,7 @@ async function doReplay(rep, text, preVisits, prePeople) {
     rep.eq('replay: restored age = 46', after.visit.age, 46);
   }
   rep.check('replay: pre-replay DB had rows', preVisits > 0, 'visits=' + preVisits + ' people=' + prePeople);
-  // Show what replay restored for the test day, verbatim from the DB rows.
+  // Show what replay restored for the test day, verbatim from DB rows.
   const dayRows = await db.listByDate(TEST_DATE);
   rep.info('----- RESTORED VISITS (' + dayRows.length + ') -----');
   for (const v of dayRows) rep.info(JSON.stringify(v));

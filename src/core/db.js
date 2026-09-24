@@ -1,20 +1,10 @@
-// IndexedDB wrapper for patient records. Backed by Dexie.
-// DB: tokenbook, v1. Two stores:
-//   people  — one row per unique (name, mob) identity. keyPath id, autoIncrement.
-//             unique index [name+mob]. Holds latest known age/gender. Used for
-//             uniqueness enforcement and register autofill/search.
-//             lastVisitAt: ISO of the most recent addVisit (undefined for rows
-//             that predate v3 — not backfilled).
-//   visits  — one row per token issued. keyPath id, autoIncrement. Denormalizes
-//             name/mob/age/gender AS OF THAT VISIT (historical snapshot, so old
-//             tokens still print/list correctly even if a person changes later).
-//             Carries personId linking back to `people`.
-// No legacy v1 store: app is not yet in production, so v1 `patients` is dropped.
-//
-// Class shape: all state lives on the instance (`this._db`, `this._openPromise`,
-// `this._journal`, `this._journalBuffers`). External code uses the default
-// instance export (`import db from './db.js'; db.addVisit(...)`). `rawDb()`
-// returns the current Dexie instance for bulk tooling (seed.js).
+// IndexedDB wrapper (Dexie). DB 'tokenbook'.
+// Stores:
+//   people  — one row per unique (name, mob). index [name+mob] unique-enforced.
+//             latest identity snapshot + O(1) projection (visits count, lastVisitAt).
+//   visits  — one row per token. Historical snapshot of name/mob/age/gender at visit time.
+// Public shape: default export = singleton; `import db from './db.js'; db.addVisit(...)`.
+// rawDb() exposes the current Dexie instance for bulk tools (seed.js).
 
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
@@ -22,8 +12,7 @@ import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../back
 
 const DB_NAME = 'tokenbook';
 
-// Refund tier step: amount = tier * STEP. Exported as a module constant so
-// billing/tokens pages can read it without instantiating anything.
+// Refund amount = tier * REFUND_TIER_STEP. Exported for billing/tokens pages.
 export const REFUND_TIER_STEP = 100;
 export function refundAmountFor(tier) {
   return normalizeRefundTier(tier) * REFUND_TIER_STEP;
@@ -31,28 +20,21 @@ export function refundAmountFor(tier) {
 
 class DB {
   constructor() {
-    // The active Dexie instance. Swappable so the self-test can run against an
-    // isolated database (tokenbook-devtest) and wipe/replay it without
-    // touching real data. Default is the real DB_NAME.
+    // Instance state so self-test can swap to an isolated DB (tokenbook-devtest).
     this._dbName = DB_NAME;
     this._db = new Dexie(this._dbName);
     this._declareSchema(this._db);
-    // Shared open promise so concurrent callers get the same connection handle.
+    // Shared open promise so concurrent callers reuse the same connection.
     this._openPromise = null;
-    // Journal hook: backup.js registers a callback at boot. Every successful
-    // addVisit / setVisitRefund emits the INPUT it was called with (not the
-    // derived output), so restoring from the log replays through the same code
-    // path and re-derives identically. Keeps db.js free of any dependency on
-    // the backup module (no import cycle).
+    // Journal hook (backup.js registers). Emits the INPUT addVisit got, so
+    // restore replays through the same code path. Keeps db.js decoupled from backup.
     this._journal = null;
-    // Per-transaction journal buffers. Key = Dexie Transaction, value = entries.
-    // Entries are released on the transaction's 'complete' event and dropped on
-    // 'abort'/'error', so the backup log only ever records committed writes.
+    // Per-transaction buffers. Released on 'complete', dropped on abort/error
+    // — so the log only records committed writes.
     this._journalBuffers = new Map();
   }
 
-  // Single declared version. No production data yet, so the schema can be
-  // reset freely; the declared number only needs to be self-consistent.
+  // No prod data yet — schema resets freely.
   _declareSchema(instance) {
     instance.version(1).stores({
       people: '++id, name, mob, [name+mob], updatedAt',
@@ -60,8 +42,7 @@ class DB {
     });
   }
 
-  // Raw Dexie instance for bulk tooling (dev/seed.js writes directly and must
-  // bypass _writeVisit by design). Not part of the app's public surface.
+  // Raw Dexie for bulk tools (dev/seed.js). Not part of the app surface.
   raw() {
     return this._db;
   }
@@ -71,9 +52,7 @@ class DB {
     return this._openPromise;
   }
 
-  // DEV/TEST ONLY: swap to a different database (e.g. the self-test DB). Closes
-  // the current connection, recreates the Dexie instance + schema, and resets
-  // the open promise. All methods reference `this._db`, so they follow the swap.
+  // DEV/TEST ONLY: swap DB (self-test isolation). All methods use this._db, so they follow.
   async setDbName(name) {
     const next = name || DB_NAME;
     if (next === this._dbName) return;
@@ -84,7 +63,7 @@ class DB {
     this._openPromise = null;
   }
 
-  // DEV/TEST ONLY: delete the current database entirely.
+  // DEV/TEST ONLY: drop the current DB.
   deleteDb() {
     return Dexie.delete(this._dbName);
   }
@@ -101,7 +80,7 @@ class DB {
       .then((v) => (v ? v.token + 1 : 1));
   }
 
-  // Find the person by (name, mob); create if absent; refresh their stored age.
+  // Find person by (name, mob); create if absent; refresh age/gender.
   findOrCreatePerson({ name, mob, age, gender }) {
     name = String(name).trim().toUpperCase();
     mob = String(mob).trim();
@@ -122,9 +101,7 @@ class DB {
     });
   }
 
-  // Delete a person row by exact (name, mob). DEV/TEST ONLY — the app itself
-  // never deletes people (0-visit people are kept). Used by the self-test to
-  // clean up its fixed TEST PATIENT identities between runs.
+  // DEV/TEST ONLY: delete a person row by exact (name, mob). App never deletes people.
   async deletePeopleByNameMob(name, mob) {
     name = String(name || '').trim().toUpperCase();
     mob = String(mob || '').trim();
@@ -137,8 +114,7 @@ class DB {
     });
   }
 
-  // Exact (name, mob) lookup via the compound index. Used to detect identity
-  // collisions when an edit would rename a person onto another person's identity.
+  // Exact (name, mob) lookup via compound index. Used for identity-collision checks.
   findPersonByNameMob(name, mob) {
     name = String(name || '').trim().toUpperCase();
     mob = String(mob || '').trim();
@@ -146,39 +122,28 @@ class DB {
     return this._db.people.where('[name+mob]').equals([name, mob]).first();
   }
 
-  // Prefix search on mobile number for autofill. Matches as-is (no reordering).
+  // Prefix search on mobile for autofill.
   searchPeopleByMob(prefix, limit = 8) {
     if (!prefix) return Promise.resolve([]);
     return this._db.people.where('mob').startsWith(prefix).limit(limit).toArray();
   }
 
-  // Prefix search on name for autofill. Matches as-is (no reordering).
+  // Prefix search on name for autofill.
   searchPeopleByName(prefix, limit = 8) {
     prefix = String(prefix || '').trim().toUpperCase();
     if (!prefix) return Promise.resolve([]);
     return this._db.people.where('name').startsWith(prefix).limit(limit).toArray();
   }
 
-  // Upsert a visit, keyed on (date, token). `date` comes from the form's date
-  // (or today if blank). If a visit already exists at that (date, token), it is
-  // UPDATED in place (same id, createdAt preserved, updatedAt bumped); the
-  // person is reassigned to whoever the form now describes. Otherwise a new
-  // visit is inserted.
-  //
-  // Person identity resolution, in order:
-  //   1. personId given and found -> use it (update that person's fields).
-  //   2. no personId, (name, mob) matches -> reuse that person.
-  //   3. otherwise -> create a new person.
-  // In cases 1 and 2, if the update would make this person collide with a
-  // different person sharing (name, mob), throw — the unique index must hold.
-  //
-  // Returns { rec, created }: created=false means an existing visit was updated.
+  // Upsert visit keyed on (date, token). Existing -> updated in place (same id,
+  // createdAt kept, updatedAt bumped, person may be reassigned). Otherwise insert.
+  // Identity resolution: personId given+founds -> use it; else (name,mob) match;
+  // else create. Collisions on (name,mob) between distinct people throw.
+  // Returns { rec, created } (created=false == updated existing).
   addVisit(input) {
     const { preserve } = input;
     let { name, mob, age, gender, token, date, personId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
-    // Normalize: blank/missing becomes null (so it never coerces to 0 or ''),
-    // real values are trimmed/typed. Both the live and restore paths supply
-    // full values; the null branch is defensive.
+    // Normalize: blank -> null; trim/uppercase strings; coerce numbers.
     name = name == null ? null : String(name).trim().toUpperCase();
     mob = mob == null ? null : String(mob).trim();
     age = age == null || age === '' ? null : Number(age);
@@ -188,7 +153,7 @@ class DB {
     if (weight != null && !Number.isFinite(weight)) weight = null;
     payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
     followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
-    // refundTier is a non-negative integer N; amount = N * 100 (0 = none).
+    // refundTier: non-negative int N; amount = N*100; 0 = none.
     refundTier = normalizeRefundTier(refundTier);
     const now = new Date();
     const nowIso = now.toISOString();
@@ -198,14 +163,14 @@ class DB {
 
     return db.transaction('rw', db.people, db.visits, async () => {
       if (preserve) {
-        // ---- restore path: trust the backup row -------------------------
+        // ---- restore path: trust the backup row ----
         personId = preserve.personId != null ? Number(preserve.personId) : null;
         if (personId == null) {
           const e = new Error('Restore row missing personId.');
           e.name = 'MissingPersonIdError';
           throw e;
         }
-        // Seed the person row on first sight; _writeVisit bumps it after.
+        // Seed person on first sight; _writeVisit bumps it.
         const exists = await db.people.get(personId);
         if (!exists) {
           await db.people.add({
@@ -236,15 +201,14 @@ class DB {
           updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
           personId,
         };
-        // Restore: never journal — replay must not append to the log it reads.
+        // Restore: never journal (replay must not append to the log it reads).
         return this._writeVisit(rec, nowIso, false);
       }
 
-      // ---- live save path: resolve identity + billing -------------------
+      // ---- live save: resolve identity + billing ----
       let person = null;
-      // Fast path: a linked person whose identity is UNCHANGED needs no
-      // [name+mob] lookup at all — an edit that doesn't touch the name/mobile
-      // must not run identity resolution.
+      // Fast path: linked person with UNCHANGED identity skips the [name+mob]
+      // lookup entirely — a plain edit must not run identity resolution.
       let identityChanged = false;
       if (personId) {
         person = await db.people.get(personId);
@@ -254,7 +218,7 @@ class DB {
         person = await db.people.where('[name+mob]').equals([name, mob]).first();
       }
       if (person) {
-        // Only when the identity is actually changing do we guard against
+        // Only when identity is actually changing: guard against collision with
         // another person already holding the target (name, mob).
         if (identityChanged) {
           const clash = await db.people.where('[name+mob]').equals([name, mob]).first();
@@ -269,9 +233,8 @@ class DB {
         person.age = age;
         if (gender) person.gender = gender;
         if (weight != null) person.weight = weight;
-        // updatedAt / lastVisitAt / visits are set by _writeVisit below, so a
-        // visit that is later reassigned away doesn't stamp this person with a
-        // visit they never keep.
+        // updatedAt / lastVisitAt / visits set by _writeVisit (see below), so a
+        // visit reassigned away doesn't stamp this person with a visit they lose.
         if (!Number.isFinite(person.visits)) person.visits = 0;
         await db.people.put(person);
         personId = person.id;
@@ -288,8 +251,7 @@ class DB {
         });
       }
 
-      // Resolve followup + fee AFTER personId is known (auto-followup needs the
-      // person's prior paid-visit history).
+      // Resolve followup/fee AFTER personId is known (auto-followup needs prior paid visits).
       const billing = await this._resolveBilling({ personId, date, followup, fee });
       followup = billing.followup;
       fee = billing.fee;
@@ -310,18 +272,14 @@ class DB {
         updatedAt: updatedAt || createdAt || nowIso,
         personId,
       };
-      // _writeVisit journals this write itself (log defaults to true).
+      // _writeVisit journals this write (log defaults true).
       return this._writeVisit(rec, nowIso);
     });
   }
 
-  // THE write path. Takes a fully-formed visit record (all fields resolved by
-  // the caller) and:
-  //   1. upserts the visit on (date, token)
-  //   2. maintains the people projection (count, lastVisitAt, updatedAt)
-  //   3. emits one journal line (unless log=false) — the single place backup
-  //      learns about a committed write
-  // Must run inside the caller's rw transaction.
+  // THE write path. Upserts the visit on (date, token), maintains the people
+  // projection, and emits one journal line (unless log=false) — the single
+  // place backup learns about a committed write. Runs in caller's rw txn.
   async _writeVisit(rec, nowIso, log = true) {
     const db = this._db;
     const { date, token, personId } = rec;
@@ -371,8 +329,7 @@ class DB {
     return { rec: stored, created, person, prevPerson };
   }
 
-  // O(1) field bump when a person GAINS a visit (new visit, or a visit was
-  // reassigned TO them).
+  // O(1) projection bump when a person GAINS a visit (new, or reassigned TO them).
   async _bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso) {
     const db = this._db;
     const p = await db.people.get(personId);
@@ -407,8 +364,8 @@ class DB {
     if (rec.weight != null) p.weight = rec.weight;
   }
 
-  // Re-derive a person's projection (visits count + lastVisitAt) from their
-  // current visits. Identity is NOT re-derived here — see _applyIdentity.
+  // Re-derive projection (visits count + lastVisitAt). Identity NOT re-derived —
+  // see _applyIdentity (would revert renames).
   async _recomputePerson(personId) {
     const db = this._db;
     const p = await db.people.get(personId);
@@ -431,8 +388,7 @@ class DB {
     await db.people.put(p);
   }
 
-  // Walk back through a person's visits (newest first) and return the last
-  // visit whose `followup` is falsy (i.e. a PAID visit).
+  // Newest-first walk of a person's visits; returns the last PAID (followup=0) one.
   async _lastPaidVisitDaysFor(personId, date) {
     if (!personId) return null;
     const db = this._db;
@@ -450,12 +406,12 @@ class DB {
     return null;
   }
 
-  // Public alias kept for the register page and the self-test.
+  // Public alias for register + self-test.
   lastPaidVisitDaysFor(personId, date) {
     return this._lastPaidVisitDaysFor(personId, date);
   }
 
-  // Whole-day difference between two 'YYYY-MM-DD' strings (b - a).
+  // Whole-day diff between two 'YYYY-MM-DD' (b - a).
   _daysBetween(a, b) {
     if (!a || !b) return null;
     const da = new Date(a + 'T00:00:00');
@@ -464,12 +420,13 @@ class DB {
     return Math.round((db2 - da) / 86400000);
   }
 
-  // Public alias kept for the self-test / external callers.
+  // Public alias.
   daysBetween(a, b) {
     return this._daysBetween(a, b);
   }
 
-  // Compute fee + auto-followup for a candidate visit.
+  // Compute fee + auto-followup. Window = 6 days anchored on last PAID visit;
+  // fee forced 0 when followup=1.
   async _resolveBilling({ personId, date, followup, fee }) {
     const baseFee = Number.isFinite(Number(fee)) && Number(fee) > 0 ? Number(fee) : 300;
     const explicit = followup === 0 || followup === 1 ? followup : null;
@@ -487,13 +444,13 @@ class DB {
     return { followup: fu, fee: outFee, anchoredOn };
   }
 
-  // Journal hook: backup.js registers a callback at boot.
+  // Journal hook — backup.js registers a callback at boot.
   setJournal(fn) {
     this._journal = typeof fn === 'function' ? fn : null;
   }
 
-  // Journal buffering: entries emitted during a Dexie transaction are held per
-  // transaction and released only on 'complete'.
+  // Journal buffering: entries emitted during a txn are held per-txn and
+  // released only on 'complete' (so rolled-back writes never reach the log).
   _emitJournal(entry) {
     if (!this._journal) return;
     const txn = Dexie.currentTransaction;
@@ -539,8 +496,7 @@ class DB {
       .toArray();
   }
 
-  // Delete every visit on `date` and recompute the people projection for the
-  // affected people (0-visit people are KEPT, not deleted).
+  // Delete every visit on `date` and recompute affected people (0-visit people KEPT).
   async deleteVisitsByDate(date) {
     const db = this._db;
     return db.transaction('rw', db.people, db.visits, async () => {
@@ -562,7 +518,7 @@ class DB {
     });
   }
 
-  // Post-visit edit: set (or clear) the refund tier on a single visit.
+  // Set (or clear) the refund tier on a single visit.
   async setVisitRefund(visitId, tier, whenIso) {
     const t = normalizeRefundTier(tier);
     const nowIso = whenIso || new Date().toISOString();
@@ -591,7 +547,7 @@ class DB {
     });
   }
 
-  // List unique patients, most recently SEEN first.
+  // Unique patients, most recently SEEN first.
   listPeople({ offset = 0, limit = 50 } = {}) {
     return this._db.people.toArray().then((rows) => {
       rows.sort((a, b) =>
@@ -630,7 +586,7 @@ class DB {
     return out.slice(0, limit);
   }
 
-  // Number of visits per person, keyed by personId.
+  // Number of visits per person, keyed by personId. Uses projection if present.
   async visitCountsForPeople(ids) {
     const m = new Map();
     if (!ids || !ids.length) return m;
@@ -655,7 +611,7 @@ class DB {
     return this._db.visits.where('personId').equals(personId).reverse().sortBy('createdAt');
   }
 
-  // Look up a single visit by its identity (date, token), plus its person row.
+  // Look up a single visit by (date, token), plus its person row.
   async findVisitByDateToken(date, token) {
     const db = this._db;
     const visit = await db.visits.where('[date+token]').equals([date, Number(token)]).first();
@@ -672,8 +628,8 @@ class DB {
     return this._db.visits.count();
   }
 
-  // Replay a logbook: wipe stores, then run every row through the SAME write
-  // path that produced it — addVisit({preserve}).
+  // Wipe stores, then replay every row through the SAME write path that produced
+  // it: addVisit({preserve}). Returns {count, skipped}.
   async replayLog(ops) {
     const db = this._db;
     return await db.transaction('rw', db.people, db.visits, async () => {
@@ -711,7 +667,7 @@ class DB {
     });
   }
 
-  // Serialize the current DB as a fresh log (header + one full row per visit).
+  // Serialize the whole DB as a fresh log (header + one full row per visit).
   async exportAll() {
     const db = this._db;
     const [visits] = await Promise.all([db.visits.toArray()]);
@@ -745,8 +701,7 @@ class DB {
     return { text: lines.join('\n') + '\n', count };
   }
 
-  // Post-visit edit: set (or clear) the refund tier on a single visit.
-  // (Kept as a named alias so callers see both `setVisitRefund` and this name.)
+  // Alias kept for callers that read the tier step via the instance.
   refundAmountFor(tier) {
     return refundAmountFor(tier);
   }
@@ -754,8 +709,7 @@ class DB {
 
 const clinicDb = new DB();
 
-// Raw Dexie accessor for bulk tools (seed.js). Returns whatever the current
-// instance is — after setDbName() this points at the swapped DB.
+// Raw Dexie accessor for bulk tools (seed.js). Follows setDbName() swaps.
 export function rawDb() {
   return clinicDb.raw();
 }

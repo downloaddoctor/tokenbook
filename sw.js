@@ -1,15 +1,14 @@
-/* TokenBook service worker — offline app shell 
+/* TokenBook service worker — offline app shell.
 
    Static site, no build step.
 
-   Invalidation model: version.txt is the deploy sentinel and must be bumped
-   on every deploy that changes a cached asset. On each page reload we HEAD
-   ./version.txt; if its validator (ETag/Last-Modified) differs from the
-   stored one, each shell asset is HEAD-checked and only the changed ones are
-   re-fetched. If the sentinel is unchanged, everything is served from cache.
-   version.txt is trusted fully — a missed bump means a stale file until the
-   next bump. version.txt itself is NOT cached (the HEAD diff must see the
-   fresh validator). */
+   Invalidation: version.txt is the deploy sentinel and must be bumped on every
+   deploy that changes a cached asset. On each page reload we HEAD ./version.txt;
+   if its validator (ETag/Last-Modified) differs from the stored one, each shell
+   asset is HEAD-checked and only the changed ones are re-fetched. If the
+   sentinel is unchanged, everything is served from cache. version.txt is trusted
+   fully — a missed bump means a stale file until the next bump. version.txt
+   itself is NOT cached (the HEAD diff must see the fresh validator). */
 
 const SHELL_CACHE = 'tokenbook-shell';
 const RUNTIME_CACHE = 'tokenbook-runtime';
@@ -21,7 +20,7 @@ const ASSET_VAL_PREFIX = 'https://tokenbook.local/__val__/';
 const LAST_CHECK_KEY = 'https://tokenbook.local/__lastcheck__';
 const CHECK_GUARD_MS = 30000;
 
-/* Local app-shell assets (relative to the SW scope, which is the repo root). */
+/* Local app-shell assets (relative to SW scope = repo root). */
 const SHELL_ASSETS = [
   './',
   './index.html',
@@ -48,10 +47,10 @@ const SHELL_ASSETS = [
   './src/backup/meta.js',
 ];
 
-/* Cross-origin assets cached best-effort. ONLY hosts without their own
-   service worker belong here — Dexie (unpkg) and Google Fonts. paperstamp
-   (downloaddoctor.github.io) is deliberately excluded: it ships its own SW.
-   Cache-first so the app still boots offline. */
+/* Cross-origin assets cached best-effort. ONLY hosts without their own SW belong
+   here — Dexie (unpkg) and Google Fonts. paperstamp (downloaddoctor.github.io)
+   is deliberately excluded: it ships its own SW. Cache-first so the app still
+   boots offline. */
 const RUNTIME_HOSTS = new Set([
   'unpkg.com',
   'fonts.googleapis.com',
@@ -117,9 +116,6 @@ function assetValKey(url) {
   return ASSET_VAL_PREFIX + url;
 }
 
-/* HEAD every shell asset and fetch only the ones whose validator changed.
-   Runs once per deploy (i.e. when the sentinel changed), never on plain
-   reloads. When a validator is unavailable it falls back to fetching. */
 /* Run `fn` over `items` with at most `limit` in flight at once. */
 async function mapLimit(items, limit, fn) {
   let i = 0;
@@ -132,10 +128,13 @@ async function mapLimit(items, limit, fn) {
   await Promise.all(workers);
 }
 
+/* HEAD every shell asset and refetch only the ones whose validator changed.
+   Runs once per deploy (when the sentinel changed), never on plain reloads.
+   Falls back to fetching when a validator is unavailable. */
 async function refreshChangedAssets() {
   const cache = await caches.open(SHELL_CACHE);
-  // Cap parallel HEAD/fetch at 6 (browser per-host limit) so the deploy
-  // refresh doesn't queue dozens of requests at once.
+  // Cap parallel HEAD/fetch at 6 (browser per-host limit) so the deploy refresh
+  // doesn't queue dozens of requests at once.
   await mapLimit(SHELL_ASSETS, 6, async (url) => {
     const remote = await headValidator(url);
     const key = assetValKey(url);
@@ -202,8 +201,8 @@ self.addEventListener('activate', (event) => {
    paint), refreshing that cache entry from the network in the background.
    Update detection is separate — see checkForUpdates(). */
 async function handleNavigation(request) {
-  // Navigations are cached under a query- and hash-stripped key so ?dev=1
-  // and plain loads share one shell entry.
+  // Navigations cached under a query/hash-stripped key so ?dev=1 and plain
+  // loads share one shell entry.
   const url = new URL(request.url);
   const key = url.origin + url.pathname;
   const cached = await caches.match(key);
@@ -232,11 +231,9 @@ async function handleNavigation(request) {
 }
 
 /* Background update check, run via event.waitUntil so it never delays the
-   navigation response. Skips entirely if the last check was under
-   CHECK_GUARD_MS ago (no version.txt fetch on rapid repeat opens). Otherwise
-   HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
-   refetches the changed ones, then tells the requesting client to reload
-   so it picks up the fresh version. */
+   navigation response. Skips if the last check was under CHECK_GUARD_MS ago.
+   Otherwise HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
+   refetches changed ones, then tells the requesting client to reload. */
 async function checkForUpdates(clientId) {
   const lastCheck = Number(await readLastCheck()) || 0;
   if (Date.now() - lastCheck < CHECK_GUARD_MS) return;
@@ -261,13 +258,12 @@ async function checkForUpdates(clientId) {
   if (client) client.postMessage({ type: 'tokenbook-update-ready' });
 }
 
-/* Static local assets: cache-first. */
 function isRuntimeRequest(url) {
   return RUNTIME_HOSTS.has(url.hostname);
 }
 
-/* Cross-origin runtime assets (Dexie): cache-first, best-effort. Opaque or
-   CORS responses are both cached so the module is available offline. */
+/* Cross-origin runtime assets (Dexie/fonts): cache-first, best-effort. Opaque
+   or CORS responses are both cached so the module is available offline. */
 async function handleRuntime(request) {
   const cached = await caches.match(request);
   if (cached) return cached;

@@ -1,15 +1,13 @@
-// Reusable patient-history modal: a visit timeline for one person.
+// Reusable patient-history modal: visit timeline for one person.
 // Self-contained — owns its DOM lookups, keyboard nav, and the Enter ->
 // edit-in-Register handoff. Open from anywhere via openHistory(personId).
-//
-// Element ids live in index.html (#history-modal, #history-name,
-// #history-meta, #history-list, #history-close).
+// Element ids live in index.html.
 
 import db from '../core/db.js';
 import { getRouter } from './router.js';
 import { editVisit } from './pages/register.js';
 
-let active = -1; // index of the keyboard-highlighted timeline item
+let active = -1;            // index of the keyboard-highlighted item
 let visitCache = new Map(); // visitId -> visit row (currently rendered)
 let wired = false;
 
@@ -94,7 +92,7 @@ export function closeHistory() {
   if (modal) modal.hidden = true;
 }
 
-// Enter on a timeline entry: load that visit in the Register tab for editing.
+// Enter on a timeline entry: load that visit in Register for editing.
 async function openInRegister(visitId) {
   const visit = visitCache.get(visitId);
   if (!visit) return;

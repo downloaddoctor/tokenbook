@@ -1,5 +1,5 @@
-// Pages registry. The router expects each entry to expose { mount, unmount }.
-// Swap any of these for a Preact component later without touching the router.
+// Pages registry. Router expects each entry to expose { mount, unmount }.
+// Swap any for a Preact component later without touching the router.
 
 import * as register from './register.js';
 import * as tokens from './tokens.js';

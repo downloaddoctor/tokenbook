@@ -1,13 +1,9 @@
 # PROJECT
-TokenBook — token/queue register app for a doctor's practice
-Vanilla ES modules, no build step, no framework
-Runs entirely client-side; all data in browser IndexedDB
-Printing delegated to external paperstamp SDK (iframe embed)
-Offline-capable PWA (service worker + manifest); hosted on GitHub Pages
-DEPLOY RULE: bump version.txt on every deploy that changes a cached asset
-  (sw.js uses its validator as the deploy sentinel) or clients stay stale
-  .githooks/pre-commit does this automatically (enable: git config core.hooksPath .githooks)
-  version.txt is NOT precached — the SW HEADs it to detect deploys
+TokenBook — token/queue register for a doctor's practice.
+Vanilla ES modules, no build step, no framework. All data in browser IndexedDB. Client-only.
+Printing via external paperstamp SDK (iframe embed).
+Offline PWA (service worker + manifest); hosted on GitHub Pages.
+DEPLOY: bump version.txt on every deploy that changes a cached asset (SW sentinel); missed bump -> clients stay stale. .githooks/pre-commit does this automatically (enable: git config core.hooksPath .githooks). version.txt is NOT precached — SW HEADs it to detect deploys.
 
 # DIRECTORY
 src/core/      persistence + domain logic
@@ -17,22 +13,22 @@ src/backup/    folder/CSV backup + journal replay
 src/print/     paperstamp lifecycle + default layout
 src/dev/       dev-only seed/clear + selftest (opt-in, not prod)
 styles.css     single global stylesheet
-index.html     single page shell; all views are <section> toggles
+index.html     single page shell; views are <section> toggles
 sw.js          service worker: precache SHELL_ASSETS, sentinel update check
 pw.js          SW registration + update-reload UX
 manifest.webmanifest  PWA metadata (standalone, theme #2563eb)
-favicon.svg    app icon (also referenced by manifest)
+favicon.svg    app icon (referenced by manifest)
 
 # ENTRY-POINTS
-index.html -> pw.js                 PWA bootstrap: registers sw.js, handles update-reload (30s guard)
-pw.js -> sw.js                 service worker: app-shell precache + sentinel-based update check
-sw.js sentinel = ./AGENTS.md   HEAD validator diff decides which shell assets refetch
-index.html -> src/ui/app.js          boot: open DB, init backup, wire router, tab hotkeys
-Alt+H (app.js)  open history modal for the patient id in the Register form (dynamic import ui/history.js)
-Alt+R (register) open refund dialog for the loaded visit (paid only) via ui/refund.js
+index.html -> pw.js               PWA bootstrap: registers sw.js, handles update-reload (30s guard)
+pw.js -> sw.js                    SW: app-shell precache + sentinel update check
+sw.js sentinel = ./version.txt    HEAD validator diff decides which shell assets refetch
+index.html -> src/ui/app.js       boot: open DB, init backup, wire router, tab hotkeys
+Alt+H (app.js)                    history modal for the patient id in Register form (dynamic import ui/history.js)
+Alt+R (register)                  refund dialog for loaded visit (paid only) via ui/refund.js
 index.html loads paperstamp SDK from downloaddoctor.github.io
-?dev=1 query    enables Seed/Clear buttons (dynamic import src/dev/seed.js)
-Test button     runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
+?dev=1                            enables Seed/Clear buttons (dynamic import src/dev/seed.js)
+Test button                       runs dev self-test (dynamic import src/dev/selftest.js) -> #test-dialog
 
 # MODULES
 core/db.js      class DB; default export = instance (`import db`); rawDb() -> Dexie for bulk tools; ONLY public write is addVisit -> _writeVisit
@@ -42,14 +38,14 @@ ui/router.js    ROUTES registry, hash sync, Ctrl+1..4 / Alt+N; getRouter()/setRo
 ui/dom.js       el/on/bindOff/timeAgo helpers
 ui/toast.js     class Toast; default export = instance; named exports toast/clearToast are bound methods
 ui/pages/*.js   register, tokens, patients, printLayout (each {mount,unmount})
-ui/history.js   reusable patient-history modal (visit timeline); openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit in Register; opened by Patients rows and Register Alt+H
+ui/history.js   reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit in Register; opened by Patients rows and Register Alt+H
 ui/refund.js    reusable refund dialog; openRefundDialog(visit) -> tier|null, refundLabel(tier); own DOM; used by Tokens (click/Enter) and Register Alt+R
-dev/selftest.js   dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
+dev/selftest.js dev self-test: drives real register form + tokens refund dialog; verifies DB/log/replay
 ui/pages/register.js test hooks __setTestHooks/__getForm/__submitForTest (dev only; default prod behavior)
-print/ps.js     class Paperstamp; default export = singleton instance (`import ps`); host moves between pages
+print/ps.js     class Paperstamp; default export = singleton (`import ps`); host moves between pages
 print/defaultLayout.js  seed layout pushed when plugin has none
-backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized; named export hasFsAccess (Feature-detect; import it, NOT backup.hasFsAccess)
-backup/csv.js     pure CSV encode/decode for the log format
+backup/backup.js  class Backup; default export = instance (`import backup`); FSA folder backup; journal -> append CSV; flush serialized; named export hasFsAccess (import it, NOT backup.hasFsAccess)
+backup/csv.js     pure CSV encode/decode for log format
 backup/meta.js    class Meta; default export = instance (`import meta`); separate IDB for the directory handle
 
 # RUNTIME-GRAPH
@@ -75,10 +71,10 @@ DB tokenbook (Dexie)
 DB tokenbook-backup-meta, store kv: holds FileSystemDirectoryHandle under 'dirHandle'
 
 # ENV
-Browser-only; no server, no env vars
-Requires File System Access API for folder backup (Chrome/Edge)
-Fallback when unsupported: CSV download via db.exportAll
-localStorage: tokenBook.selectedLayoutId (paperstamp layout choice)
+Browser-only; no server, no env vars.
+Requires File System Access API for folder backup (Chrome/Edge).
+Fallback when unsupported: CSV download via db.exportAll.
+localStorage: tokenBook.selectedLayoutId (paperstamp layout choice).
 
 # DEPENDENCIES
 Dexie 4.0.11 (ESM from unpkg, no bundler — cached cross-origin by sw.js)
@@ -96,10 +92,9 @@ backup (default export of backup/backup.js, instance of Backup): init, setFolder
   setLogFileName, deleteLog
 ps (default export of print/ps.js, instance of Paperstamp): mount, reset, preview(fieldValues, opts?), print,
   openDesigner(opts?), closeDesigner, listLayouts, designerMinimal()
-  mount() takes {minimal} (default false) — Register passes minimal:true, Print Layout leaves it
-  full; ps threads {minimal} into every openDesigner/setDesignerLayout call
-  preview() and print() pass paperstamp options { keepZoom: true } by default so the
-  plugin's zoom/pan is preserved (no reset to Fit); queued jobs carry options through flush()
+  mount() takes {minimal} (default false) — Register passes minimal:true, Print Layout leaves it full;
+  ps threads {minimal} into every openDesigner/setDesignerLayout call
+  preview()/print() pass paperstamp options { keepZoom: true } by default (no reset to Fit); queued jobs carry options through flush()
 meta (default export of backup/meta.js, instance of Meta): get, set, del
 rawDb() (named export of core/db.js): current Dexie instance for bulk tools (seed.js)
 register page: editVisit(visit) loads a visit into the form for editing (used by Tokens Enter); startNewBill; test hooks __setTestHooks({suppressPrint,bypassLayoutCheck}), __getForm, __submitForTest
@@ -112,22 +107,22 @@ register page: editVisit(visit) loads a visit into the form for editing (used by
 None. Serve files statically; ES modules load directly from browser.
 
 # TESTING
-No test suite. Manual via ?dev=1 Seed/Clear buttons.
+No test suite. Manual via ?dev=1 Seed/Clear buttons; Test button runs dev self-test.
 
 # KNOWN-INVARIANTS
 addVisit is the ONLY write entry point; both live and restore funnel into _writeVisit
 _writeVisit(rec, nowIso, log=true) journals the committed row itself; restore passes log=false
-Journal buffered per Dexie transaction; released on 'complete', dropped on 'abort'/'error'
+Journal buffered per Dexie transaction; released on 'complete', dropped on abort/error
   (rolled-back writes never reach the log)
-people projection = {visits count, lastVisitAt=max createdAt}; identity is NOT derived from visits
+people projection = {visits count, lastVisitAt=max createdAt}; identity NOT derived from visits
 identity ownership: current name/mob/age/gender/weight set only by explicit edits (_touchPerson/_applyIdentity, last-edited wins) or on gaining a newest visit (_bumpPersonOnGain); _recomputePerson never rewrites identity (would revert renames)
-addVisit fast path: linked personId + unchanged name/mob skips [name+mob] lookup and clash check (plain edits do no identity resolution)
-0-visit people are KEPT (visits=0, identity preserved); orphans are NOT deleted by app code
+addVisit fast path: linked personId + unchanged name/mob skips [name+mob] lookup and clash check
+0-visit people are KEPT (visits=0, identity preserved); orphans NOT deleted by app code
 deletePeopleByNameMob(name,mob) deletes a person row exactly — DEV/TEST ONLY (self-test cleanup)
 Follow-up window = 6 calendar days anchored on last PAID visit; fee forced to 0 when followup=1
 Log is append-only; one full self-describing row per write; delimiter '|'; timestamps epoch-seconds
 Log columns (LOG_COLS): date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
-Key names are uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API
+Key names uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API
 Restore = replayLog over log lines; clear both stores in one rw transaction; skips bad rows (returns {count,skipped})
 flush() is serialized (_flushPromise); backupNow never no-ops; append verified by byte length
 Backup button (pickOrBackup) ALWAYS opens the picker via setFolder; setFolder does a FULL DB write

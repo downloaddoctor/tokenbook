@@ -1,5 +1,5 @@
-// Default paperstamp layout used to seed the plugin when it has none saved.
-// Positions are in mm; SDK uses them to render text items on the A4 page.
+// Default paperstamp layout — seeds the plugin when it has no saved layouts.
+// Positions in mm; SDK renders text items on an A4 page.
 export function defaultLayoutDef() {
   return {
     name: 'Default',

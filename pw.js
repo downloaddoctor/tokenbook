@@ -1,5 +1,5 @@
-/* TokenBook PWA bootstrap — registers the service worker and wires
-   install/update UX. Loaded by index.html; no-op when unsupported. */
+/* TokenBook PWA bootstrap — registers the service worker and wires install/update
+   UX. Loaded by index.html; no-op when unsupported. */
 (function () {
   'use strict';
 
@@ -14,10 +14,10 @@
     });
   });
 
-  // The SW found a fresh deploy (AGENTS.md sentinel changed) and already
-  // refreshed the cache in the background — reload to pick it up. Guarded
-  // via localStorage: only one auto-reload per short window, so a flaky
-  // sentinel/network hiccup can't reload the page repeatedly.
+  // The SW found a fresh deploy (version.txt sentinel changed) and refreshed the
+  // cache in the background — reload to pick it up. Guarded via localStorage:
+  // only one auto-reload per short window, so a flaky sentinel/network hiccup
+  // can't reload the page repeatedly.
   var RELOAD_GUARD_KEY = 'tokenbook-reload-guard';
   var RELOAD_GUARD_MS = 30000;
 

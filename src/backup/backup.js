@@ -1,19 +1,14 @@
-// Backup / restore to a user-chosen folder (typically a pendrive) via the
-// File System Access API.
+// Backup / restore to a user-chosen folder (pendrive) via File System Access API.
 //
-// Logbook model: every write appends ONE line to tokenbook-latest.csv. No
-// rewriting. A header is written once, when the file is first created.
-// At the first write of each day, the whole latest.csv is copied to
-// tokenbook-YYYY-MM-DD.csv (self-contained daily snapshot); snapshots are
-// pruned to the newest KEEP_SNAPSHOTS.
+// Logbook model: every write APPENDS one line to tokenbook-latest.csv (no
+// rewriting). Header written once at file creation. On the first write of each
+// day, latest.csv is snapshotted to tokenbook-YYYY-MM-DD.csv (newest KEEP).
 //
-// Restore reads every line of the log in file order and replays it through
-// db.replayLog — the same functions that produced the log — so the restored
-// DB is byte-identical to what the live DB would have been.
+// Restore reads the log in file order and replays through db.replayLog — the
+// same write path that produced it. Log is append-only; one self-describing row
+// per write; delimiter '|'; timestamps epoch-seconds.
 //
-// Class shape: all state (the folder handle, debounce timer, in-flight flush
-// promise, pending journal queue) lives on the instance. External code uses
-// the default instance (`import backup from './backup.js'; backup.flush()`).
+// Default export = singleton; `import backup from './backup.js'`.
 
 import db from '../core/db.js';
 import {
@@ -35,26 +30,24 @@ export const hasFsAccess = typeof window.showDirectoryPicker === 'function';
 
 class Backup {
   constructor() {
-    // Active log file name. Swappable so the self-test writes its own log
-    // (tokenbook-latest-devtest.csv) instead of polluting the real one.
+    // Log file name — swappable so self-test uses tokenbook-latest-devtest.csv.
     this.LATEST = DEFAULT_LATEST;
     this._dir = null;
     this._dirty = false;
     this._timer = null;
     this._writing = false;
-    // In-flight flush promise. flush() chains onto it so concurrent callers
-    // (debounced timer + explicit backupNow) serialize instead of one no-oping.
+    // In-flight flush promise: flush() chains onto it so concurrent callers
+    // serialize instead of no-oping.
     this._flushPromise = null;
     this._lastAt = '';
     this._lastCount = 0;
     this._lastError = '';
     this._lastErrorName = '';
-    // Pending journal entries (raw inputs from addVisit / setVisitRefund).
-    // Drained by flush() in order and appended to latest.csv.
+    // Pending journal entries (raw inputs). Drained by flush() in order.
     this._pending = [];
-    // True when latest.csv needs a header line prepended (fresh file / truncate).
+    // True when latest.csv needs a header prepended (fresh file / truncate).
     this._needsHeader = false;
-    // Bind the journal callback once so db.setJournal receives a stable fn.
+    // Bound once so db.setJournal gets a stable fn.
     this._markDirty = this.markDirty.bind(this);
   }
 
@@ -77,8 +70,8 @@ class Backup {
       el.className = 'status';
       return;
     }
-    // Idle = "2m ago" (time since last successful write); queued rows add
-    // "N pending". Errors take priority.
+    // Idle = "2m ago" (since last success); queued rows add "N pending".
+    // Errors take priority.
     const queued = this._pending.length;
     const ago = this._lastAt ? this.timeAgo(this._lastAt) : 'ready';
     const queuedStr = queued ? `${queued} pending · ` : '';
@@ -109,7 +102,7 @@ class Backup {
     await w.close();
   }
 
-  // Append text to a file (creating it if needed) without rewriting its body.
+  // Append text without rewriting the file body.
   async appendText(dir, name, text) {
     const fh = await dir.getFileHandle(name, { create: true });
     const file = await fh.getFile();
@@ -154,7 +147,7 @@ class Backup {
     return await f.text();
   }
 
-  // One encoder for both ops: refunds are full rows (see csv.js).
+  // One encoder for both ops: refunds are full rows too (see csv.js).
   formatLogEntry(entry) {
     return visitInputToLogLine(entry);
   }
@@ -171,14 +164,13 @@ class Backup {
   }
 
   // True when an error means the saved folder handle no longer resolves to a
-  // real directory (user deleted/moved it, or the FS revoked access). These
-  // should clear the persisted handle so the next Backup click re-opens the
-  // picker instead of failing forever.
+  // real dir (deleted/moved/revoked). These clear the handle so the next Backup
+  // click re-opens the picker instead of failing forever.
   isStaleHandleError(e) {
     if (!e) return false;
     const name = e.name || '';
     if (name === 'NotFoundError') return true;
-    // Chromium reports a missing/renamed dir as NotAllowedError on some versions.
+    // Chromium reports missing/renamed dir as NotAllowedError on some versions.
     if (name === 'NotAllowedError') return true;
     return false;
   }
@@ -219,6 +211,8 @@ class Backup {
     return { ok: false, reason: 'needs-gesture', folderName: h.name || '' };
   }
 
+  // ALWAYS opens the picker, then does a FULL DB write (overwrites latest.csv +
+  // daily snapshot). Auto-backup (markDirty) still appends.
   async setFolder() {
     if (!hasFsAccess) throw new Error('File System Access not supported in this browser.');
     const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'tokenbook-backup' });
@@ -227,15 +221,13 @@ class Backup {
     this._lastErrorName = '';
     this._needsHeader = false;
     await meta.set(HANDLE_KEY, h);
-    // Picking a folder performs a full backup: write the entire current DB as
-    // latest.csv (header + one row per visit), overwriting any stale file, then
-    // take the daily snapshot. Pending journal rows are folded in by exportAll.
+    // Picking a folder performs a full backup. Pending rows fold in via exportAll.
     await this.writeFullBackup();
     return { folderName: h.name || '', count: this._lastCount || 0 };
   }
 
-  // Write the whole current DB to latest.csv in the active folder, plus the
-  // dated snapshot. Replaces the log (unlike flush, which appends).
+  // Write the whole DB to latest.csv (overwrites) + daily snapshot. Replaces the
+  // log (unlike flush, which appends).
   async writeFullBackup() {
     if (!this._dir) throw new Error('No folder set.');
     const perm = await this._dir.queryPermission({ mode: 'readwrite' });
@@ -250,7 +242,7 @@ class Backup {
     }
     const data = await db.exportAll();
     await this.writeText(this._dir, this.LATEST, data.text);
-    // A full write supersedes any pending journal rows / header flag.
+    // Full write supersedes any pending journal rows / header flag.
     this._pending = [];
     this._needsHeader = false;
     this._dirty = false;
@@ -288,27 +280,24 @@ class Backup {
     this.updateStatus();
   }
 
-  // Backup button: always open the folder picker so the operator can pick or
-  // change the target folder, then write to it. Auto-backup (markDirty) still
-  // flushes silently to the current folder.
+  // Backup button: always open the folder picker (see setFolder).
   async pickOrBackup() {
     return this.setFolder();
   }
 
-  // Journal entry point. db.js calls this via db.setJournal() at boot.
+  // Journal entry point — db.js calls this via db.setJournal() at boot.
   markDirty(entry) {
     if (!this._dir) return;
     if (entry) {
       // Dedupe within the pending window: (date, token) is the visit's upsert
-      // key in the DB, so a later write for the same key is a last-write-wins
-      // update — replace in place rather than append twice.
+      // key, so a later write replaces rather than appends twice.
       const key = entry.date + '|' + entry.token;
       const idx = this._pending.findIndex((e) => e.date + '|' + e.token === key);
       if (idx >= 0) this._pending[idx] = entry;
       else this._pending.push(entry);
     }
     this._dirty = true;
-    // Reflect the queued line immediately (status line shows "N pending").
+    // Reflect queued line immediately in the status line.
     this.updateStatus();
     if (this._timer) clearTimeout(this._timer);
     this._timer = setTimeout(() => {
@@ -317,8 +306,7 @@ class Backup {
     }, DEBOUNCE_MS);
   }
 
-  // Append any queued log lines to latest.csv. Never rewrites the body — the
-  // log is append-only by design.
+  // Append queued lines to latest.csv. Never rewrites the body (append-only).
   async flush() {
     if (!this._dir) return;
     if (this._flushPromise) {
@@ -339,8 +327,8 @@ class Backup {
         if (!exists) this._needsHeader = true;
 
         if (!this._pending.length) {
-          // Nothing to append, but the folder is reachable — record the check
-          // so the status shows a relative time instead of "ready".
+          // Nothing to append, but folder is reachable — record the check so
+          // the status shows a relative time instead of "ready".
           this._dirty = false;
           this._lastAt = new Date().toISOString();
           this._lastError = '';
@@ -355,8 +343,7 @@ class Backup {
         const before = exists ? await this.readLatest(this._dir) : null;
         await this.appendText(this._dir, this.LATEST, payload);
 
-        // Verify the append landed: re-read and confirm the byte length grew by
-        // the payload size (or matches on a fresh file).
+        // Verify the append: re-read and confirm byte length grew by payload size.
         const after = await this.readLatest(this._dir);
         const expectedLen = (before != null ? before.length : 0) + payload.length;
         if (after == null || after.length !== expectedLen) {
@@ -401,8 +388,8 @@ class Backup {
 
   // ---------- restore ----------
 
-  // Read the current logbook text for display. Prefers latest.csv; falls back
-  // to the newest daily snapshot. Returns { text, source }.
+  // Log text for display. Prefers latest.csv; falls back to newest snapshot.
+  // Returns { text, source }.
   async readLog() {
     if (!this._dir) return { text: null, source: 'no-folder' };
     try {
@@ -416,14 +403,12 @@ class Backup {
     }
   }
 
-  // Unflushed journal entries as CSV lines (no header). These are the writes
-  // sitting in the buffer, not yet appended to latest.csv. Read-only.
+  // Unflushed journal entries as CSV lines (no header). Read-only.
   pendingLines() {
     return this._pending.map((e) => this.formatLogEntry(e));
   }
 
-  // Discard any queued journal entries and cancel the debounce timer before a
-  // restore.
+  // Discard queued journal entries and cancel the debounce timer before restore.
   resetPendingForRestore() {
     if (this._timer) {
       clearTimeout(this._timer);
@@ -470,7 +455,7 @@ class Backup {
     return { mode: 'upload', filename: file.name, count: r.count, skipped: r.skipped };
   }
 
-  // Fallback export: download the whole current DB as a fresh log CSV.
+  // Fallback export: download the whole DB as a fresh log CSV.
   async downloadCsv() {
     const data = await db.exportAll();
     const now = new Date();
@@ -527,14 +512,14 @@ class Backup {
 
 const backup = new Backup();
 
-// visibilitychange: flush pending writes when the tab is hidden.
+// Flush pending writes when the tab is hidden.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && backup._dirty) {
     backup.flush().catch(() => {});
   }
 });
 
-// Refresh the status line so the relative "2m ago" stays current.
+// Refresh the status line so "2m ago" stays current.
 setInterval(() => backup.updateStatus(), 30000);
 
 export { hasFsAccess as fsAccess };

@@ -8,7 +8,7 @@ import { openRefundFor, refundLabel } from '../refund.js';
 
 let s;
 let rowCache = new Map(); // visitId -> visit row (rendered page)
-let activeRow = -1; // index of the keyboard-highlighted row in tbody
+let activeRow = -1;       // index of the keyboard-highlighted row
 
 function rowEls() {
   return s && s.tbody ? Array.from(s.tbody.children) : [];
@@ -113,7 +113,7 @@ async function onRowClick(e) {
   await activateRow(Number(tr.dataset.id));
 }
 
-// Open the refund dialog for a visit by id (shared by click + Enter key).
+// Open the refund dialog for a visit by id (shared by click + Enter).
 async function activateRow(visitId) {
   const visit = rowCache.get(visitId);
   if (!visit) return;
@@ -148,9 +148,8 @@ export function mount() {
     refresh();
   });
   off.on(s.tbody, 'click', onRowClick);
-  // Arrow keys navigate the token list; Enter opens the highlighted visit in
-  // the Register tab for editing. Ignored when focus is inside an
-  // input/select/dialog so the date field and modals keep their own behaviour.
+  // Arrow keys navigate; Enter opens the highlighted visit for editing in
+  // Register. Ignored when focus is in an input/select/dialog.
   off.on(document, 'keydown', (e) => {
     if (!s.tbody || !rowEls().length) return;
     const t = e.target;

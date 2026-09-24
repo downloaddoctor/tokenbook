@@ -1,11 +1,6 @@
-// Non-blocking toast in the bottom-left corner. Auto-dismisses after 5s.
-// A new toast replaces any existing one and restarts the timer.
-// kind: 'ok' | 'err' | 'warn' | undefined (border-left color only).
-//
-// Class shape: the dismiss timer lives on the instance. External code can use
-// either the default instance (`import toast from './toast.js'; toast.show()`)
-// or the bound named exports `toast` / `clearToast` (kept so existing call
-// sites don't change).
+// Bottom-left auto-dismiss toast (5s). New toast replaces the current one.
+// kind: 'ok' | 'err' | 'warn' | undefined (colors the left border).
+// Default export = singleton; named toast/clearToast are bound methods.
 
 const TOAST_MS = 5000;
 
@@ -65,8 +60,7 @@ class Toast {
 
 const toast = new Toast();
 
-// Bound named exports so existing `import { toast, clearToast }` call sites
-// keep working unchanged.
+// Bound named exports so `import { toast, clearToast }` keeps working.
 const show = toast.show.bind(toast);
 const clearToast = toast.clear.bind(toast);
 

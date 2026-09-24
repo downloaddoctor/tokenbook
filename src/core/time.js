@@ -1,10 +1,6 @@
-// Relative-time formatting. Accepts an ISO string, epoch-ms number, or Date.
-// Two output styles:
-//   default      -> 'just now', '5 min ago', '2 hours ago', '3 days ago', months, years
-//   compact:true -> 'just now', '5m ago', '2h ago', '3d ago' (no months/years)
-// `fallback` is returned when the input can't be parsed ('' by default; the
-// backup status line uses 'never').
-
+// timeAgo(when, {compact?, fallback?}) -> relative-time string.
+// when: ISO string | epoch-ms number | Date.
+// compact: '5m ago' / default: '5 min ago'. fallback returned on unparseable input.
 export function timeAgo(when, { compact = false, fallback = '' } = {}) {
   const t = when instanceof Date ? when.getTime() : typeof when === 'number' ? when : Date.parse(when || '');
   if (!t) return fallback;

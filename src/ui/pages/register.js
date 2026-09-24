@@ -1,5 +1,5 @@
-// Register page: form, autofill, submit+print. State is local; the router
-// calls mount()/unmount() and this module binds/unbinds its own listeners.
+// Register page: form, autofill, submit+print. Router calls mount()/unmount();
+// this module binds/unbinds its own listeners.
 
 import db from '../../core/db.js';
 import ps from '../../print/ps.js';
@@ -9,10 +9,9 @@ import { openRefundFor, refundLabel } from '../refund.js';
 
 let b;
 
-// ---- test hooks (dev self-test only) ---------------------------------
-// The self-test drives the real form. To keep it headless it can (a) suppress
-// the paperstamp print call and (b) auto-answer the identity dialogs instead
-// of waiting for a click. Both default to production behavior.
+// ---- test hooks (dev self-test only) ----
+// The self-test drives the real form; it can suppress print and bypass layout
+// checks. Both default to production behavior.
 const testHooks = {
   suppressPrint: false,
 };
@@ -23,8 +22,8 @@ export function __setTestHooks(hooks) {
 export function __getForm() {
   return b;
 }
-// Self-test: run the submit path and RETURN its promise so the caller can
-// observe errors (the normal submit handler swallows them in a toast).
+// Run submit path and RETURN its promise so the caller can observe errors
+// (the normal handler swallows them in a toast).
 export function __submitForTest() {
   return submitBill();
 }
@@ -50,10 +49,10 @@ function refreshPreview() {
 
 // ---- autofill (name + mobile) ----
 let nameTimer = null;
-let activeList = null; // { ul, items, pick, hi }
-let submitting = false; // guards against double-submit (fast clicks / Enter spam)
-let tokenEdited = false; // true once the user manually types in Token; reset on New Visit / auto-refresh
-let loadedVisitId = null; // visit id currently being edited (null = new visit)
+let activeList = null;      // { ul, items, pick, hi }
+let submitting = false;     // guards against double-submit
+let tokenEdited = false;    // true once user types in Token; reset on New Visit
+let loadedVisitId = null;   // visit id being edited (null = new visit)
 
 function setHighlight(list, i) {
   list.hi = i;
@@ -154,8 +153,8 @@ function onNameInput() {
     return;
   }
   nameTimer = setTimeout(async () => {
-    // Match by name OR mobile (same as the Patients page search), so a phone
-    // number typed here also finds the person.
+    // Match by name OR mobile (same as Patients search), so a phone number typed
+    // here also finds the person.
     const items = await db.searchPeopleByPrefix(q, 8);
     renderSuggest(b.nameSuggest, items, pickPerson);
   }, 120);
@@ -168,8 +167,8 @@ function onDocMouseDown(e) {
 }
 
 // Re-evaluate the follow-up rule from the CURRENT form identity. Runs on
-// name/mob blur. Resolution mirrors addVisit: explicit Pat ID wins, else
-// match on (name, mob). If neither resolves, the patient is new -> force No.
+// name/mob blur. Resolution mirrors addVisit: explicit Pat ID wins, else match
+// (name, mob). Unresolved -> new patient -> force paid.
 let identityTimer = null;
 function revalidateIdentity() {
   clearTimeout(identityTimer);
@@ -200,9 +199,8 @@ async function refreshNextToken() {
   loadedVisitId = null;
 }
 
-// Token change: if the user typed a token and a visit exists at (date, token),
-// load that visit into the form (edit mode). Otherwise leave the typed value
-// as-is; submit will create a new visit at that key.
+// Token change: if a visit exists at (date, token), load it (edit mode).
+// Otherwise keep the typed value; submit will create at that key.
 async function onTokenChange() {
   tokenEdited = true;
   const day = b.fDate.value.trim();
@@ -225,8 +223,7 @@ async function onTokenChange() {
   loadVisitIntoForm(visit, person);
 }
 
-// Fill the form from a visit (edit mode). Shared by onTokenChange and
-// editVisitById so the Tokens page can jump straight into a row.
+// Fill the form from a visit (edit mode). Shared by onTokenChange and editVisit.
 function loadVisitIntoForm(visit, person) {
   if (!b) return;
   hideSuggests();
@@ -252,9 +249,8 @@ function loadVisitIntoForm(visit, person) {
   refreshPreview();
 }
 
-// Public: load a visit into the Register form for editing. Used by the
-// Tokens page on Enter. `visit` is the row object (has personId); person is
-// resolved here so callers don't have to.
+// Load a visit into the Register form for editing. Used by Tokens on Enter.
+// `visit` has personId; person is resolved here so callers don't have to.
 export async function editVisit(visit) {
   if (!visit) return false;
   let person = null;
@@ -263,8 +259,7 @@ export async function editVisit(visit) {
   return true;
 }
 
-// Alt+R on the Register tab: open the refund dialog for the visit currently
-// loaded in the form. Only paid visits can be refunded.
+// Alt+R: open the refund dialog for the visit currently loaded. Paid only.
 async function refundCurrentVisit() {
   if (!loadedVisitId) {
     toast('No saved visit loaded to refund.', 'err');
@@ -291,8 +286,8 @@ async function refundCurrentVisit() {
   }
 }
 
-// Date change: if token has not been hand-edited, recompute the next token
-// for the new date. Otherwise leave the typed token alone.
+// Date change: if token was not hand-edited, recompute the next token for the
+// new date. Otherwise leave the typed token alone.
 async function onDateChange() {
   const patId = Number(b.fPatientId.value.trim()) || null;
   if (patId) applyFollowupRule(patId);
@@ -300,29 +295,28 @@ async function onDateChange() {
   await refreshNextToken();
 }
 
-// Token blur: if the field was left empty, fill it with the next available
-// token for the current date (and reset tokenEdited so Date changes recompute).
+// Token blur: if empty, fill with the next available token (resets tokenEdited
+// so Date changes recompute again).
 async function onTokenBlur() {
   if (b.fToken.value.trim() === '') {
     await refreshNextToken();
   }
 }
 
-// Kept as the same signature used across this file — routes to the toast.
-// `kind` is 'ok' | 'err' | undefined. Errors use the same mechanism, styled red.
+// Toast helper. kind: 'ok' | 'err' | undefined (errors are styled red).
 function setMsg(text, kind) {
   toast(text, kind);
 }
 
-// Auto-followup rule: if the linked patient had a PAID visit within the
-// last 6 calendar days, mark this visit as a follow-up (free) and lock fee
-// to 0. Otherwise leave the user's toggle alone.
+// Auto-followup rule: if the linked patient had a PAID visit within the last 6
+// calendar days, mark this visit as a free follow-up and lock fee to 0.
+// Otherwise leave the user's toggle alone.
 let followupBusy = 0;
 async function applyFollowupRule(personId) {
   const my = ++followupBusy;
   const day = (b.fDate && b.fDate.value) || db.localDay();
   if (!personId) {
-    // No resolved person -> first-time patient, force paid visit.
+    // No resolved person -> first-time patient, force paid.
     if (my !== followupBusy) return;
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
@@ -346,7 +340,7 @@ async function applyFollowupRule(personId) {
       `Free follow-up — last paid visit ${last.days === 0 ? 'today' : last.days + ' day(s) ago'}. Window closes in ${left} day(s).`
     );
   } else if (last && last.days != null && last.days > 6) {
-    // Past window -> force paid visit, unlock the fee, note the gap.
+    // Past window -> force paid, unlock fee, note the gap.
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
     if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
@@ -354,7 +348,7 @@ async function applyFollowupRule(personId) {
       `Paid visit — last paid visit was ${last.days} day(s) ago (outside the 6-day follow-up window).`
     );
   } else {
-    // No prior paid visit at all -> first-time patient, force paid visit.
+    // No prior paid visit -> first-time patient, force paid.
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
     if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
@@ -393,8 +387,8 @@ function onFollowupChange() {
   refreshPreview();
 }
 
-// Pat ID change: look up the person and populate the form. Empty = leave
-// fields as-is (submit falls back to (name, mob) matching).
+// Pat ID change: look up the person and populate. Empty = leave fields as-is
+// (submit falls back to (name, mob) matching).
 async function onPatIdChange() {
   const raw = b.fPatientId.value.trim();
   if (!raw) return;
@@ -422,10 +416,8 @@ async function onPatIdChange() {
   refreshPreview();
 }
 
-// Prepare a fresh bill for the next patient. Called by the New-bill button
-// and by Alt+N via app.js.
 // Reset the form for a new bill. resetDate=false keeps the current date (used
-// when the caller is mid-edit on a specific day, e.g. a free token lookup).
+// when mid-edit on a specific day, e.g. a free-token lookup).
 export function startNewBill(nextToken = true, resetDate = true) {
   b.fName.value = '';
   b.fMob.value = '';
@@ -438,7 +430,7 @@ export function startNewBill(nextToken = true, resetDate = true) {
   b.fFee.value = '300';
   setFollowupNote('');
   b.fPatientId.value = '';
-  // A fresh bill starts on today's date, so the token is for today.
+  // Fresh bill starts on today's date.
   if (resetDate && b.fDate) b.fDate.value = db.localDay();
   tokenEdited = false;
   loadedVisitId = null;
@@ -462,8 +454,8 @@ async function onSubmit(e) {
   }
 }
 
-// Ask the user how to proceed when the form's identity differs from the
-// linked patient. Returns 'update' | 'new' | 'cancel'.
+// Ask how to proceed when the form's identity differs from the linked patient.
+// Returns 'update' | 'new' | 'cancel'.
 function askIdentityChange(person, current) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
@@ -505,10 +497,9 @@ function askIdentityChange(person, current) {
   });
 }
 
-// Variant prompt: the form's identity matches an EXISTING patient (not the
-// currently linked one). "Update" would collide, so only offer Reassign or
-// Cancel. Reuses the same dialog element; falls back to 'reassign' if the
-// markup is missing so behavior degrades gracefully.
+// Variant: form identity matches an EXISTING patient (not the linked one).
+// "Update" would collide, so only Reassign or Cancel are offered. Reuses the
+// same dialog element; falls back to 'reassign' if markup is missing.
 function askReassign(linked, other, current) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('pat-id-confirm');
@@ -575,8 +566,8 @@ function askReassign(linked, other, current) {
   });
 }
 
-// Worker for onSubmit. The guard/disable lives on onSubmit — do not
-// re-check `submitting` here, or the outer call would make this a no-op.
+// Worker for onSubmit. The guard/disable lives on onSubmit — do NOT re-check
+// `submitting` here, or the outer call would make this a no-op.
 async function submitBill() {
   setMsg('');
   const name = b.fName.value.trim().toUpperCase();
@@ -608,16 +599,15 @@ async function submitBill() {
   const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
   const fee = Number(feeRaw);
 
-  // If a patient is linked and the user has edited their identity, ask how
-  // to proceed before writing anything.
+  // If a patient is linked and the user edited their identity, ask how to
+  // proceed before writing anything.
   if (patId) {
     const p = await db.getPerson(patId);
-    // Identity unchanged -> nothing to resolve, no dialog. Just save.
+    // Identity unchanged -> nothing to resolve, no dialog.
     if (p && (p.name !== name || p.mob !== mob)) {
       // If the new (name, mob) belongs to a DIFFERENT existing patient, then
-      // "Update" (rename A to the new identity) would collide. Only offer
-      // "Use as new" (reassign the visit to that patient) or Cancel.
-      // Exact compound-index lookup — a prefix search was the wrong tool.
+      // "Update" would collide — only offer Reassign or Cancel.
+      // Exact compound-index lookup (a prefix search would be wrong here).
       const hit = await db.findPersonByNameMob(name, mob);
       const other = hit && hit.id !== patId ? hit : null;
       if (other) {
@@ -664,16 +654,15 @@ async function submitBill() {
     }
   }
   const { rec, created } = result;
-  // The form now reflects a committed visit — treat it as loaded so actions
-  // that operate on "the current visit" (Alt+R refund) work without a re-pick.
+  // Form now reflects a committed visit — mark as loaded so "current visit"
+  // actions (Alt+R refund) work without re-picking.
   loadedVisitId = rec.id;
-  // Echo the resolved person id back into the form so the next Save for the
-  // same patient carries an explicit personId (new patients get an id here).
+  // Echo the resolved person id back so the next Save carries an explicit id.
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
   hideSuggests();
 
   // Reflect the resolved billing back into the form (auto-followup may have
-  // flipped the flag or zeroed the fee on the server side).
+  // flipped the flag or zeroed the fee server-side).
   if (b.fFollowup) b.fFollowup.value = rec.followup ? '1' : '0';
   if (b.fPayment) b.fPayment.value = rec.payment ? '1' : '0';
   if (b.fFee && rec.fee != null) {
@@ -753,15 +742,15 @@ export function mount() {
   if (b.fFollowup) off.on(b.fFollowup, 'change', onFollowupChange);
   if (b.fFee)
     off.on(b.fFee, 'input', () => {
-      // Manual edit clears the lock so syncFeeFromFollowup won't fight the user.
+      // Manual edit clears the lock so onFollowupChange won't fight the user.
       if (b.fFee.dataset.locked === '1') unlockFee();
     });
   off.on(b.fName, 'blur', revalidateIdentity);
   off.on(b.fMob, 'blur', revalidateIdentity);
   off.on(b.fName, 'change', revalidateIdentity);
   off.on(b.fMob, 'change', revalidateIdentity);
-  // Alt+S -> Save & Print (only while this page is mounted). Ctrl/Shift are
-  // deliberately required to be unset so we don't shadow browser combos.
+  // Alt+S -> Save & Print (only while this page is mounted). Ctrl/Shift must be
+  // unset so we don't shadow browser combos.
   off.on(window, 'keydown', (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();

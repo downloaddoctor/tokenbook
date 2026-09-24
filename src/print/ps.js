@@ -1,11 +1,8 @@
 // paperstamp lifecycle manager.
-// One embed() per host element. Host elements live on Billing and Settings
-// pages; router moves the SINGLETON host between pages (never destroys it)
-// so preview state survives navigation. Recreate = call reset() explicitly.
-//
-// Class shape: the PaperStamp handle, the current host, ready flag, queued
-// jobs and pending callbacks all live on the instance. External code uses the
-// default instance (`import ps from './ps.js'; ps.print(...)`).
+// One embed() per host element. Hosts live on Register + Print Layout; the
+// SINGLETON host is moved between pages (never destroyed) so preview state
+// survives navigation. Recreate = call reset() explicitly.
+// Default export = singleton; `import ps from './ps.js'; ps.print(...)`.
 
 import { defaultLayoutDef } from './defaultLayout.js';
 
@@ -13,16 +10,16 @@ const LS_SELECTED = 'tokenBook.selectedLayoutId';
 
 class Paperstamp {
   constructor() {
-    this._lp = null; // current PaperStamp instance
+    this._lp = null;          // current PaperStamp instance
     this._currentHost = null; // element the iframe lives in
     this._ready = false;
-    this._layoutDefs = {}; // name -> layoutDef, from listLayoutDefs()
+    this._layoutDefs = {};    // name -> layoutDef (from listLayoutDefs())
     this._activeLayoutId = localStorage.getItem(LS_SELECTED) || '';
-    // Minimal designer mode. Per-mount: Register opts in for quick
-    // position tweaks; Print Layout uses the full designer.
+    // Minimal designer: Register opts in for quick tweaks; Print Layout uses
+    // the full designer. Passed into every openDesigner/setDesignerLayout call.
     this._designerMinimal = false;
-    this._pending = []; // queued jobs while !ready
-    this._printDoneCbs = []; // one-shot callbacks fired after each print completes
+    this._pending = [];       // queued jobs while !ready
+    this._printDoneCbs = [];  // one-shot callbacks after each print completes
   }
 
   _statusEl() {
@@ -47,8 +44,6 @@ class Paperstamp {
     localStorage.setItem(LS_SELECTED, this._activeLayoutId);
   }
 
-  // Minimal mode: set per-mount (Register opts in). paperstamp expects the
-  // flag per-call, so every openDesigner / setDesignerLayout carries it.
   designerMinimal() {
     return this._designerMinimal;
   }
@@ -72,9 +67,9 @@ class Paperstamp {
     });
   }
 
-  // If the plugin has no saved layouts, register the default and select it.
-  // register() persists a NAMED layout (and re-emits `ready`); import() would
-  // only set in-memory state, so it would never show up in the layout list.
+  // Register + select the default layout when none are saved. Uses register()
+  // (persists a named layout + re-emits `ready`) — NOT import() which is
+  // in-memory only and would not show up in the layout list.
   seedDefaultIfEmpty(cb) {
     if (!this._lp || !this._ready) {
       if (cb) cb(false);
@@ -86,8 +81,6 @@ class Paperstamp {
       if (first) this.setSelectedLayoutId(first);
     };
     if (Object.keys(this._layoutDefs).length === 0) {
-      // register() persists a NAMED layout and re-emits `ready`. import()
-      // only sets in-memory state (not saved), so it wouldn't appear.
       this._lp.register(defaultLayoutDef());
       this._lp.listLayoutDefs((map) => {
         this._layoutDefs = map || {};
@@ -209,8 +202,8 @@ class Paperstamp {
     }
   }
 
-  // Live preview of the active layout. keepZoom preserves the plugin's
-  // current zoom/pan so typing in the form doesn't reset the view to Fit.
+  // Live preview of the active layout. keepZoom preserves the plugin's current
+  // zoom/pan so typing in the form doesn't reset the view to Fit.
   preview(fieldValues, opts) {
     if (!this._lp) return;
     if (!this._activeLayoutId || !this._layoutDefs[this._activeLayoutId]) return;
@@ -275,7 +268,7 @@ class Paperstamp {
     this._setStatus('ready');
   }
 
-  // Destroy current embed. Next mount() will create a fresh iframe.
+  // Destroy current embed. Next mount() creates a fresh iframe.
   reset() {
     if (this._lp) {
       try {

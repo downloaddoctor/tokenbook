@@ -1,20 +1,11 @@
 // Pure CSV encode/decode for the append-only logbook. No IO.
-// Format: flat CSV, 1-byte delimiter '|'. csvEscape quotes any value that
-// contains the delimiter (names/mobs never do in practice, so no quoting in
-// the common case).
-//
-// One format: LOG_COLS. Every line is a FULL self-describing visit row, so a
-// line never depends on earlier lines. Restore reads the log in file order
-// and replays each row via addVisit({preserve}).
-//
-// Space choices:
-//   * delimiter is 1 byte ('|'), not U+2016 (3 bytes)
-//   * timestamps are epoch-SECONDS, not 24-char ISO strings
+// Format: flat, delimiter '|' (1 byte). LOG_COLS is the ONLY format — every
+// line is a full self-describing visit row (never depends on earlier lines).
+// Timestamps are epoch-SECONDS (compact vs 24-char ISO).
 
 export const CSV_DELIM = '|'; // 1 byte
 
-// Refund tier is a non-negative integer N; the amount is N * 100.
-// 0 (or blank) = no refund.
+// Refund tier = non-negative int N; amount = N * 100. 0/blank = none.
 export function normalizeRefundTier(v) {
   const s = String(v == null ? '' : v).trim();
   if (s === '' || s === '0') return 0;
@@ -22,7 +13,7 @@ export function normalizeRefundTier(v) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-// Log line columns. Every line is a complete visit row.
+// Log columns. Every line is a complete visit row.
 export const LOG_COLS = [
   'date',
   'token',
@@ -40,8 +31,7 @@ export const LOG_COLS = [
   'updatedAt',
 ];
 
-// ISO <-> epoch-SECONDS at the file boundary. The DB keeps ISO strings; only
-// the log file uses seconds.
+// ISO <-> epoch-SECONDS at the file boundary. DB keeps ISO; log uses seconds.
 export function toEpoch(v) {
   if (v == null || v === '') return '';
   if (typeof v === 'number') return Math.floor(v / 1000);
@@ -54,9 +44,9 @@ export function fromEpoch(v) {
   return Number.isFinite(n) ? new Date(n * 1000).toISOString() : null;
 }
 
-// Encode one journal entry. Full self-describing visit row.
-// One key everywhere: the DB row, the journal emit, and the log column all
-// use `personId`. Callers can pass the stored visit row verbatim.
+// Encode one journal entry as a full self-describing row. Uses `personId`
+// everywhere (DB row, journal emit, log column) — callers can pass the stored
+// visit row verbatim.
 export function visitInputToLogLine(entry) {
   const row = {
     date: entry.date != null ? entry.date : '',
@@ -78,7 +68,7 @@ export function visitInputToLogLine(entry) {
 }
 
 
-// Header for the logbook (what exportAll / append writers emit).
+// Header line for the logbook (what exportAll / append writers emit).
 export function csvHeaderLine() {
   return LOG_COLS.join(CSV_DELIM);
 }
@@ -123,7 +113,7 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Decode a logbook file (header + op-lines) into replay ops.
+// Decode a logbook file (header + full rows) into replay ops.
 export function csvToLog(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (!lines.length) throw new Error('Empty backup file.');
@@ -141,14 +131,12 @@ function parseLogLines(header, lines) {
   const ops = [];
   for (let i = 1; i < lines.length; i++) {
     const f = parseCsvLine(lines[i]);
-    // Short row = malformed / truncated write. Skip it rather than let it
-    // abort the entire atomic restore.
+    // Short row = malformed/truncated. Skip rather than abort the whole atomic restore.
     if (f.length < header.length) continue;
     const token = Number(f[col.token]);
     const date = f[col.date] || '';
-    // A row must have a valid (date, token) to be replayable. Blank personId
-    // is also fatal for a row: replay keys on it, so a row without one is a
-    // corrupt line — skip it in parseLogLines rather than throw mid-replay.
+    // Row needs (date, token, personId) to be replayable — skip corrupt lines
+    // rather than throw mid-replay.
     const personIdRaw = f[col.personId];
     const personId = personIdRaw === '' || personIdRaw == null ? null : Number(personIdRaw);
     if (!date || !Number.isInteger(token) || token < 1 || personId == null) continue;
@@ -172,9 +160,8 @@ function parseLogLines(header, lines) {
   return ops;
 }
 
-// Accepts a log CSV and returns replay ops. (Logbook only — no legacy formats.)
-// A .json file (accepted by the picker for legacy convenience) will fail the
-// header check and surface the friendly csvToLog error.
+// Accepts a log CSV and returns replay ops. Logbook-only (no legacy formats);
+// a .json file fails the header check and surfaces the friendly csvToLog error.
 export function parseBackup(text) {
   return csvToLog(text);
 }

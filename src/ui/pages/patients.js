@@ -1,5 +1,5 @@
-// Patients page: unique patients (one row per person), with a drill-in
-// history modal. Visits live in the Tokens tab; this page is the registry.
+// Patients page: unique patients (one row per person), with a drill-in history
+// modal. Visits live in the Tokens tab; this page is the registry.
 
 import db from '../../core/db.js';
 import { bindOff } from '../dom.js';
@@ -7,7 +7,7 @@ import { openHistory } from '../history.js';
 
 const PAGE = 50;
 let st;
-let activeRow = -1; // index of the keyboard-highlighted row in tbody
+let activeRow = -1; // index of the keyboard-highlighted row
 
 function rowEls() {
   return st && st.tbody ? Array.from(st.tbody.children) : [];
@@ -107,9 +107,8 @@ export function mount() {
       render();
     }, 150);
   });
-  // ArrowDown from the search box jumps into the first row. Blur the
-  // input so the document-level handler (which ignores INPUT events) takes
-  // over for subsequent arrows.
+  // ArrowDown from the search box jumps into the first row. Blur the input so
+  // the document-level handler (which ignores INPUT) takes over for later arrows.
   off.on(st.searchEl, 'keydown', (e) => {
     if (e.key !== 'ArrowDown') return;
     if (!rowEls().length) return;
@@ -137,7 +136,7 @@ export function mount() {
 
 
   off.on(document, 'keydown', (e) => {
-    // History modal owns the keyboard while it's open.
+    // History modal owns the keyboard while open.
     const modal = document.getElementById('history-modal');
     if (modal && !modal.hidden) return;
     if (!st.tbody || !rowEls().length) return;
@@ -165,7 +164,7 @@ export function mount() {
       setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      // Coming back from the Next button -> re-select the last row.
+      // Coming back from the Next button -> reselect the last row.
       if (st.nextBtn && t === st.nextBtn) {
         setActiveRow(rowEls().length - 1);
         return;

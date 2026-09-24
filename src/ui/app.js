@@ -1,5 +1,5 @@
 // Boot + global UI (topbar tabs, backup/restore buttons, initial DB open).
-// Entry point loaded from index.html as <script type="module" src="src/ui/app.js">.
+// Entry point loaded from index.html.
 
 import db from '../core/db.js';
 import backup, { hasFsAccess } from '../backup/backup.js';
@@ -7,15 +7,15 @@ import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter } from './router.js';
 import { toast } from './toast.js';
 
-// Restore result message. Flags skipped rows so the operator knows the
-// restore was not 1:1 with the file.
+// Restore result message. Flags skipped rows so the operator knows the restore
+// was not 1:1 with the file.
 function restoreMsg(count, skipped, tail) {
   const base = 'Restored ' + count + ' visits ' + tail + '.';
   return skipped ? base + ' Skipped ' + skipped + ' bad row(s).' : base;
 }
 
-// Styled confirm used before a destructive restore. Returns true if the user
-// confirmed, false on cancel / Esc / backdrop.
+// Styled confirm before a destructive restore. Resolves true if confirmed,
+// false on cancel/Esc/backdrop.
 function restoreConfirm(folderName) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('restore-confirm');
@@ -48,8 +48,8 @@ function restoreConfirm(folderName) {
   setRouter(router);
   router.wire();
 
-  // Alt+H: open the history modal for the patient id currently entered in
-  // the Register form (works from any tab; focuses Register if needed).
+  // Alt+H: open the history modal for the patient id in the Register form
+  // (works from any tab; focuses Register if needed).
   window.addEventListener('keydown', async (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.key !== 'h' && e.key !== 'H') return;
@@ -162,10 +162,10 @@ function restoreConfirm(folderName) {
       const parts = [];
       body.textContent = '';
 
-      // 1) DB rows — the source of truth.
+      // 1) DB rows — source of truth.
       parts.push(`DB · ${dbCount} visit${dbCount === 1 ? '' : 's'}`);
 
-      // 2) Pending journal entries — queued but not yet flushed to CSV.
+      // 2) Pending journal entries — queued but not yet flushed.
       parts.push(`Pending · ${pendingLines.length}`);
 
       // 3) CSV on disk — latest.csv (or newest snapshot).
@@ -222,9 +222,8 @@ function restoreConfirm(folderName) {
             else if (name === '#info') render('    · ' + detail);
             else render((status || (ok ? 'PASS' : 'FAIL')) + ' ' + name + (detail ? '  (' + detail + ')' : ''));
           },
-          // No confirm: the self-test runs on an isolated DB
-          // (tokenbook-devtest) that is dropped afterwards, so replay
-          // cannot destroy real data.
+          // No confirm: the self-test runs on an isolated DB (tokenbook-devtest)
+          // that is dropped afterwards, so replay cannot destroy real data.
           confirmReplay: async () => true,
         });
         const tally =
@@ -287,7 +286,7 @@ function restoreConfirm(folderName) {
   router.activateTab(routeFromHash(), false, false);
 
   // Dev tools: enabled with ?dev=1. Seeding is destructive (clears DB) so it
-  // stays opt-in. Add a status-bar button pair when the flag is set.
+  // stays opt-in.
   if (new URLSearchParams(location.search).get('dev') === '1') {
     const { seed, clearAll, promptSeedConfig } = await import('../dev/seed.js');
     const bar = document.getElementById('statusbar');
@@ -298,7 +297,7 @@ function restoreConfirm(folderName) {
       bSeed.textContent = 'Seed';
       bSeed.title = 'Generate demo visits (prompts for count, days, patient pool)';
       bSeed.addEventListener('click', async () => {
-        // Ask how much to seed. Blank / cancel keeps the default for that field.
+        // Blank / cancel keeps the default for that field.
         const cfg = promptSeedConfig();
         if (cfg === null) return; // user cancelled the first prompt
         bSeed.disabled = true;

@@ -1,6 +1,6 @@
-// Settings page: the paperstamp designer.
-// The iframe is the whole page — no picker, no close button. Leaving drops
-// the embed so the next visit starts fresh.
+// Print Layout page: the paperstamp designer.
+// The iframe is the whole page — no picker, no close button. Unmount drops the
+// embed so the next visit starts fresh.
 
 import ps from '../../print/ps.js';
 
