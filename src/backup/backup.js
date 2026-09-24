@@ -73,22 +73,21 @@ class Backup {
       return;
     }
     if (!this._dir) {
-      el.textContent = 'backup: no folder set';
+      el.textContent = 'backup: off';
       el.className = 'status';
       return;
     }
-    const name = this._dir.name || 'folder';
-    // Surface queued log lines so an unflushed/failed write is visible.
+    // Idle = "2m ago" (time since last successful write); queued rows add
+    // "N pending". Errors take priority.
     const queued = this._pending.length;
-    const queuedStr = queued ? ` · ${queued} pending` : '';
+    const ago = this._lastAt ? this.timeAgo(this._lastAt) : 'ready';
+    const queuedStr = queued ? `${queued} pending · ` : '';
     if (this._lastError) {
-      el.textContent = 'backup: ✗ ' + this._lastError + queuedStr;
+      el.textContent = 'backup: ✗ ' + this._lastError + (queued ? ` · ${queued} pending` : '');
       el.className = 'status err';
       return;
     }
-    el.textContent = `backup: ${name} · ${
-      this._lastAt ? this.timeAgo(this._lastAt) : 'pending'
-    }${queuedStr}`;
+    el.textContent = `backup: ${queuedStr}${ago}`;
     el.className = 'status ok';
   }
 
@@ -340,7 +339,12 @@ class Backup {
         if (!exists) this._needsHeader = true;
 
         if (!this._pending.length) {
+          // Nothing to append, but the folder is reachable — record the check
+          // so the status shows a relative time instead of "ready".
           this._dirty = false;
+          this._lastAt = new Date().toISOString();
+          this._lastError = '';
+          this._lastErrorName = '';
           return;
         }
 
@@ -410,6 +414,12 @@ class Backup {
     } catch (e) {
       return { text: null, source: 'error', error: e && e.message ? e.message : String(e) };
     }
+  }
+
+  // Unflushed journal entries as CSV lines (no header). These are the writes
+  // sitting in the buffer, not yet appended to latest.csv. Read-only.
+  pendingLines() {
+    return this._pending.map((e) => this.formatLogEntry(e));
   }
 
   // Discard any queued journal entries and cancel the debounce timer before a
@@ -523,6 +533,9 @@ document.addEventListener('visibilitychange', () => {
     backup.flush().catch(() => {});
   }
 });
+
+// Refresh the status line so the relative "2m ago" stays current.
+setInterval(() => backup.updateStatus(), 30000);
 
 export { hasFsAccess as fsAccess };
 export default backup;

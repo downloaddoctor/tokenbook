@@ -134,20 +134,65 @@ function restoreConfirm(folderName) {
       const sub = document.getElementById('log-sub');
       const body = document.getElementById('log-body');
       if (!dlg || !sub || !body) return;
-      const r = await backup.readLog();
-      if (r.text == null) {
+
+      // No folder set: backup is off. Show what WOULD be logged, clearly
+      // labelled as not backed up, so the operator sees the gap.
+      const st = backup.state();
+      if (!st.hasFolder) {
+        const all = await db.exportAll();
         sub.textContent =
-          r.source === 'no-folder'
-            ? 'No backup folder set.'
-            : r.source === 'empty'
-              ? 'No log file yet.'
-              : 'Error: ' + (r.error || r.source);
-        body.textContent = '';
-      } else {
-        const lines = r.text.split('\n').filter((l) => l.length > 0);
-        sub.textContent = `${r.source} · ${Math.max(0, lines.length - 1)} entries`;
-        body.textContent = r.text.trimEnd();
+          `No backup folder set · ${all.count} visit${all.count === 1 ? '' : 's'} in DB, none on disk`;
+        body.textContent =
+          'No backup folder set. Nothing is being written to a log file.\n' +
+          'Press Backup (bottom bar) to choose a folder.\n\n' +
+          'NOT BACKED UP (no folder)\n' +
+          '─────────────────────────\n' +
+          (all.text ? all.text.trimEnd() : '(no visits)');
+        dlg.returnValue = '';
+        dlg.showModal();
+        return;
       }
+
+      const [csv, dbCount, pendingLines] = await Promise.all([
+        backup.readLog(),
+        db.countAll(),
+        Promise.resolve(backup.pendingLines()),
+      ]);
+
+      const parts = [];
+      body.textContent = '';
+
+      // 1) DB rows — the source of truth.
+      parts.push(`DB · ${dbCount} visit${dbCount === 1 ? '' : 's'}`);
+
+      // 2) Pending journal entries — queued but not yet flushed to CSV.
+      parts.push(`Pending · ${pendingLines.length}`);
+
+      // 3) CSV on disk — latest.csv (or newest snapshot).
+      let csvLineCount = 0;
+      if (csv.text != null) {
+        csvLineCount = csv.text.split('\n').filter((l) => l.length > 0).length - 1;
+        parts.push(`${csv.source} · ${Math.max(0, csvLineCount)} entries`);
+      } else {
+        parts.push(
+          csv.source === 'no-folder'
+            ? 'No folder set'
+            : csv.source === 'empty'
+              ? 'No CSV yet'
+              : 'CSV error'
+        );
+      }
+      sub.textContent = parts.join('  ·  ');
+
+      const section = (title, text) => {
+        const header = title + '\n' + '─'.repeat(title.length) + '\n';
+        body.textContent += header + (text ? text.trimEnd() : '(none)') + '\n\n';
+      };
+
+      section('PENDING FLUSH', pendingLines.join('\n'));
+      if (csv.text != null) section('CSV · ' + csv.source, csv.text);
+      else if (csv.source === 'error') section('CSV ERROR', csv.error || 'unknown');
+
       dlg.returnValue = '';
       dlg.showModal();
     });
