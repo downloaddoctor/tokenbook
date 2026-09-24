@@ -215,6 +215,20 @@ function restoreConfirm(folderName) {
     return;
   }
 
+  // Ask the browser to mark our origin's storage persistent so IndexedDB
+  // isn't evicted under disk pressure. Usually auto-granted for installed
+  // PWAs on Chrome/Edge. Quiet on success; toast only on failure.
+  if (navigator.storage && navigator.storage.persist) {
+    try {
+      const granted = await navigator.storage.persist();
+      if (!granted) {
+        toast('Storage not persistent — data may be cleared if disk fills.', 'err');
+      }
+    } catch (err) {
+      toast('Storage persistence check failed: ' + err.message, 'err');
+    }
+  }
+
   try {
     const r = await backup.init();
     if (r && r.reason === 'needs-gesture') {
