@@ -1,6 +1,6 @@
 // Non-blocking toast in the bottom-left corner. Auto-dismisses after 5s.
 // A new toast replaces any existing one and restarts the timer.
-// kind: 'ok' | 'err' | undefined (border-left color only).
+// kind: 'ok' | 'err' | 'warn' | undefined (border-left color only).
 //
 // Class shape: the dismiss timer lives on the instance. External code can use
 // either the default instance (`import toast from './toast.js'; toast.show()`)

@@ -8,6 +8,7 @@
   --accent-ink: #fff;
   --danger: #b91c1c;
   --ok: #047857;
+  --warn: #b45309;
   --hover: #f3f4f6;
   --accent-soft: #eef2ff;
   --topbar-h: 52px;
@@ -677,6 +678,7 @@ tbody tr:last-child td {
 .toast.in { opacity: 1; transform: translateX(0); }
 .toast.ok { border-left-color: var(--ok); }
 .toast.err { border-left-color: var(--danger); }
+.toast.warn { border-left-color: var(--warn); }
 .toast .t-close {
   flex: 0 0 auto;
   order: 2; /* visually last, after the text */

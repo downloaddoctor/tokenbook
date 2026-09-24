@@ -267,10 +267,10 @@ function restoreConfirm(folderName) {
     try {
       const granted = await navigator.storage.persist();
       if (!granted) {
-        toast('Storage not persistent — data may be cleared if disk fills.', 'err');
+        toast('Storage not persistent — data may be cleared if disk fills.', 'warn');
       }
     } catch (err) {
-      toast('Storage persistence check failed: ' + err.message, 'err');
+      toast('Storage persistence check failed: ' + err.message, 'warn');
     }
   }
 
