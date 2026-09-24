@@ -602,25 +602,16 @@ class DB {
     return this._db.people.get(id);
   }
 
-  // Prefix search across name OR mob. Dedups by id.
+  // Prefix search. Dispatch by first char: digit -> mob index, else -> name
+  // index (uppercased, matching the stored form). Single scan, no merge/dedup.
   async searchPeopleByPrefix(q, limit = 50) {
     q = String(q || '').trim();
     if (!q) return this.listPeople({ offset: 0, limit });
     const db = this._db;
-    const qUpper = q.toUpperCase();
-    const byName = await db.people.where('name').startsWith(qUpper).limit(limit).toArray();
-    const byMob = await db.people.where('mob').startsWith(q).limit(limit).toArray();
-    const seen = new Set();
-    const out = [];
-    for (const p of [...byName, ...byMob]) {
-      if (seen.has(p.id)) continue;
-      seen.add(p.id);
-      out.push(p);
+    if (/^\d/.test(q)) {
+      return db.people.where('mob').startsWith(q).limit(limit).toArray();
     }
-    out.sort((a, b) =>
-      (b.lastVisitAt || b.updatedAt || '').localeCompare(a.lastVisitAt || a.updatedAt || '')
-    );
-    return out.slice(0, limit);
+    return db.people.where('name').startsWith(q.toUpperCase()).limit(limit).toArray();
   }
 
   // Number of visits per person, keyed by personId. Uses projection if present.

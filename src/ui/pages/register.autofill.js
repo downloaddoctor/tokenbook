@@ -116,8 +116,8 @@ function onNameInput() {
     return;
   }
   nameTimer = setTimeout(async () => {
-    // Match by name OR mobile (same as Patients search), so a phone number typed
-    // here also finds the person.
+    // Digit-first -> mobile search; else -> name search (same rule as Patients).
+    // A phone number typed here finds the person; a name typed here finds by name.
     const items = await db.searchPeopleByPrefix(q, 8);
     renderSuggest(b.nameSuggest, items, pickPerson);
   }, 120);
