@@ -52,7 +52,10 @@ ui/toast.js      class Toast; default export = singleton; named toast/clearToast
 ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
-ui/pages/register.js    form + autofill + submit + print; exports editVisit, startNewBill, __setTestHooks/__getForm/__submitForTest
+ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest
+ui/pages/register.ctx.js      shared DOM bag (getB/setB) + flags (getFlags) + cross-module hook registry (setHook/call)
+ui/pages/register.billing.js  fieldValues, refreshPreview, applyFollowupRule, setFollowupNote, lockFee/unlockFee, onFollowupChange
+ui/pages/register.autofill.js name/mob suggest list, pickPerson, identity revalidation, token/date handlers; exports hideSuggests, refreshNextToken, bindAutofill
 ui/pages/register.dialogs.js  identity-change / reassign prompts (pure DOM, no shared state)
 ui/pages/tokens.js      day list + per-row refund dialog
 ui/pages/patients.js    patient registry + drill-in history modal
@@ -126,9 +129,13 @@ register page: editVisit(visit), startNewBill(nextToken?, resetDate?), __setTest
 # CONFIG
 .prettierrc: singleQuote, semi, printWidth 100, eol lf, trailingComma es5
 .gitattributes: * text=auto eol=lf
-index.html CSP meta: default-src self; script-src needs 'unsafe-inline' (paperstamp SDK injects an inline bootstrap).
+index.html CSP meta: max protection — script-src has NO 'unsafe-inline'. The only inline
+  script allowed is VS Code Live Server's injected reload snippet, pinned by its sha256 hash
+  (dev-only; absent on GitHub Pages). If Live Server updates and injects different bytes,
+  console reports a new hash -> paste it into script-src.
   Other origins: unpkg (Dexie), fonts.googleapis/gstatic, downloaddoctor.github.io (SDK iframe).
-  SRI intentionally omitted (Google Fonts CSS is UA-dependent; SDK ships its own SW).
+  style-src keeps 'unsafe-inline' for the layout designer's style attributes.
+  SRI intentionally omitted (Google Fonts CSS varies by UA; SDK unversioned; Dexie via import()).
 
 # BUILD
 None. Serve files statically; ES modules load directly in the browser.

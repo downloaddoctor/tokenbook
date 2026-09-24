@@ -1,19 +1,29 @@
-// Register page: form, autofill, submit+print. Router calls mount()/unmount();
-// this module binds/unbinds its own listeners.
+// Register page: form orchestration (mount/unmount, submit, edit, load).
+// Autofill/billing/dialog helpers live in sibling register.*.js modules; shared
+// state (DOM bag + flags) lives in register.ctx.js. Router calls mount()/unmount().
 
 import db from '../../core/db.js';
-import { evaluateFollowup, followupDaysLeft, DEFAULT_FEE } from '../../core/billing.js';
+import { DEFAULT_FEE } from '../../core/billing.js';
 import ps from '../../print/ps.js';
-import { bindOff, timeAgo } from '../dom.js';
+import { bindOff } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 import { askIdentityChange, askReassign } from './register.dialogs.js';
+import { setB, getFlags, setHook } from './register.ctx.js';
+import {
+  refreshPreview,
+  applyFollowupRule,
+  setFollowupNote,
+  lockFee,
+  unlockFee,
+  onFollowupChange,
+} from './register.billing.js';
+import { hideSuggests, refreshNextToken, bindAutofill } from './register.autofill.js';
 
+// DOM bag. Same object as register.ctx's bag (synced in mount()).
 let b;
 
 // ---- test hooks (dev self-test only) ----
-// The self-test drives the real form; it can suppress print and bypass layout
-// checks. Both default to production behavior.
 const testHooks = {
   suppressPrint: false,
 };
@@ -30,209 +40,15 @@ export function __submitForTest() {
   return submitBill();
 }
 
-function fieldValues() {
-  return {
-    name: b.fName.value.trim(),
-    mob: b.fMob.value.trim(),
-    age: b.fAge.value.trim(),
-    gender: b.fGender.value.trim(),
-    weight: b.fWeight ? b.fWeight.value.trim() : '',
-    followup: b.fFollowup ? b.fFollowup.value : '0',
-    payment: b.fPayment ? b.fPayment.value : '0',
-    fee: b.fFee ? b.fFee.value.trim() : String(DEFAULT_FEE),
-    date: b.fDate.value.trim(),
-    token: b.fToken.value.trim(),
-  };
-}
-
-let previewTimer = null;
-function refreshPreview() {
-  if (previewTimer) clearTimeout(previewTimer);
-  previewTimer = setTimeout(() => {
-    previewTimer = null;
-    ps.preview(fieldValues());
-  }, 90);
-}
-
-// ---- autofill (name + mobile) ----
-let nameTimer = null;
-let activeList = null;      // { ul, items, pick, hi }
-let submitting = false;     // guards against double-submit
-let tokenEdited = false;    // true once user types in Token; reset on New Visit
-let loadedVisitId = null;   // visit id being edited (null = new visit)
-
-function setHighlight(list, i) {
-  list.hi = i;
-  const lis = list.ul.children;
-  for (let k = 0; k < lis.length; k++) lis[k].classList.toggle('hl', k === i);
-  if (i >= 0 && lis[i]) lis[i].scrollIntoView({ block: 'nearest' });
-}
-
-function renderSuggest(ul, items, pick) {
-  ul.replaceChildren();
-  if (!items.length) {
-    ul.hidden = true;
-    if (activeList && activeList.ul === ul) activeList = null;
-    return;
-  }
-  const list = { ul, items, pick, hi: -1 };
-  items.forEach((p, i) => {
-    const li = document.createElement('li');
-
-    const main = document.createElement('span');
-    main.className = 's-main';
-    const name = document.createElement('span');
-    name.className = 's-name';
-    name.textContent = p.name;
-    const ago = document.createElement('span');
-    ago.className = 's-ago';
-    ago.textContent = timeAgo(p.lastVisitAt || p.createdAt) || '';
-    main.append(name, ago);
-
-    const sub = document.createElement('span');
-    sub.className = 's-sub';
-    const mob = document.createElement('span');
-    mob.className = 's-mob';
-    mob.textContent = p.mob || '';
-    const age = document.createElement('span');
-    age.className = 's-age';
-    age.textContent = p.age != null && p.age !== '' ? String(p.age) : '';
-    sub.append(mob, age);
-
-    li.append(main, sub);
-    li.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      pick(p);
-    });
-    li.addEventListener('mouseenter', () => setHighlight(list, i));
-    ul.appendChild(li);
-  });
-  ul.hidden = false;
-  activeList = list;
-}
-
-function hideSuggests() {
-  if (b.nameSuggest) b.nameSuggest.hidden = true;
-  activeList = null;
-}
-
-function pickPerson(p, focus = true) {
-  b.fName.value = (p.name || '').toUpperCase();
-  b.fMob.value = p.mob || '';
-  if (p.age != null && p.age !== '') b.fAge.value = String(p.age);
-  b.fGender.value = p.gender || '';
-  if (b.fWeight) b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
-  b.fPatientId.value = p.id != null ? String(p.id) : '';
-  hideSuggests();
-  if (focus) b.saveBtn && b.saveBtn.focus();
-  applyFollowupRule(p.id);
-  refreshPreview();
-}
-
-function onSuggestKey(e) {
-  const list = activeList;
-  if (!list || list.ul.hidden) return;
-  const n = list.items.length;
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    setHighlight(list, list.hi < 0 ? 0 : Math.min(list.hi + 1, n - 1));
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    setHighlight(list, list.hi < 0 ? n - 1 : Math.max(list.hi - 1, 0));
-  } else if (e.key === 'Enter') {
-    if (list.hi >= 0) {
-      e.preventDefault();
-      list.pick(list.items[list.hi]);
-    }
-  } else if (e.key === 'Tab') {
-    const idx = list.hi >= 0 ? list.hi : 0;
-    list.pick(list.items[idx], false);
-  } else if (e.key === 'Escape') {
-    hideSuggests();
-  }
-}
-
-function onNameInput() {
-  clearTimeout(nameTimer);
-  const q = b.fName.value.trim();
-  if (q.length < 2) {
-    b.nameSuggest.hidden = true;
-    return;
-  }
-  nameTimer = setTimeout(async () => {
-    // Match by name OR mobile (same as Patients search), so a phone number typed
-    // here also finds the person.
-    const items = await db.searchPeopleByPrefix(q, 8);
-    renderSuggest(b.nameSuggest, items, pickPerson);
-  }, 120);
-}
-
-function onDocMouseDown(e) {
-  const t = e.target;
-  if (b.nameSuggest.contains(t) || t === b.fName) return;
-  hideSuggests();
-}
-
-// Re-evaluate the follow-up rule from the CURRENT form identity. Runs on
-// name/mob blur. Resolution mirrors addVisit: explicit Pat ID wins, else match
-// (name, mob). Unresolved -> new patient -> force paid.
-let identityTimer = null;
-function revalidateIdentity() {
-  clearTimeout(identityTimer);
-  identityTimer = setTimeout(async () => {
-    const name = b.fName.value.trim().toUpperCase();
-    const mob = b.fMob.value.trim();
-    const patId = Number(b.fPatientId.value.trim()) 
-    let personId = null;
-    if (patId) {
-      const p = await db.getPerson(patId).catch(() => null);
-      if (p && p.name === name && p.mob === mob) personId = p.id;
-    }
-    if (!personId && name && mob) {
-      const matches = await db.searchPeopleByName(name, 8).catch(() => []);
-      const hit = matches.find((p) => p.name === name && p.mob === mob);
-      if (hit) personId = hit.id;
-    }
-    applyFollowupRule(personId);
-  }, 180);
-}
-
-async function refreshNextToken() {
-  const day = b.fDate.value || db.localDay();
-  const t = await db.nextTokenForDate(day);
-  if (!b.fDate.value) b.fDate.value = day;
-  b.fToken.value = String(t);
-  tokenEdited = false;
-  loadedVisitId = null;
-}
-
-// Token change: if a visit exists at (date, token), load it (edit mode).
-// Otherwise keep the typed value; submit will create at that key.
-async function onTokenChange() {
-  tokenEdited = true;
-  const day = b.fDate.value.trim();
-  const token = Number(b.fToken.value);
-  if (!day || !Number.isInteger(token) || token < 1) return;
-  const found = await db.findVisitByDateToken(day, token);
-  if (!found) {
-    loadedVisitId = null;
-    setMsg(`Token ${token} is free on ${day}.`, 'ok');
-    startNewBill(false, false); // keep the user's chosen day
-    return;
-  }
-  const { visit, person } = found;
-  setFollowupNote('');
-  hideSuggests();
-  setMsg(
-    `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.id + ')' : ''}.`,
-    'ok'
-  );
-  loadVisitIntoForm(visit, person);
+// Toast helper. kind: 'ok' | 'err' | undefined (errors are styled red).
+function setMsg(text, kind) {
+  toast(text, kind);
 }
 
 // Fill the form from a visit (edit mode). Shared by onTokenChange and editVisit.
 function loadVisitIntoForm(visit, person) {
   if (!b) return;
+  const flags = getFlags();
   hideSuggests();
   b.fDate.value = visit.date;
   b.fToken.value = String(visit.token);
@@ -252,12 +68,11 @@ function loadVisitIntoForm(visit, person) {
       : visit.personId != null
         ? String(visit.personId)
         : '';
-  loadedVisitId = visit.id;
+  flags.loadedVisitId = visit.id;
   refreshPreview();
 }
 
 // Load a visit into the Register form for editing. Used by Tokens on Enter.
-// `visit` has personId; person is resolved here so callers don't have to.
 export async function editVisit(visit) {
   if (!visit) return false;
   let person = null;
@@ -268,13 +83,14 @@ export async function editVisit(visit) {
 
 // Alt+R: open the refund dialog for the visit currently loaded. Paid only.
 async function refundCurrentVisit() {
-  if (!loadedVisitId) {
+  const flags = getFlags();
+  if (!flags.loadedVisitId) {
     toast('No saved visit loaded to refund.', 'err');
     return;
   }
   const found = await db.findVisitByDateToken(b.fDate.value.trim(), Number(b.fToken.value));
   const visit = found && found.visit;
-  if (!visit || visit.id !== loadedVisitId) {
+  if (!visit || visit.id !== flags.loadedVisitId) {
     toast('Could not reload the visit.', 'err');
     return;
   }
@@ -296,110 +112,17 @@ async function refundCurrentVisit() {
 // Date change: if token was not hand-edited, recompute the next token for the
 // new date. Otherwise leave the typed token alone.
 async function onDateChange() {
+  const flags = getFlags();
   const patId = Number(b.fPatientId.value.trim()) || null;
   if (patId) applyFollowupRule(patId);
-  if (tokenEdited) return;
+  if (flags.tokenEdited) return;
   await refreshNextToken();
-}
-
-// Token blur: if empty, fill with the next available token (resets tokenEdited
-// so Date changes recompute again).
-async function onTokenBlur() {
-  if (b.fToken.value.trim() === '') {
-    await refreshNextToken();
-  }
-}
-
-// Toast helper. kind: 'ok' | 'err' | undefined (errors are styled red).
-function setMsg(text, kind) {
-  toast(text, kind);
-}
-
-// Auto-followup rule: if the linked patient had a PAID visit within the last 6
-// calendar days, mark this visit as a free follow-up and lock fee to 0.
-// Otherwise leave the user's toggle alone.
-let followupBusy = 0;
-async function applyFollowupRule(personId) {
-  const my = ++followupBusy;
-  const day = (b.fDate && b.fDate.value) || db.localDay();
-  if (!personId) {
-    // No resolved person -> first-time patient, force paid.
-    if (my !== followupBusy) return;
-    if (b.fFollowup) b.fFollowup.value = '0';
-    unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
-    setFollowupNote('');
-    return;
-  }
-  let last = null;
-  try {
-    last = await db.lastPaidVisitDaysFor(personId, day);
-  } catch (_) {
-    last = null;
-  }
-  if (my !== followupBusy) return;
-  const lastPaidDays = last && last.days != null ? last.days : null;
-  // The rule lives in core/billing.js — same call the DB write path makes.
-  const { followup } = evaluateFollowup({ lastPaidDays, explicit: null });
-  if (followup === 1) {
-    // Inside window -> free follow-up.
-    if (b.fFollowup) b.fFollowup.value = '1';
-    lockFee(0);
-    const left = followupDaysLeft(lastPaidDays);
-    setFollowupNote(
-      `Free follow-up — last paid visit ${lastPaidDays === 0 ? 'today' : lastPaidDays + ' day(s) ago'}. Window closes in ${left} day(s).`
-    );
-  } else if (lastPaidDays != null && lastPaidDays > 6) {
-    // Past window -> force paid, unlock fee, note the gap.
-    if (b.fFollowup) b.fFollowup.value = '0';
-    unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
-    setFollowupNote(
-      `Paid visit — last paid visit was ${lastPaidDays} day(s) ago (outside the 6-day follow-up window).`
-    );
-  } else {
-    // No prior paid visit -> first-time patient, force paid.
-    if (b.fFollowup) b.fFollowup.value = '0';
-    unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
-    setFollowupNote('');
-  }
-}
-
-function setFollowupNote(text) {
-  const el = document.getElementById('followup-note');
-  if (!el) return;
-  el.textContent = text || '';
-  el.hidden = !text;
-}
-
-function lockFee(v) {
-  if (!b.fFee) return;
-  b.fFee.value = String(v);
-  b.fFee.readOnly = true;
-  b.fFee.dataset.locked = '1';
-}
-
-function unlockFee() {
-  if (!b.fFee) return;
-  delete b.fFee.dataset.locked;
-  b.fFee.readOnly = false;
-}
-
-
-function onFollowupChange() {
-  if (b.fFollowup.value === '1') lockFee(0);
-  else {
-    unlockFee();
-    if (!b.fFee.value || Number(b.fFee.value) === 0) b.fFee.value = String(DEFAULT_FEE);
-  }
-  setFollowupNote('');
-  refreshPreview();
 }
 
 // Pat ID change: look up the person and populate. Empty = leave fields as-is
 // (submit falls back to (name, mob) matching).
 async function onPatIdChange() {
+  const flags = getFlags();
   const raw = b.fPatientId.value.trim();
   if (!raw) return;
   const id = Number(raw);
@@ -410,7 +133,7 @@ async function onPatIdChange() {
   const p = await db.getPerson(id);
   if (!p) {
     setMsg(`No patient with ID ${id}.`, 'err');
-    applyFollowupRule(null)
+    applyFollowupRule(null);
     return;
   }
   b.fName.value = (p.name || '').toUpperCase();
@@ -421,14 +144,14 @@ async function onPatIdChange() {
   hideSuggests();
   setMsg('');
 
-  if(!loadedVisitId) applyFollowupRule(p.id);
+  if (!flags.loadedVisitId) applyFollowupRule(p.id);
   else setFollowupNote('');
   refreshPreview();
 }
 
-// Reset the form for a new bill. resetDate=false keeps the current date (used
-// when mid-edit on a specific day, e.g. a free-token lookup).
+// Reset the form for a new bill. resetDate=false keeps the current date.
 export function startNewBill(nextToken = true, resetDate = true) {
+  const flags = getFlags();
   clearToast();
   b.fName.value = '';
   b.fMob.value = '';
@@ -441,10 +164,9 @@ export function startNewBill(nextToken = true, resetDate = true) {
   b.fFee.value = String(DEFAULT_FEE);
   setFollowupNote('');
   b.fPatientId.value = '';
-  // Fresh bill starts on today's date.
   if (resetDate && b.fDate) b.fDate.value = db.localDay();
-  tokenEdited = false;
-  loadedVisitId = null;
+  flags.tokenEdited = false;
+  flags.loadedVisitId = null;
   hideSuggests();
   setMsg('');
   b.fName.focus();
@@ -453,14 +175,15 @@ export function startNewBill(nextToken = true, resetDate = true) {
 
 async function onSubmit(e) {
   e.preventDefault();
-  if (submitting) return;
-  submitting = true;
+  const flags = getFlags();
+  if (flags.submitting) return;
+  flags.submitting = true;
   const btn = b.saveBtn;
   if (btn) btn.disabled = true;
   try {
     await submitBill();
   } finally {
-    submitting = false;
+    flags.submitting = false;
     if (btn) btn.disabled = false;
   }
 }
@@ -468,6 +191,7 @@ async function onSubmit(e) {
 // Worker for onSubmit. The guard/disable lives on onSubmit — do NOT re-check
 // `submitting` here, or the outer call would make this a no-op.
 async function submitBill() {
+  const flags = getFlags();
   setMsg('');
   const name = b.fName.value.trim().toUpperCase();
   const mob = b.fMob.value.trim();
@@ -498,15 +222,10 @@ async function submitBill() {
   const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
   const fee = Number(feeRaw);
 
-  // If a patient is linked and the user edited their identity, ask how to
-  // proceed before writing anything.
+  // If a patient is linked and the user edited their identity, ask how to proceed.
   if (patId) {
     const p = await db.getPerson(patId);
-    // Identity unchanged -> nothing to resolve, no dialog.
     if (p && (p.name !== name || p.mob !== mob)) {
-      // If the new (name, mob) belongs to a DIFFERENT existing patient, then
-      // "Update" would collide — only offer Reassign or Cancel.
-      // Exact compound-index lookup (a prefix search would be wrong here).
       const hit = await db.findPersonByNameMob(name, mob);
       const other = hit && hit.id !== patId ? hit : null;
       if (other) {
@@ -537,8 +256,7 @@ async function submitBill() {
   let token = visitInput.token || (await db.nextTokenForDate(day));
   visitInput.token = token;
   let result;
-  // Bounded retry on token collision: re-derive the next token, back off briefly,
-  // retry up to MAX_ATTEMPTS. Any other error propagates unchanged.
+  // Bounded retry on token collision (max 3 attempts, brief backoff).
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; ; attempt++) {
     try {
@@ -559,15 +277,10 @@ async function submitBill() {
     }
   }
   const { rec, created } = result;
-  // Form now reflects a committed visit — mark as loaded so "current visit"
-  // actions (Alt+R refund) work without re-picking.
-  loadedVisitId = rec.id;
-  // Echo the resolved person id back so the next Save carries an explicit id.
+  flags.loadedVisitId = rec.id;
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
   hideSuggests();
 
-  // Reflect the resolved billing back into the form (auto-followup may have
-  // flipped the flag or zeroed the fee server-side).
   if (b.fFollowup) b.fFollowup.value = rec.followup ? '1' : '0';
   if (b.fPayment) b.fPayment.value = rec.payment ? '1' : '0';
   if (b.fFee && rec.fee != null) {
@@ -602,6 +315,7 @@ async function submitBill() {
 }
 
 export function mount() {
+  const flags = getFlags();
   b = {
     form: document.getElementById('patient-form'),
     fName: document.getElementById('f-name'),
@@ -620,6 +334,12 @@ export function mount() {
     host: document.getElementById('register-ps-host'),
     nameSuggest: document.getElementById('name-suggest'),
   };
+  setB(b);
+  // Register orchestrator callbacks that sibling modules invoke via ctx.
+  setHook('setMsg', setMsg);
+  setHook('startNewBill', startNewBill);
+  setHook('loadVisitIntoForm', loadVisitIntoForm);
+
   ps.mount(b.host, {
     autoShow: false,
     openDesignerOnReady: true,
@@ -630,12 +350,11 @@ export function mount() {
   off.on(b.form, 'submit', onSubmit);
   off.on(b.form, 'input', refreshPreview);
   off.on(document.getElementById('btn-new-bill'), 'click', startNewBill);
-  off.on(b.fName, 'input', onNameInput);
   off.on(b.fPatientId, 'change', onPatIdChange);
-  off.on(b.fToken, 'change', onTokenChange);
-  off.on(b.fToken, 'blur', onTokenBlur);
   off.on(b.fDate, 'change', onDateChange);
   off.on(b.fDate, 'input', onDateChange);
+  // Autofill (name/mob suggest, token, identity revalidation) binds its own.
+  bindAutofill(off);
   // Alt+R: refund the visit currently loaded in the form.
   off.on(document, 'keydown', (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -647,31 +366,24 @@ export function mount() {
   if (b.fFollowup) off.on(b.fFollowup, 'change', onFollowupChange);
   if (b.fFee)
     off.on(b.fFee, 'input', () => {
-      // Manual edit clears the lock so onFollowupChange won't fight the user.
       if (b.fFee.dataset.locked === '1') unlockFee();
     });
-  off.on(b.fName, 'blur', revalidateIdentity);
-  off.on(b.fMob, 'blur', revalidateIdentity);
-  off.on(b.fName, 'change', revalidateIdentity);
-  off.on(b.fMob, 'change', revalidateIdentity);
-  // Alt+S -> Save & Print (only while this page is mounted). Ctrl/Shift must be
-  // unset so we don't shadow browser combos.
+  // Alt+S -> Save & Print (only while this page is mounted).
   off.on(window, 'keydown', (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
-      if (b.form && !submitting) b.form.requestSubmit();
+      if (b.form && !flags.submitting) b.form.requestSubmit();
     }
   });
-  off.on(b.fName, 'keydown', onSuggestKey);
-  off.on(document, 'mousedown', onDocMouseDown);
   b.off = off;
   refreshNextToken();
   b.fName.focus();
 }
 
 export function unmount() {
+  const flags = getFlags();
   if (b && b.off) b.off.off();
-  submitting = false;
+  flags.submitting = false;
   clearToast();
   ps.reset();
 }

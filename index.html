@@ -7,15 +7,9 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#2563eb" />
-    <!-- CSP: restrict to self + the three external origins we actually use.
-         script-src keeps 'unsafe-inline' because the paperstamp SDK injects an
-         inline bootstrap script at runtime (no inline scripts exist in our own
-         HTML). Everything else stays locked down: connect/frame/worker/base/form.
-         SRI is intentionally omitted: Google Fonts CSS varies by UA, and the
-         paperstamp SDK ships its own service worker. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://downloaddoctor.github.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://unpkg.com; frame-src https://downloaddoctor.github.io; worker-src 'self'; base-uri 'self'; form-action 'self'"
+      content="default-src 'self'; script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE=' https://unpkg.com https://downloaddoctor.github.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://unpkg.com; frame-src https://downloaddoctor.github.io; worker-src 'self'; base-uri 'self'; form-action 'self'"
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
