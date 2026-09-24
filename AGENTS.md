@@ -53,6 +53,7 @@ ui/history.js    reusable patient-history modal; openHistory(personId), closeHis
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
 ui/pages/register.js    form + autofill + submit + print; exports editVisit, startNewBill, __setTestHooks/__getForm/__submitForTest
+ui/pages/register.dialogs.js  identity-change / reassign prompts (pure DOM, no shared state)
 ui/pages/tokens.js      day list + per-row refund dialog
 ui/pages/patients.js    patient registry + drill-in history modal
 ui/pages/printLayout.js paperstamp full designer

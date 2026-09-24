@@ -14,6 +14,9 @@ class Paperstamp {
     this._lp = null;          // current PaperStamp instance
     this._currentHost = null; // element the iframe lives in
     this._ready = false;
+    // Coarse lifecycle: 'idle' | 'mounting' | 'ready' | 'error'. Derived from
+    // the booleans above for callers/diagnostics; not a second source of truth.
+    this._state = 'idle';
     this._layoutDefs = {};    // name -> layoutDef (from listLayoutDefs())
     this._activeLayoutId = localStorage.getItem(LS_SELECTED) || '';
     // Minimal designer: Register opts in for quick tweaks; Print Layout uses
@@ -111,10 +114,17 @@ class Paperstamp {
       return;
     }
     if (this._lp && this._currentHost === hostEl && !force) {
+      // Already mounted on this host. Historically a silent no-op; warn so a
+      // forgotten unmount() is visible during development.
+      console.warn('ps.mount(): already mounted on this host (no-op). Pass force to remount.');
       this._designerMinimal = !!minimal;
       return;
     }
+    if (this._currentHost && this._currentHost !== hostEl) {
+      console.warn('ps.mount(): replacing existing mount on a different host.');
+    }
     this._designerMinimal = !!minimal;
+    this._state = 'mounting';
 
     if (this._lp) {
       try {
@@ -138,6 +148,7 @@ class Paperstamp {
       autoShow,
       onReady: () => {
         this._ready = true;
+        this._state = 'ready';
         this._setStatus('ready');
         this.listLayouts(() => {
           const after = () => {
@@ -173,14 +184,21 @@ class Paperstamp {
         }
       },
       onError: (err) => {
+        this._state = 'error';
         this._setStatus('error: ' + err.code);
         console.error('paperstamp', err);
       },
     });
     this._lp.on('error', (err) => {
+      this._state = 'error';
       this._setStatus('error: ' + err.code);
       console.error('paperstamp', err);
     });
+  }
+
+  // Coarse lifecycle state for callers/diagnostics.
+  get state() {
+    return this._state;
   }
 
   flush() {
@@ -279,6 +297,7 @@ class Paperstamp {
     }
     this._currentHost = null;
     this._ready = false;
+    this._state = 'idle';
     this._pending.length = 0;
     this._setStatus('idle');
   }
