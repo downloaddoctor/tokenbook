@@ -18,14 +18,27 @@ export function openRefundDialog(visit) {
     const sel = el('refund-tier');
     if (!dlg || !sub || !sel) return resolve(null);
 
-    sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${
-      visit.fee != null ? visit.fee : 0
-    }`;
+    const baseFee = visit.fee != null ? Number(visit.fee) : 0;
+    sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${baseFee}`;
     sel.value = String(visit.refundTier || '0');
+
+    const prev = el('refund-preview');
+    const paintPreview = () => {
+      if (!prev) return;
+      const amt = db.refundAmountFor(sel.value);
+      if (amt <= 0) {
+        prev.textContent = `Refund ₹0 — fee stays ₹${baseFee}`;
+        return;
+      }
+      const net = Math.max(0, baseFee - amt);
+      prev.textContent = `Fee ₹${baseFee} → ₹${net} (refund ₹${amt})`;
+    };
+    paintPreview();
 
     const saveBtn = dlg.querySelector('#refund-save');
     // After picking a tier, jump focus to Save (Tab/Shift+Tab then reaches Cancel).
     const onSelChange = () => {
+      paintPreview();
       if (saveBtn) saveBtn.focus();
     };
     const onClose = () => {

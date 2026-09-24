@@ -3,6 +3,7 @@
 
 import db from '../core/db.js';
 import backup, { hasFsAccess } from '../backup/backup.js';
+import { csvToLog } from '../backup/csv.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter } from './router.js';
 import { toast } from './toast.js';
@@ -14,14 +15,27 @@ function restoreMsg(count, skipped, tail) {
   return skipped ? base + ' Skipped ' + skipped + ' bad row(s).' : base;
 }
 
-// Styled confirm before a destructive restore. Resolves true if confirmed,
-// false on cancel/Esc/backdrop.
-function restoreConfirm(folderName) {
+// Styled confirm before a destructive restore. Reads the incoming log first and
+// shows "N visits, M patients" so the operator can verify the source. Resolves
+// true if confirmed, false on cancel/Esc/backdrop.
+function restoreConfirm(folderName, summary) {
   return new Promise((resolve) => {
     const dlg = document.getElementById('restore-confirm');
     const sub = document.getElementById('restore-confirm-sub');
     if (!dlg || !sub) return resolve(false); // fail closed
     sub.textContent = folderName ? `Folder: ${folderName}` : '';
+    const info = document.getElementById('restore-confirm-info');
+    if (info) {
+      if (summary && summary.visits != null) {
+        const ppl = summary.people != null ? summary.people : '?';
+        info.textContent =
+          `Incoming: ${summary.visits} visit${summary.visits === 1 ? '' : 's'}, ` +
+          `${ppl} patient${ppl === 1 ? '' : 's'}` +
+          `${summary.skipped ? ' (' + summary.skipped + ' bad row(s) skipped)' : ''}.`;
+      } else {
+        info.textContent = '';
+      }
+    }
     const onClose = () => {
       dlg.removeEventListener('close', onClose);
       resolve(dlg.returnValue === 'restore');
@@ -48,12 +62,22 @@ function restoreConfirm(folderName) {
   setRouter(router);
   router.wire();
 
-  // Alt+H: open the history modal for the patient id in the Register form
-  // (works from any tab; focuses Register if needed).
+  // Global Alt shortcuts: H history, L log, B backup (work from any tab).
   window.addEventListener('keydown', async (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    if (e.key !== 'h' && e.key !== 'H') return;
+    const k = e.key && e.key.toLowerCase();
+    if (k !== 'h' && k !== 'l' && k !== 'b') return;
     e.preventDefault();
+    if (k === 'l') {
+      if (btnLog) btnLog.click();
+      return;
+    }
+    if (k === 'b') {
+      btnBackup.click();
+      return;
+    }
+    // Alt+H: open the history modal for the patient id in the Register form
+    // (works from any tab; focuses Register if needed).
     if (router.currentTab !== 'register') router.activateTab('register');
     const idEl = document.getElementById('f-patient-id');
     const id = idEl ? Number(idEl.value) : 0;
@@ -104,7 +128,20 @@ function restoreConfirm(folderName) {
       fileRestore.click();
       return;
     }
-    if (!(await restoreConfirm(st.folderName))) return;
+    // Read the incoming log first so the confirm can show what will be restored.
+    let summary = null;
+    try {
+      const lg = await backup.readLog();
+      if (lg.text) {
+        const ops = csvToLog(lg.text);
+        const people = new Set();
+        for (const op of ops) if (op.personId != null) people.add(op.personId);
+        summary = { visits: ops.length, people: people.size, skipped: 0 };
+      }
+    } catch (_) {
+      summary = null; // unreadable/invalid log -> confirm still proceeds, no counts
+    }
+    if (!(await restoreConfirm(st.folderName, summary))) return;
     try {
       const r = await backup.restoreFromFolder();
       toast(restoreMsg(r.count, r.skipped, 'from ' + r.source), r.skipped ? 'err' : 'ok');
@@ -340,4 +377,12 @@ function restoreConfirm(folderName) {
       right.append(bClear, bSeed);
     }
   }
-})();
+})().catch((err) => {
+  // Fatal boot error: surface it instead of leaving a dead statusbar.
+  console.error('boot failed', err);
+  try {
+    toast('Startup failed: ' + (err && err.message ? err.message : String(err)), 'err');
+  } catch (_) {
+    /* toast not ready yet — nothing more we can do */
+  }
+});

@@ -2,8 +2,12 @@
 // when: ISO string | epoch-ms number | Date.
 // compact: '5m ago' / default: '5 min ago'. fallback returned on unparseable input.
 export function timeAgo(when, { compact = false, fallback = '' } = {}) {
-  const t = when instanceof Date ? when.getTime() : typeof when === 'number' ? when : Date.parse(when || '');
-  if (!t) return fallback;
+  let t;
+  if (when instanceof Date) t = when.getTime();
+  else if (typeof when === 'number') t = when;
+  else if (typeof when === 'string' && when) t = Date.parse(when);
+  else t = NaN;
+  if (!Number.isFinite(t)) return fallback;
   const s = Math.max(0, (Date.now() - t) / 1000);
   if (s < 45) return 'just now';
   const m = s / 60;

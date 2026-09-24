@@ -2,6 +2,7 @@
 // this module binds/unbinds its own listeners.
 
 import db from '../../core/db.js';
+import { evaluateFollowup, followupDaysLeft, DEFAULT_FEE } from '../../core/billing.js';
 import ps from '../../print/ps.js';
 import { bindOff, timeAgo } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
@@ -37,14 +38,19 @@ function fieldValues() {
     weight: b.fWeight ? b.fWeight.value.trim() : '',
     followup: b.fFollowup ? b.fFollowup.value : '0',
     payment: b.fPayment ? b.fPayment.value : '0',
-    fee: b.fFee ? b.fFee.value.trim() : '300',
+    fee: b.fFee ? b.fFee.value.trim() : String(DEFAULT_FEE),
     date: b.fDate.value.trim(),
     token: b.fToken.value.trim(),
   };
 }
 
+let previewTimer = null;
 function refreshPreview() {
-  ps.preview(fieldValues());
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    previewTimer = null;
+    ps.preview(fieldValues());
+  }, 90);
 }
 
 // ---- autofill (name + mobile) ----
@@ -320,7 +326,7 @@ async function applyFollowupRule(personId) {
     if (my !== followupBusy) return;
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
     setFollowupNote('');
     return;
   }
@@ -331,27 +337,30 @@ async function applyFollowupRule(personId) {
     last = null;
   }
   if (my !== followupBusy) return;
-  if (last && last.days != null && last.days >= 0 && last.days <= 6) {
+  const lastPaidDays = last && last.days != null ? last.days : null;
+  // The rule lives in core/billing.js — same call the DB write path makes.
+  const { followup } = evaluateFollowup({ lastPaidDays, explicit: null });
+  if (followup === 1) {
     // Inside window -> free follow-up.
     if (b.fFollowup) b.fFollowup.value = '1';
     lockFee(0);
-    const left = 6 - last.days;
+    const left = followupDaysLeft(lastPaidDays);
     setFollowupNote(
-      `Free follow-up — last paid visit ${last.days === 0 ? 'today' : last.days + ' day(s) ago'}. Window closes in ${left} day(s).`
+      `Free follow-up — last paid visit ${lastPaidDays === 0 ? 'today' : lastPaidDays + ' day(s) ago'}. Window closes in ${left} day(s).`
     );
-  } else if (last && last.days != null && last.days > 6) {
+  } else if (lastPaidDays != null && lastPaidDays > 6) {
     // Past window -> force paid, unlock fee, note the gap.
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
     setFollowupNote(
-      `Paid visit — last paid visit was ${last.days} day(s) ago (outside the 6-day follow-up window).`
+      `Paid visit — last paid visit was ${lastPaidDays} day(s) ago (outside the 6-day follow-up window).`
     );
   } else {
     // No prior paid visit -> first-time patient, force paid.
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = '300';
+    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
     setFollowupNote('');
   }
 }
@@ -381,7 +390,7 @@ function onFollowupChange() {
   if (b.fFollowup.value === '1') lockFee(0);
   else {
     unlockFee();
-    if (!b.fFee.value || Number(b.fFee.value) === 0) b.fFee.value = '300';
+    if (!b.fFee.value || Number(b.fFee.value) === 0) b.fFee.value = String(DEFAULT_FEE);
   }
   setFollowupNote('');
   refreshPreview();
@@ -419,6 +428,7 @@ async function onPatIdChange() {
 // Reset the form for a new bill. resetDate=false keeps the current date (used
 // when mid-edit on a specific day, e.g. a free-token lookup).
 export function startNewBill(nextToken = true, resetDate = true) {
+  clearToast();
   b.fName.value = '';
   b.fMob.value = '';
   b.fAge.value = '';
@@ -427,7 +437,7 @@ export function startNewBill(nextToken = true, resetDate = true) {
   b.fFollowup.value = '0';
   b.fPayment.value = '0';
   unlockFee();
-  b.fFee.value = '300';
+  b.fFee.value = String(DEFAULT_FEE);
   setFollowupNote('');
   b.fPatientId.value = '';
   // Fresh bill starts on today's date.
@@ -638,18 +648,24 @@ async function submitBill() {
   let token = visitInput.token || (await db.nextTokenForDate(day));
   visitInput.token = token;
   let result;
-  try {
-    result = await db.addVisit(visitInput);
-  } catch (err) {
-    if (err && err.name === 'DuplicateIdentityError') {
-      setMsg(err.message, 'err');
-      return;
-    }
-    if (err && err.name === 'ConstraintError') {
-      token = await db.nextTokenForDate(day);
-      visitInput.token = token;
+  // Bounded retry on token collision: re-derive the next token, back off briefly,
+  // retry up to MAX_ATTEMPTS. Any other error propagates unchanged.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    try {
       result = await db.addVisit(visitInput);
-    } else {
+      break;
+    } catch (err) {
+      if (err && err.name === 'DuplicateIdentityError') {
+        setMsg(err.message, 'err');
+        return;
+      }
+      if (err && err.name === 'ConstraintError' && attempt < MAX_ATTEMPTS) {
+        token = await db.nextTokenForDate(day);
+        visitInput.token = token;
+        await new Promise((r) => setTimeout(r, 40 * attempt));
+        continue;
+      }
       throw err;
     }
   }

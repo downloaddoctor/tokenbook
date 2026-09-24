@@ -14,6 +14,7 @@
 // Guarded by ?dev=1 at the call site (app.js). Do not import from prod pages.
 
 import { rawDb } from '../core/db.js';
+import { isWithinFollowupWindow, DEFAULT_FEE } from '../core/billing.js';
 
 const FIRST = [
   'Ramesh','Suresh','Mahesh','Rajesh','Naresh','Dinesh','Mukesh','Rakesh','Ganesh','Yogesh',
@@ -73,6 +74,25 @@ export async function seed({
   onProgress = null,
 } = {}) {
   const t0 = Date.now();
+  // Quota pre-check: abort before a partial write if the origin is nearly full.
+  // Estimate ~250 bytes/visit + ~200 bytes/person; require 1.5x headroom.
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      const need = (total * 250 + patients * 200) * 1.5;
+      if (est.quota && est.quota - (est.usage || 0) < need) {
+        const mb = (n) => (n / 1048576).toFixed(1);
+        throw new Error(
+          `Not enough storage for the seed. Need ~${mb(need)} MB, have ~${mb(
+            est.quota - (est.usage || 0)
+          )} MB free.`
+        );
+      }
+    } catch (e) {
+      if (e && /Not enough storage/.test(e.message)) throw e;
+      // storage.estimate unavailable/blocked -> proceed (best effort).
+    }
+  }
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -137,9 +157,9 @@ export async function seed({
     let lastPaidOffset = null;
     for (const v of arr) {
       const since = lastPaidOffset == null ? null : v._offset - lastPaidOffset;
-      const followup = since != null && since >= 0 && since <= 6 ? 1 : 0;
+      const followup = isWithinFollowupWindow(since) ? 1 : 0;
       v.followup = followup;
-      v.fee = followup ? 0 : 300;
+      v.fee = followup ? 0 : DEFAULT_FEE;
       v.refundTier = !followup && randInt(20) === 0 ? 1 + randInt(3) : 0;
       if (!followup) lastPaidOffset = v._offset;
     }

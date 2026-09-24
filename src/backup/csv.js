@@ -81,7 +81,7 @@ function csvEscape(v) {
   return s;
 }
 
-function parseCsvLine(line) {
+export function parseCsvLine(line) {
   const out = [];
   let cur = '';
   let q = false;

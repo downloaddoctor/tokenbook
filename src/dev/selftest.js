@@ -9,7 +9,7 @@
 
 import db from '../core/db.js';
 import backup from '../backup/backup.js';
-import { parseBackup } from '../backup/csv.js';
+import { parseBackup, parseCsvLine } from '../backup/csv.js';
 import { localDay } from '../core/day.js';
 
 // Runs on the CURRENT local day. Isolated DB (tokenbook-devtest) + isolated log
@@ -63,15 +63,17 @@ async function readLogText() {
   return r.text == null ? '' : r.text;
 }
 function logRows(text) {
-  return text.split('\n').filter((l) => l && l.indexOf('|') > 0);
+  return text
+    .split('\n')
+    .filter((l) => l && l.indexOf('|') > 0)
+    .map((l) => parseCsvLine(l));
 }
 function countTestRows(text) {
-  return logRows(text).filter((l) => l.split('|')[0] === TEST_DATE).length;
+  return logRows(text).filter((f) => f[0] === TEST_DATE).length;
 }
 function lastLogRow(text, token) {
   let found = null;
-  for (const l of logRows(text)) {
-    const f = l.split('|');
+  for (const f of logRows(text)) {
     if (f[0] === TEST_DATE && Number(f[1]) === token) found = f;
   }
   return found;

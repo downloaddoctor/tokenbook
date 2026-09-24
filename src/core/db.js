@@ -9,6 +9,7 @@
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
 import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../backup/csv.js';
+import { evaluateFollowup, normalizeFee } from './billing.js';
 
 const DB_NAME = 'tokenbook';
 
@@ -39,6 +40,12 @@ class DB {
     instance.version(1).stores({
       people: '++id, name, mob, [name+mob], updatedAt',
       visits: '++id, mob, createdAt, date, [date+token], personId',
+    });
+    // v2: index lastVisitAt so listPeople can page via the index instead of a full sort.
+    //     index [personId+createdAt] so _recomputePerson finds the newest visit in O(1).
+    instance.version(2).stores({
+      people: '++id, name, mob, [name+mob], updatedAt, lastVisitAt',
+      visits: '++id, mob, createdAt, date, [date+token], personId, [personId+createdAt]',
     });
   }
 
@@ -365,25 +372,24 @@ class DB {
   }
 
   // Re-derive projection (visits count + lastVisitAt). Identity NOT re-derived —
-  // see _applyIdentity (would revert renames).
+  // see _applyIdentity (would revert renames). Uses 2 indexed reads, not a full scan.
   async _recomputePerson(personId) {
     const db = this._db;
     const p = await db.people.get(personId);
     if (!p) return;
-    const visits = await db.visits.where('personId').equals(personId).toArray();
-    if (!visits.length) {
+    const visits = db.visits.where('[personId+createdAt]');
+    const count = await db.visits.where('personId').equals(personId).count();
+    if (!count) {
       p.visits = 0;
       p.lastVisitAt = undefined;
       p.updatedAt = new Date().toISOString();
       await db.people.put(p);
       return;
     }
-    let newest = visits[0];
-    for (const v of visits) {
-      if ((v.createdAt || '') > (newest.createdAt || '')) newest = v;
-    }
-    p.visits = visits.length;
-    p.lastVisitAt = newest.createdAt || undefined;
+    // Newest = last entry on the compound index; one indexed read.
+    const newest = await visits.between([personId, Dexie.minKey], [personId, Dexie.maxKey]).last();
+    p.visits = count;
+    p.lastVisitAt = (newest && newest.createdAt) || undefined;
     p.updatedAt = new Date().toISOString();
     await db.people.put(p);
   }
@@ -425,23 +431,22 @@ class DB {
     return this._daysBetween(a, b);
   }
 
-  // Compute fee + auto-followup. Window = 6 days anchored on last PAID visit;
-  // fee forced 0 when followup=1.
+  // Compute fee + auto-followup. Window rule lives in core/billing.js so the
+  // register form and this write path share one definition (never diverge).
   async _resolveBilling({ personId, date, followup, fee }) {
-    const baseFee = Number.isFinite(Number(fee)) && Number(fee) > 0 ? Number(fee) : 300;
+    const baseFee = normalizeFee(fee);
     const explicit = followup === 0 || followup === 1 ? followup : null;
     let anchoredOn = null;
-    let auto = false;
+    let lastPaidDays = null;
     if (explicit !== 0) {
       const last = await this._lastPaidVisitDaysFor(personId, date);
+      if (last && last.days != null) lastPaidDays = last.days;
       if (last && last.days != null && last.days >= 0 && last.days <= 6) {
-        auto = true;
         anchoredOn = { visitId: last.visit.id, days: last.days, date: last.visit.date };
       }
     }
-    const fu = explicit != null ? explicit : auto ? 1 : 0;
-    const outFee = fu === 1 ? 0 : baseFee;
-    return { followup: fu, fee: outFee, anchoredOn };
+    const { followup: fu, fee: outFee, auto } = evaluateFollowup({ lastPaidDays, explicit, baseFee });
+    return { followup: fu, fee: outFee, anchoredOn: auto ? anchoredOn : null };
   }
 
   // Journal hook — backup.js registers a callback at boot.
@@ -462,18 +467,30 @@ class DB {
       }
       const fresh = [entry];
       this._journalBuffers.set(txn, fresh);
-      const release = () => {
+      // Remove the map entry once and only once, regardless of which event wins.
+      let done = false;
+      const clear = () => {
+        if (done) return;
+        done = true;
         this._journalBuffers.delete(txn);
+      };
+      const release = () => {
+        clear();
         for (const e of fresh) this._deliverJournal(e);
       };
-      const drop = () => this._journalBuffers.delete(txn);
+      const drop = () => clear();
       try {
         txn.on('complete', release);
         txn.on('abort', drop);
         txn.on('error', drop);
       } catch {
-        this._journalBuffers.delete(txn);
+        clear();
         this._deliverJournal(entry);
+      }
+      // Defensive: bound the map if an exotic txn never fires any listener.
+      if (this._journalBuffers.size > 256) {
+        const oldest = this._journalBuffers.keys().next().value;
+        if (oldest && oldest !== txn) this._journalBuffers.delete(oldest);
       }
       return;
     }
@@ -547,14 +564,26 @@ class DB {
     });
   }
 
-  // Unique patients, most recently SEEN first.
-  listPeople({ offset = 0, limit = 50 } = {}) {
-    return this._db.people.toArray().then((rows) => {
-      rows.sort((a, b) =>
-        (b.lastVisitAt || b.updatedAt || '').localeCompare(a.lastVisitAt || a.updatedAt || '')
-      );
-      return rows.slice(offset, offset + limit);
-    });
+  // Unique patients, most recently SEEN first. Indexed on lastVisitAt so paging
+  // is O(limit), not O(N). Rows without lastVisitAt (0-visit / pre-projection)
+  // are appended after the indexed page so they are not silently dropped.
+  async listPeople({ offset = 0, limit = 50 } = {}) {
+    const db = this._db;
+    const indexed = await db.people
+      .orderBy('lastVisitAt')
+      .reverse()
+      .offset(offset)
+      .limit(limit)
+      .toArray();
+    if (indexed.length >= limit) return indexed;
+    // Fill the remainder with unindexed rows (no lastVisitAt), most-recently-updated first.
+    const have = new Set(indexed.map((p) => p.id));
+    const all = await db.people.toArray();
+    const rest = all
+      .filter((p) => !p.lastVisitAt && !have.has(p.id))
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const need = limit - indexed.length;
+    return indexed.concat(rest.slice(0, need));
   }
 
   countPeople() {
@@ -665,6 +694,46 @@ class DB {
       }
       return { count: n, skipped };
     });
+  }
+
+  // Stream the whole DB as a fresh log (header + one row per visit) in pages,
+  // so a huge DB never becomes one giant string. Calls onChunk(string) per page.
+  // Returns { count }. Order = (date, token) via the [date+token] index.
+  async exportAllStream(onChunk, { pageSize = 2000 } = {}) {
+    const db = this._db;
+    onChunk(csvHeaderLine() + '\n');
+    let count = 0;
+    let offset = 0;
+    const coll = db.visits.orderBy('[date+token]');
+    for (;;) {
+      const rows = await coll.offset(offset).limit(pageSize).toArray();
+      if (!rows.length) break;
+      let buf = '';
+      for (const v of rows) {
+        buf +=
+          visitInputToLogLine({
+            date: v.date || '',
+            token: v.token,
+            personId: v.personId,
+            name: v.name,
+            mob: v.mob,
+            age: v.age,
+            gender: v.gender,
+            weight: v.weight,
+            followup: v.followup,
+            payment: v.payment,
+            fee: v.fee,
+            refundTier: v.refundTier,
+            createdAt: v.createdAt,
+            updatedAt: v.updatedAt,
+          }) + '\n';
+        count++;
+      }
+      onChunk(buf);
+      offset += rows.length;
+      if (rows.length < pageSize) break;
+    }
+    return { count };
   }
 
   // Serialize the whole DB as a fresh log (header + one full row per visit).

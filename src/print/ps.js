@@ -1,7 +1,8 @@
 // paperstamp lifecycle manager.
-// One embed() per host element. Hosts live on Register + Print Layout; the
-// SINGLETON host is moved between pages (never destroyed) so preview state
-// survives navigation. Recreate = call reset() explicitly.
+// One embed() per mount() call. Hosts live on Register + Print Layout.
+// A page's unmount() calls reset(), which DESTROYS the iframe; the next
+// mount() creates a fresh embed for that host. Within a single mount, calling
+// mount() again with the same host is a no-op unless force=true.
 // Default export = singleton; `import ps from './ps.js'; ps.print(...)`.
 
 import { defaultLayoutDef } from './defaultLayout.js';

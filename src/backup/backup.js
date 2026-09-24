@@ -102,6 +102,18 @@ class Backup {
     await w.close();
   }
 
+  // Stream chunks to a file via one writable. chunks: async iterable/callback
+  // driver — here we pass an async function that receives a write(chunk) sink.
+  async writeStream(dir, name, producer) {
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    try {
+      await producer((chunk) => w.write(chunk));
+    } finally {
+      await w.close();
+    }
+  }
+
   // Append text without rewriting the file body.
   async appendText(dir, name, text) {
     const fh = await dir.getFileHandle(name, { create: true });
@@ -240,19 +252,26 @@ class Backup {
       clearTimeout(this._timer);
       this._timer = null;
     }
-    const data = await db.exportAll();
-    await this.writeText(this._dir, this.LATEST, data.text);
+    // Stream latest.csv from the DB in pages — never one giant string.
+    let count = 0;
+    await this.writeStream(this._dir, this.LATEST, async (write) => {
+      const r = await db.exportAllStream((chunk) => write(chunk));
+      count = r.count || 0;
+    });
     // Full write supersedes any pending journal rows / header flag.
     this._pending = [];
     this._needsHeader = false;
     this._dirty = false;
+    // Daily snapshot: only when missing for today; a second streamed pass.
     const day = db.localDay();
     const snap = `tokenbook-${day}.csv`;
     if (!(await this.fileExists(this._dir, snap))) {
-      await this.writeText(this._dir, snap, data.text);
+      await this.writeStream(this._dir, snap, async (write) => {
+        await db.exportAllStream((chunk) => write(chunk));
+      });
       await this.pruneSnapshots(this._dir);
     }
-    this._lastCount = data.count || 0;
+    this._lastCount = count;
     this._lastAt = new Date().toISOString();
     this._lastError = '';
     this._lastErrorName = '';

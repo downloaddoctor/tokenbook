@@ -589,6 +589,16 @@ tbody tr.active:hover {
   min-width: 220px;
 }
 
+/* Patients table: static sort indicator on the implicit DESC column. */
+#patients-table th.sorted-desc {
+  cursor: default;
+}
+#patients-table th .caret {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
 /* Search inputs: strip the platform's default chrome so they match the rest. */
 input[type='search'] {
   -webkit-appearance: none;
