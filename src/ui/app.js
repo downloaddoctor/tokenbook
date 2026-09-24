@@ -312,7 +312,13 @@ function restoreConfirm(folderName, summary) {
 
   try {
     const r = await backup.init();
-    if (r && r.reason === 'needs-gesture') {
+    if (r && r.dailySnapshot) {
+      // First open of the date -> a fresh daily snapshot was taken.
+      toast('Backup connected · daily snapshot ' + r.dailySnapshot, 'ok');
+    } else if (r && r.ok) {
+      // Folder connected; snapshot already existed for today.
+      toast('Backup connected' + (r.folderName ? ' · ' + r.folderName : ''), 'ok');
+    } else if (r && r.reason === 'needs-gesture') {
       console.info('Backup folder set but permission needs a click — press Backup.');
     }
   } catch (e) {
@@ -325,18 +331,15 @@ function restoreConfirm(folderName, summary) {
   // Dev tools: enabled with ?dev=1. Seeding is destructive (clears DB) so it
   // stays opt-in.
   if (new URLSearchParams(location.search).get('dev') === '1') {
-    const { seed, clearAll, promptSeedConfig } = await import('../dev/seed.js');
+    const { seed, clearAll, promptSeedConfig, SEED_CONFIG } = await import('../dev/seed.js');
     const bar = document.getElementById('statusbar');
     const right = bar && bar.querySelector('.statusbar-right');
     if (right) {
       const bSeed = document.createElement('button');
       bSeed.type = 'button';
       bSeed.textContent = 'Seed';
-      bSeed.title = 'Generate demo visits (prompts for count, days, patient pool)';
-      bSeed.addEventListener('click', async () => {
-        // Blank / cancel keeps the default for that field.
-        const cfg = promptSeedConfig();
-        if (cfg === null) return; // user cancelled the first prompt
+      bSeed.title = 'Click: seed defaults (10k visits/500 patients/200 days). Double-click: configure.';
+      const runSeed = async (cfg) => {
         bSeed.disabled = true;
         bClear.disabled = true;
         try {
@@ -357,6 +360,26 @@ function restoreConfirm(folderName, summary) {
           bSeed.disabled = false;
           bClear.disabled = false;
         }
+      };
+      // Single click seeds defaults; double click opens the config dialog. A
+      // browser fires click-then-dblclick, so delay the single-click action and
+      // cancel it if a second click arrives within the threshold.
+      let seedClickTimer = null;
+      bSeed.addEventListener('click', () => {
+        if (seedClickTimer) return; // second click of a double-click
+        seedClickTimer = setTimeout(() => {
+          seedClickTimer = null;
+          runSeed(SEED_CONFIG);
+        }, 260);
+      });
+      bSeed.addEventListener('dblclick', () => {
+        if (seedClickTimer) {
+          clearTimeout(seedClickTimer);
+          seedClickTimer = null;
+        }
+        const cfg = promptSeedConfig();
+        if (cfg === null) return; // cancelled
+        runSeed(cfg);
       });
       const bClear = document.createElement('button');
       bClear.type = 'button';

@@ -23,6 +23,13 @@ import { timeAgo } from '../core/time.js';
 const DEFAULT_LATEST = 'tokenbook-latest.csv';
 const SNAP_RE = /^tokenbook-(\d{4}-\d{2}-\d{2})\.csv$/;
 const KEEP_SNAPSHOTS = 30;
+// Prior full backups are moved here (not left in the root) with a timestamp name.
+const ARCHIVE_DIR = 'archive';
+const ARCHIVE_RE = /^tokenbook-.*\.csv$/;
+const KEEP_ARCHIVES = 30;
+// Once-per-day snapshot of the whole DB, taken on first app-open of the date.
+const DAILY_DIR = 'daily';
+const DAILY_RE = /^tokenbook-(\d{4}-\d{2}-\d{2})\.csv$/;
 const DEBOUNCE_MS = 2000;
 const HANDLE_KEY = 'dirHandle';
 
@@ -124,16 +131,74 @@ class Backup {
     await w.close();
   }
 
-  async pruneSnapshots(dir) {
-    const snaps = [];
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === 'file' && SNAP_RE.test(name)) snaps.push(name);
+  // Move the existing latest.csv into archive/ with a timestamp name so the
+  // upcoming overwrite preserves the previous full backup. Returns the new name
+  // or null when there is nothing to archive.
+  async archiveLatest(dir) {
+    try {
+      const existing = await dir.getFileHandle(this.LATEST);
+      if (!existing) return null;
+      const adir = await dir.getDirectoryHandle(ARCHIVE_DIR, { create: true });
+      const ts = new Date()
+        .toISOString()
+        .replace(/[:T]/g, '-')
+        .replace(/\..+$/, '');
+      const name = `tokenbook-${ts}.csv`;
+      await existing.move(adir, name);
+      await this.pruneArchives(adir);
+      return name;
+    } catch {
+      // No existing file (or move unsupported) -> nothing to archive.
+      return null;
     }
-    if (snaps.length <= KEEP_SNAPSHOTS) return;
-    snaps.sort();
-    for (const n of snaps.slice(0, snaps.length - KEEP_SNAPSHOTS)) {
+  }
+
+  // Keep only the newest KEEP_ARCHIVES files in archive/.
+  async pruneArchives(adir) {
+    const names = [];
+    for await (const [name, handle] of adir.entries()) {
+      if (handle.kind === 'file' && ARCHIVE_RE.test(name)) names.push(name);
+    }
+    if (names.length <= KEEP_ARCHIVES) return;
+    names.sort();
+    for (const n of names.slice(0, names.length - KEEP_ARCHIVES)) {
       try {
-        await dir.removeEntry(n);
+        await adir.removeEntry(n);
+      } catch {}
+    }
+  }
+
+  // Take today's snapshot into daily/ if it does not already exist. Idempotent:
+  // safe to call on every boot + backup. Returns the file name or null if
+  // already present. Requires the dir handle to be readable/writable.
+  async snapshotDaily(dir) {
+    const ddir = await dir.getDirectoryHandle(DAILY_DIR, { create: true });
+    const day = db.localDay();
+    const name = `tokenbook-${day}.csv`;
+    try {
+      await ddir.getFileHandle(name);
+      return null; // today's snapshot already exists
+    } catch {
+      /* not present -> write it */
+    }
+    await this.writeStream(ddir, name, async (write) => {
+      await db.exportAllStream((chunk) => write(chunk));
+    });
+    await this.pruneDaily(ddir);
+    return name;
+  }
+
+  // Keep only the newest KEEP_SNAPSHOTS files in daily/.
+  async pruneDaily(ddir) {
+    const names = [];
+    for await (const [name, handle] of ddir.entries()) {
+      if (handle.kind === 'file' && DAILY_RE.test(name)) names.push(name);
+    }
+    if (names.length <= KEEP_SNAPSHOTS) return;
+    names.sort();
+    for (const n of names.slice(0, names.length - KEEP_SNAPSHOTS)) {
+      try {
+        await ddir.removeEntry(n);
       } catch {}
     }
   }
@@ -149,9 +214,20 @@ class Backup {
   }
 
   async readNewestSnapshot(dir) {
+    // Daily snapshots live in daily/. Fall back to root for older layouts.
     const snaps = [];
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === 'file' && SNAP_RE.test(name)) snaps.push({ name, handle });
+    try {
+      const ddir = await dir.getDirectoryHandle(DAILY_DIR);
+      for await (const [name, handle] of ddir.entries()) {
+        if (handle.kind === 'file' && DAILY_RE.test(name)) snaps.push({ name, handle });
+      }
+    } catch {
+      /* no daily/ dir */
+    }
+    if (!snaps.length) {
+      for await (const [name, handle] of dir.entries()) {
+        if (handle.kind === 'file' && SNAP_RE.test(name)) snaps.push({ name, handle });
+      }
     }
     if (!snaps.length) return null;
     snaps.sort((a, b) => b.name.localeCompare(a.name));
@@ -217,7 +293,14 @@ class Backup {
     }
     if (perm === 'granted') {
       this.updateStatus();
-      return { ok: true, folderName: h.name || '' };
+      // First open of the date -> take today's snapshot (best-effort).
+      let dailySnapshot = null;
+      try {
+        dailySnapshot = await this.snapshotDaily(h);
+      } catch (e) {
+        console.warn('daily snapshot failed', e);
+      }
+      return { ok: true, folderName: h.name || '', dailySnapshot };
     }
     this.updateStatus();
     return { ok: false, reason: 'needs-gesture', folderName: h.name || '' };
@@ -252,6 +335,8 @@ class Backup {
       clearTimeout(this._timer);
       this._timer = null;
     }
+    // Preserve the previous latest.csv (rename with a timestamp) before overwrite.
+    await this.archiveLatest(this._dir);
     // Stream latest.csv from the DB in pages — never one giant string.
     let count = 0;
     await this.writeStream(this._dir, this.LATEST, async (write) => {
@@ -262,14 +347,11 @@ class Backup {
     this._pending = [];
     this._needsHeader = false;
     this._dirty = false;
-    // Daily snapshot: only when missing for today; a second streamed pass.
-    const day = db.localDay();
-    const snap = `tokenbook-${day}.csv`;
-    if (!(await this.fileExists(this._dir, snap))) {
-      await this.writeStream(this._dir, snap, async (write) => {
-        await db.exportAllStream((chunk) => write(chunk));
-      });
-      await this.pruneSnapshots(this._dir);
+    // Daily snapshot into daily/ (idempotent — fills it if boot couldn't).
+    try {
+      await this.snapshotDaily(this._dir);
+    } catch (e) {
+      console.warn('daily snapshot failed', e);
     }
     this._lastCount = count;
     this._lastAt = new Date().toISOString();
@@ -372,13 +454,20 @@ class Backup {
         this._needsHeader = false;
         this._pending = [];
 
-        // First write of the day: snapshot the whole log into a dated file.
+        // First write of the day: snapshot the whole log into daily/.
         const day = db.localDay();
-        const snap = `tokenbook-${day}.csv`;
-        if (!(await this.fileExists(this._dir, snap))) {
+        const name = `tokenbook-${day}.csv`;
+        const ddir = await this._dir.getDirectoryHandle(DAILY_DIR, { create: true });
+        let existsToday = true;
+        try {
+          await ddir.getFileHandle(name);
+        } catch {
+          existsToday = false;
+        }
+        if (!existsToday) {
           const full = await this.readLatest(this._dir);
-          if (full != null) await this.writeText(this._dir, snap, full);
-          await this.pruneSnapshots(this._dir);
+          if (full != null) await this.writeText(ddir, name, full);
+          await this.pruneDaily(ddir);
         }
 
         this._dirty = false;

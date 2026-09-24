@@ -74,7 +74,10 @@ app.js -> backup.init() -> db.setJournal(markDirty); validates persisted handle,
 register submit -> db.addVisit() -> _writeVisit(log=true) -> journal -> backup.markDirty -> debounced flush() -> append latest.csv
   -> ps.print() -> paperstamp iframe -> onDone
 router.activateTab(name) -> pages[name].unmount() (prev) then mount() (next)
-backup button -> pickOrBackup -> setFolder (ALWAYS opens picker) -> writeFullBackup (db.exportAllStream -> latest.csv overwrite + daily snapshot; streamed, never one big string)
+backup button -> pickOrBackup -> setFolder (ALWAYS opens picker) -> writeFullBackup
+  archiveLatest moves existing latest.csv -> archive/tokenbook-<timestamp>.csv (keep 30) BEFORE overwrite
+  db.exportAllStream pages by [date+token] key range (.above(lastKey)) -> latest.csv; never one big string
+  snapshotDaily writes daily/tokenbook-<date>.csv once/day (keep 30); taken on init() when permission granted AND in writeFullBackup/flush (idempotent)
 restore button -> (folder set?) restoreFromFolder : file picker -> csvToLog -> db.replayLog -> addVisit({preserve}) -> _writeVisit(log=false)
 Test button -> runSelfTest -> register (form driver) -> tokens refund dialog -> DB/log/replay checks -> cleanup -> drop isolated DB
 
@@ -94,8 +97,9 @@ DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirecto
 # LOG FORMAT (LOG_COLS, delimiter '|', timestamps epoch-seconds)
  date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
  Every line is a full self-describing visit row (never depends on earlier lines).
- Header written once at file creation; daily snapshot tokenbook-YYYY-MM-DD.csv.
- KEEP_SNAPSHOTS = 30. Append is byte-length verified.
+ Header written once at file creation. Append is byte-length verified.
+ Daily snapshot daily/tokenbook-YYYY-MM-DD.csv (first open of the date); KEEP_SNAPSHOTS = 30.
+ Prior full backups archived to archive/tokenbook-<timestamp>.csv; KEEP_ARCHIVES = 30.
 
 # ENV
 Browser-only; no server, no env vars.

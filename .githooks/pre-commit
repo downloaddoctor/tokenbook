@@ -1,16 +1,22 @@
 #!/bin/sh
-# Auto-bump version.txt (the SW deploy sentinel) when a cached shell asset is
-# staged — keeps the PWA update mechanism from being forgotten.
+# Two jobs when a cached shell asset is staged:
+#   1. Regenerate the SHELL_ASSETS list in sw.js from the filesystem.
+#   2. Bump version.txt (the SW deploy sentinel).
 # Enable once: git config core.hooksPath .githooks
 
 set -e
 
-# Files the SW precaches (kept in sync with sw.js SHELL_ASSETS).
+# Files the SW precaches (kept in sync with the generator + sw.js).
 CACHED='^(index\.html|styles\.css|favicon\.svg|manifest\.webmanifest|pw\.js|src/)'
 
 STAGED=$(git diff --cached --name-only)
 
 if echo "$STAGED" | grep -Eq "$CACHED"; then
+  # 1. Regenerate sw.js SHELL_ASSETS from the tree; stage it if it changed.
+  sh scripts/gen-shell-assets.sh
+  git add sw.js
+
+  # 2. Bump the sentinel (unless the author already bumped it this commit).
   if ! echo "$STAGED" | grep -q '^version\.txt$'; then
     date -u +%Y-%m-%dT%H:%M:%SZ > version.txt
     git add version.txt

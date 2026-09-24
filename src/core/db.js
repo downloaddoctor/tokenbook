@@ -699,14 +699,19 @@ class DB {
   // Stream the whole DB as a fresh log (header + one row per visit) in pages,
   // so a huge DB never becomes one giant string. Calls onChunk(string) per page.
   // Returns { count }. Order = (date, token) via the [date+token] index.
+  // Pages by KEY RANGE (above(lastKey)), not offset/limit: reusing one collection
+  // with .offset() across iterations silently returns only the first page.
   async exportAllStream(onChunk, { pageSize = 2000 } = {}) {
     const db = this._db;
     onChunk(csvHeaderLine() + '\n');
     let count = 0;
-    let offset = 0;
-    const coll = db.visits.orderBy('[date+token]');
+    let lastKey = [Dexie.minKey, Dexie.minKey];
     for (;;) {
-      const rows = await coll.offset(offset).limit(pageSize).toArray();
+      const rows = await db.visits
+        .where('[date+token]')
+        .above(lastKey)
+        .limit(pageSize)
+        .toArray();
       if (!rows.length) break;
       let buf = '';
       for (const v of rows) {
@@ -730,7 +735,8 @@ class DB {
         count++;
       }
       onChunk(buf);
-      offset += rows.length;
+      const last = rows[rows.length - 1];
+      lastKey = [last.date, last.token];
       if (rows.length < pageSize) break;
     }
     return { count };
