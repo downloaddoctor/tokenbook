@@ -6,6 +6,9 @@ Offline PWA (service worker + manifest), hosted on GitHub Pages.
 Deploy invariant: version.txt MUST be bumped on every deploy that changes a cached shell asset.
   SW reads it as the deploy sentinel. .githooks/pre-commit does this automatically.
   Enable once: git config core.hooksPath .githooks
+Save invariant: token + patient ID are corrected at SAVE, not on change.
+  A token with no visit at (day, token) is discarded -> nextTokenForDate(day).
+  A patient ID matching no person is discarded -> new patient (matched by name+mob).
 
 # DIRECTORY
 src/core/       persistence + domain logic (db, day, time, billing)

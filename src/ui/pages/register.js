@@ -216,11 +216,21 @@ async function submitBill() {
   }
 
   const day = dateRaw || db.localDay();
-  let patId = Number(b.fPatientId.value.trim()) || null;
   const weight = Number(weightRaw);
   const followup = b.fFollowup && b.fFollowup.value === '1' ? 1 : 0;
   const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
   const fee = Number(feeRaw);
+
+  // Patient ID: a typed id that matches no patient is DISCARDED (this becomes
+  // a new patient, matched by (name, mob) on submit).
+  let patId = Number(b.fPatientId.value.trim()) || null;
+  if (patId) {
+    const exists = await db.getPerson(patId);
+    if (!exists) {
+      b.fPatientId.value = '';
+      patId = null;
+    }
+  }
 
   // If a patient is linked and the user edited their identity, ask how to proceed.
   if (patId) {
@@ -240,6 +250,17 @@ async function submitBill() {
     }
   }
 
+  // Token: a typed token with no visit at (day, token) is DISCARDED — a new
+  // visit always uses the system-assigned next token for the day. (An existing
+  // visit at that key is kept, so editing never renumbers.)
+  let token = Number(b.fToken.value) || null;
+  if (token != null) {
+    const at = await db.findVisitByDateToken(day, token);
+    if (!at) token = null;
+  }
+  if (token == null) token = await db.nextTokenForDate(day);
+  b.fToken.value = String(token);
+
   const visitInput = {
     name,
     mob,
@@ -249,12 +270,10 @@ async function submitBill() {
     followup,
     payment,
     fee,
-    token: Number(b.fToken.value) || undefined,
+    token,
     date: day,
     personId: patId,
   };
-  let token = visitInput.token || (await db.nextTokenForDate(day));
-  visitInput.token = token;
   let result;
   // Bounded retry on token collision (max 3 attempts, brief backoff).
   const MAX_ATTEMPTS = 3;
