@@ -253,7 +253,9 @@ class DB {
     for (const h of hits) {
       if (h.hidden) continue;
       count++;
-      const iso = h.updatedAt || null;
+      // Anchor on the visit's IMMUTABLE createdAt, not updatedAt — otherwise a
+      // rebuild (which re-stamps updatedAt) would drift lastVisitAt forward.
+      const iso = h.createdAt || null;
       if (iso && (!lastVisitAt || iso > lastVisitAt)) lastVisitAt = iso;
     }
     const row = {
