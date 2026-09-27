@@ -668,18 +668,40 @@ class DB {
       let created = false;
       let prevPersonId = null;
       let visitCreatedAt = nowIso;
+      let currentRev = null;
       if (existingProj) {
         rootId = existingProj.rootId;
         v = await this._nextRev('visits', rootId);
         prevPersonId = existingProj.personId;
         // Carry the visit's original createdAt across edits (immutable birth
         // time); `updatedAt` on the projection tracks the latest write.
-        const cur = await this._currentVisit(rootId);
-        if (cur && cur.createdAt) visitCreatedAt = cur.createdAt;
+        currentRev = await this._currentVisit(rootId);
+        if (currentRev && currentRev.createdAt) visitCreatedAt = currentRev.createdAt;
       } else {
         rootId = await this._nextRootId('visits');
         v = 1;
         created = true;
+      }
+
+      // No-op guard: re-saving an unchanged visit must not append a revision.
+      // personV IS compared — it moves when the person's identity revision
+      // changes, which is a real change to record.
+      if (
+        currentRev &&
+        currentRev.personId === personId &&
+        currentRev.personV === personV &&
+        currentRev.date === date &&
+        currentRev.token === token &&
+        (currentRev.weight ?? null) === (weight ?? null) &&
+        (currentRev.followup ? 1 : 0) === (followup ? 1 : 0) &&
+        (currentRev.payment ? 1 : 0) === (payment ? 1 : 0) &&
+        Number(currentRev.fee) === Number(fee) &&
+        normalizeRefundTier(currentRev.refundTier) === normalizeRefundTier(refundTier) &&
+        (currentRev.hidden ? 1 : 0) === 0
+      ) {
+        const proj = await db.visitsProj.get(rootId);
+        const personRow = await db.peopleProj.get(personId);
+        return { rec: this._joinIdentity(proj, personRow), created: false, person: personRow };
       }
 
       const rec = {
