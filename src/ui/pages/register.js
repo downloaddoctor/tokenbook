@@ -63,12 +63,12 @@ function loadVisitIntoForm(visit, person) {
   if (visit.followup) lockFee(visit.fee);
   else unlockFee();
   b.fPatientId.value =
-    person && person.id != null
-      ? String(person.id)
+    person && person.rootId != null
+      ? String(person.rootId)
       : visit.personId != null
         ? String(visit.personId)
         : '';
-  flags.loadedVisitId = visit.id;
+  flags.loadedVisitId = visit.rootId;
   refreshPreview();
 }
 
@@ -90,7 +90,7 @@ async function refundCurrentVisit() {
   }
   const found = await db.findVisitByDateToken(b.fDate.value.trim(), Number(b.fToken.value));
   const visit = found && found.visit;
-  if (!visit || visit.id !== flags.loadedVisitId) {
+  if (!visit || visit.rootId !== flags.loadedVisitId) {
     toast('Could not reload the visit.', 'err');
     return;
   }
@@ -144,7 +144,7 @@ async function onPatIdChange() {
   hideSuggests();
   setMsg('');
 
-  if (!flags.loadedVisitId) applyFollowupRule(p.id);
+  if (!flags.loadedVisitId) applyFollowupRule(p.rootId);
   else setFollowupNote('');
   refreshPreview();
 }
@@ -237,7 +237,7 @@ async function submitBill() {
     const p = await db.getPerson(patId);
     if (p && (p.name !== name || p.mob !== mob)) {
       const hit = await db.findPersonByNameMob(name, mob);
-      const other = hit && hit.id !== patId ? hit : null;
+      const other = hit && hit.rootId !== patId ? hit : null;
       if (other) {
         const choice = await askReassign(p, other, { name, mob, age, gender });
         if (choice === 'cancel') return;
@@ -296,7 +296,7 @@ async function submitBill() {
     }
   }
   const { rec, created } = result;
-  flags.loadedVisitId = rec.id;
+  flags.loadedVisitId = rec.rootId;
   b.fPatientId.value = rec.personId != null ? String(rec.personId) : '';
   hideSuggests();
 

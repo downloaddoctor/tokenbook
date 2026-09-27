@@ -1,11 +1,76 @@
-// Pure CSV encode/decode for the append-only logbook. No IO.
-// Format: flat, delimiter '|' (1 byte). LOG_COLS is the ONLY format — every
-// line is a full self-describing visit row (never depends on earlier lines).
-// Timestamps are epoch-SECONDS (compact vs 24-char ISO).
+// Pure CSV encode/decode for the append-only logbook. No IO. Schema v3.
+//
+// Format (v3):
+//   #head|schema|schemaNo|type1|type2|...   ← one per entity schema
+//   <schemaNo>|<value1>|<value2>|...        ← one row per appended revision
+//
+//   * Values are positional, matching the #head column order for that schemaNo.
+//   * Types are declared in the #head line: str, int, num, epoch, bool.
+//     `null` as a suffix (e.g. `age:int|null`) means the field is nullable.
+//   * Delimiter is `|`. Never changes.
+//   * Timestamps are epoch-SECONDS at the file boundary (DB keeps ISO).
+//   * Projections (peopleProj/visitsProj) and meta are NOT written to the log.
+//     They are rebuilt on restore.
+//   * Unknown schemaNo → line skipped (forward-compatible).
 
-export const CSV_DELIM = '|'; // 1 byte
+export const CSV_DELIM = '|';
 
-// Refund tier = non-negative int N; amount = N * 100. 0/blank = none.
+// ---- schema registry (the ONLY place column shape lives) ----
+
+// People revision. Every field is written; nullable fields carry null as ''.
+export const SCHEMA_PEOPLE = {
+  no: 1,
+  name: 'people',
+  cols: [
+    'rootId:int',
+    'v:int',
+    'name:str',
+    'mob:str',
+    'age:int?',
+    'gender:str?',
+    'weight:num?',
+    'hidden:int',
+    'createdAt:epoch',
+  ],
+};
+
+// Visits revision.
+export const SCHEMA_VISITS = {
+  no: 2,
+  name: 'visits',
+  cols: [
+    'rootId:int',
+    'v:int',
+    'personId:int',
+    'personV:int',
+    'date:str',
+    'token:int',
+    'weight:num?',
+    'followup:int',
+    'payment:int',
+    'fee:num',
+    'refundTier:int',
+    'hidden:int',
+    'createdAt:epoch',
+  ],
+};
+
+export const SCHEMAS = [SCHEMA_PEOPLE, SCHEMA_VISITS];
+
+export function schemaByNo(no) {
+  return SCHEMAS.find((s) => s.no === no) || null;
+}
+
+// ---- head block ----
+
+export function csvHeaderLine() {
+  const lines = ['#head|schema|schemaNo|columns'];
+  for (const s of SCHEMAS) lines.push('#head|' + s.name + '|' + s.no + '|' + s.cols.join(CSV_DELIM));
+  return lines.join('\n');
+}
+
+// ---- refTier normalization (kept here for parity with db.js callers) ----
+
 export function normalizeRefundTier(v) {
   const s = String(v == null ? '' : v).trim();
   if (s === '' || s === '0') return 0;
@@ -13,65 +78,22 @@ export function normalizeRefundTier(v) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-// Log columns. Every line is a complete visit row.
-export const LOG_COLS = [
-  'date',
-  'token',
-  'personId',
-  'name',
-  'mob',
-  'age',
-  'gender',
-  'weight',
-  'followup',
-  'payment',
-  'fee',
-  'refundTier',
-  'createdAt',
-  'updatedAt',
-];
+// ---- epoch <-> ISO at the file boundary ----
 
-// ISO <-> epoch-SECONDS at the file boundary. DB keeps ISO; log uses seconds.
 export function toEpoch(v) {
   if (v == null || v === '') return '';
   if (typeof v === 'number') return Math.floor(v / 1000);
   const t = Date.parse(v);
   return Number.isFinite(t) ? Math.floor(t / 1000) : '';
 }
+
 export function fromEpoch(v) {
   if (v == null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? new Date(n * 1000).toISOString() : null;
 }
 
-// Encode one journal entry as a full self-describing row. Uses `personId`
-// everywhere (DB row, journal emit, log column) — callers can pass the stored
-// visit row verbatim.
-export function visitInputToLogLine(entry) {
-  const row = {
-    date: entry.date != null ? entry.date : '',
-    token: entry.token != null ? entry.token : '',
-    personId: entry.personId != null ? entry.personId : '',
-    name: entry.name != null ? entry.name : '',
-    mob: entry.mob != null ? entry.mob : '',
-    age: entry.age != null ? entry.age : '',
-    gender: entry.gender != null ? entry.gender : '',
-    weight: entry.weight != null ? entry.weight : '',
-    followup: entry.followup != null ? entry.followup : '',
-    payment: entry.payment != null ? entry.payment : '',
-    fee: entry.fee != null ? entry.fee : '',
-    refundTier: normalizeRefundTier(entry.refundTier),
-    createdAt: toEpoch(entry.createdAt),
-    updatedAt: toEpoch(entry.updatedAt),
-  };
-  return LOG_COLS.map((k) => csvEscape(row[k])).join(CSV_DELIM);
-}
-
-
-// Header line for the logbook (what exportAll / append writers emit).
-export function csvHeaderLine() {
-  return LOG_COLS.join(CSV_DELIM);
-}
+// ---- escaping ----
 
 function csvEscape(v) {
   const s = v == null ? '' : String(v);
@@ -107,81 +129,124 @@ export function parseCsvLine(line) {
   return out;
 }
 
-function numOrNull(v) {
-  if (v === '' || v == null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+// ---- value encoding per type ----
+
+function encVal(type, v) {
+  if (v == null || v === '') return '';
+  if (type === 'epoch') return toEpoch(v);
+  return v;
 }
 
-// Decode a logbook file (header + full rows) into replay ops.
-// Returns { ops, skippedRows } where skippedRows = [{ lineNo, reason, raw }].
-// lineNo is 1-based in the original file (header = line 1).
-export function csvToLog(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (!lines.length) throw new Error('Empty backup file.');
-  const header = parseCsvLine(lines[0]);
-  const matches = (cols) => header.length === cols.length && header.every((h, i) => h === cols[i]);
-  if (!matches(LOG_COLS)) {
-    throw new Error('Not a tokenbook log (unexpected header).');
+function rowForLine(schema, row) {
+  const values = [];
+  for (let i = 0; i < schema.cols.length; i++) {
+    const key = schema.cols[i].split(':')[0];
+    const type = schema.cols[i].split(':')[1].split('|')[0];
+    let v = row[key];
+    if (type === 'int') v = v == null || v === '' ? '' : Number(v);
+    if (type === 'num') v = v == null || v === '' ? '' : Number(v);
+    if (key === 'refundTier') v = normalizeRefundTier(v);
+    if (key === 'hidden') v = v ? 1 : 0;
+    if (key === 'followup' || key === 'payment') v = v ? 1 : 0;
+    values.push(csvEscape(encVal(type, v)));
   }
-  return parseLogLines(header, lines);
+  return schema.no + CSV_DELIM + values.join(CSV_DELIM);
 }
 
-function parseLogLines(header, lines) {
-  const col = Object.fromEntries(header.map((h, i) => [h, i]));
-  const has = (k) => col[k] != null;
+// Encode a people revision row.
+export function personRevToLogLine(p) {
+  return rowForLine(SCHEMA_PEOPLE, p);
+}
+
+// Encode a visits revision row.
+export function visitRevToLogLine(v) {
+  return rowForLine(SCHEMA_VISITS, v);
+}
+
+// ---- decoding ----
+
+// Parse a full log file. Returns { ops, skippedRows }.
+//   ops: [{ kind:'person'|'visit', lineNo, raw, ...fields }]
+//   skippedRows: [{ lineNo, reason, raw }]
+export function csvToLog(text) {
+  const lines = text.split(/\r?\n/);
+  const heads = [];
+  const body = [];
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (raw === '') continue;
+    if (raw.startsWith('#head')) {
+      heads.push({ lineNo: i + 1, fields: parseCsvLine(raw) });
+      continue;
+    }
+    body.push({ lineNo: i + 1, raw });
+  }
+  if (!heads.length) throw new Error('Not a tokenbook v3 log (no #head lines).');
+
+  // Build schemaNo -> { no, name, cols:[{key,type,nullable}] }
+  const schemaMap = new Map();
+  for (const h of heads) {
+    // #head|people|1|rootId:int|v:int|...
+    const f = h.fields;
+    if (f.length < 4) continue;
+    const sName = f[1];
+    const sNo = Number(f[2]);
+    // spec form: `key:type` or `key:type?` (nullable). `?` suffix only — the
+    // `|` delimiter must never appear inside a spec.
+    const cols = f.slice(3).map((spec) => {
+      const nullable = spec.endsWith('?');
+      const base = nullable ? spec.slice(0, -1) : spec;
+      const [key, type] = base.split(':');
+      return { key, type: type || 'str', nullable };
+    });
+    schemaMap.set(sNo, { no: sNo, name: sName, cols });
+  }
+  if (!schemaMap.size) throw new Error('Not a tokenbook v3 log (empty #head block).');
+
   const ops = [];
   const skippedRows = [];
-  const skip = (lineNo, reason, raw) => skippedRows.push({ lineNo, reason, raw });
-  for (let i = 1; i < lines.length; i++) {
-    const lineNo = i + 1; // header is line 1
-    const raw = lines[i];
+  for (const { lineNo, raw } of body) {
     const f = parseCsvLine(raw);
-    // Short row = malformed/truncated. Skip rather than abort the whole atomic restore.
-    if (f.length < header.length) {
-      skip(lineNo, `short row (${f.length} fields, expected ${header.length})`, raw);
+    const sNo = Number(f[0]);
+    const schema = schemaMap.get(sNo);
+    if (!schema) {
+      skippedRows.push({ lineNo, reason: 'unknown schemaNo ' + f[0], raw });
       continue;
     }
-    const token = Number(f[col.token]);
-    const date = f[col.date] || '';
-    // Row needs (date, token, personId) to be replayable — skip corrupt lines
-    // rather than throw mid-replay.
-    const personIdRaw = f[col.personId];
-    const personId = personIdRaw === '' || personIdRaw == null ? null : Number(personIdRaw);
-    if (!date) {
-      skip(lineNo, 'missing date', raw);
+    if (f.length - 1 < schema.cols.length) {
+      skippedRows.push({
+        lineNo,
+        reason: `short row (${f.length - 1} fields, expected ${schema.cols.length})`,
+        raw,
+      });
       continue;
     }
-    if (!Number.isInteger(token) || token < 1) {
-      skip(lineNo, `invalid token (token=${JSON.stringify(f[col.token])})`, raw);
-      continue;
+    const row = { kind: schema.name === 'people' ? 'person' : 'visit', lineNo, raw };
+    for (let i = 0; i < schema.cols.length; i++) {
+      const { key, type } = schema.cols[i];
+      const rawVal = f[i + 1];
+      row[key] = decodeVal(type, rawVal);
     }
-    if (personId == null) {
-      skip(lineNo, `invalid personId (personId=${JSON.stringify(personIdRaw)})`, raw);
-      continue;
-    }
-    ops.push({
-      date,
-      token,
-      personId,
-      name: String(f[col.name] || '').trim(),
-      mob: String(f[col.mob] || '').trim(),
-      age: numOrNull(f[col.age]),
-      gender: String(f[col.gender] || '').trim(),
-      weight: numOrNull(f[col.weight]),
-      followup: f[col.followup] === '' ? null : f[col.followup] === '1' ? 1 : 0,
-      createdAt: fromEpoch(has('createdAt') ? f[col.createdAt] : ''),
-      updatedAt: fromEpoch(has('updatedAt') ? f[col.updatedAt] : ''),
-      payment: f[col.payment] === '1' ? 1 : 0,
-      fee: numOrNull(f[col.fee]),
-      refundTier: col.refundTier != null ? normalizeRefundTier(f[col.refundTier]) : 0,
-    });
+    ops.push(row);
   }
   return { ops, skippedRows };
 }
 
-// Accepts a log CSV and returns replay ops. Logbook-only (no legacy formats);
-// a .json file fails the header check and surfaces the friendly csvToLog error.
+function decodeVal(type, v) {
+  if (v === '' || v == null) return null;
+  if (type === 'int') {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  }
+  if (type === 'num') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (type === 'epoch') return fromEpoch(v);
+  if (type === 'bool') return v === '1' || v === 'true' ? 1 : 0;
+  return String(v);
+}
+
 export function parseBackup(text) {
   return csvToLog(text);
 }

@@ -104,7 +104,7 @@ async function openInRegister(visitId) {
 function renderItem(v) {
   const item = document.createElement('div');
   item.className = 'hx-item ' + (v.followup ? 'followup' : 'paid');
-  item.dataset.id = String(v.id);
+  item.dataset.id = String(v.rootId);
 
   const dot = document.createElement('div');
   dot.className = 'hx-dot';
@@ -164,7 +164,7 @@ export async function openHistory(personId) {
   active = -1;
   visitCache = new Map();
   for (const v of visits) {
-    visitCache.set(v.id, v);
+    visitCache.set(v.rootId, v);
     listEl.appendChild(renderItem(v));
   }
   modal.hidden = false;

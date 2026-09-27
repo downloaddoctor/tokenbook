@@ -67,6 +67,7 @@ export async function openRefundFor(visit) {
   if (visit.followup) return null; // free follow-ups have nothing to refund
   const choice = await openRefundDialog(visit);
   if (choice == null) return null;
-  await db.setVisitRefund(visit.id, choice);
+  // v3: the visit's stable key is rootId (rows come from visitsProj).
+  await db.setVisitRefund(visit.rootId, choice);
   return choice;
 }

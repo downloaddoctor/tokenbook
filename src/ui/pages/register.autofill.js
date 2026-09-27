@@ -77,10 +77,10 @@ function pickPerson(p, focus = true) {
   if (p.age != null && p.age !== '') b.fAge.value = String(p.age);
   b.fGender.value = p.gender || '';
   if (b.fWeight) b.fWeight.value = p.weight != null && p.weight !== '' ? String(p.weight) : '';
-  b.fPatientId.value = p.id != null ? String(p.id) : '';
+  b.fPatientId.value = p.rootId != null ? String(p.rootId) : '';
   hideSuggests();
   if (focus) b.saveBtn && b.saveBtn.focus();
-  applyFollowupRule(p.id);
+  applyFollowupRule(p.rootId);
   refreshPreview();
 }
 
@@ -144,12 +144,12 @@ function revalidateIdentity() {
     let personId = null;
     if (patId) {
       const p = await db.getPerson(patId).catch(() => null);
-      if (p && p.name === name && p.mob === mob) personId = p.id;
+      if (p && p.name === name && p.mob === mob) personId = p.rootId;
     }
     if (!personId && name && mob) {
       const matches = await db.searchPeopleByName(name, 8).catch(() => []);
       const hit = matches.find((p) => p.name === name && p.mob === mob);
-      if (hit) personId = hit.id;
+      if (hit) personId = hit.rootId;
     }
     applyFollowupRule(personId);
   }, 180);
@@ -187,7 +187,7 @@ async function onTokenChange() {
   hideSuggests();
   call(
     'setMsg',
-    `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.id + ')' : ''}.`,
+    `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.rootId + ')' : ''}.`,
     'ok'
   );
   call('loadVisitIntoForm', visit, person);

@@ -5,6 +5,24 @@
 
   if (!('serviceWorker' in navigator)) return;
 
+  // ?dev=1 -> SW off. Unregister any existing worker and nuke its caches so a
+  // dev session always sees fresh files (no cache-first shell, no update guard).
+  var DEV = /[?&]dev=1(?:&|$)/.test(window.location.search);
+  if (DEV) {
+    if (window.console && console.info) console.info('[tokenbook] dev mode: SW disabled');
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      for (var i = 0; i < regs.length; i++) regs[i].unregister();
+    });
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (names) {
+        names.forEach(function (n) {
+          if (/^tokenbook-/.test(n)) caches.delete(n);
+        });
+      });
+    }
+    return;
+  }
+
   window.addEventListener('load', function () {
     navigator.serviceWorker.register('./sw.js').catch(function (err) {
       // Registration failure must never break the app.

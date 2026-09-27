@@ -41,7 +41,9 @@ Test button                      runs dev self-test (dynamic import src/dev/self
 
 # MODULES
 core/db.js       class DB; default export = instance (import db); rawDb() -> Dexie for bulk tools.
-                 ONLY public write entry: addVisit(). All writes (live + restore) funnel into _writeVisit.
+                 ONLY public write entry: addVisit(). Each write APPENDS a revision
+                 ([rootId+v]) to people/visits AND puts peopleProj/visitsProj.
+                 Reads of current state use the projections; history uses revisions.
 core/day.js      localDay() -> 'YYYY-MM-DD' in browser TZ
 core/time.js     timeAgo(when, {compact, fallback}) -> relative string
 core/billing.js  follow-up window + default fee; single source for form + DB + seed
@@ -52,7 +54,7 @@ ui/app.js        boot + global buttons (backup/restore/log/test); topbar wiring;
 ui/router.js     ROUTES, hash sync, keyboard shortcuts; getRouter()/setRouter() module holder so pages can switch tabs
 ui/dom.js        el/on/bindOff/setText/setClass helpers; re-exports timeAgo
 ui/toast.js      class Toast; default export = singleton; named toast/clearToast = bound methods
-ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit
+ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity).
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
 ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest
@@ -85,22 +87,89 @@ restore button -> (folder set?) restoreFromFolder : file picker -> csvToLog -> d
 Test button -> runSelfTest -> register (form driver) -> tokens refund dialog -> DB/log/replay checks -> cleanup -> drop isolated DB
 
 # SCHEMA
-DB tokenbook (Dexie v1)
- people: '++id, name, mob, [name+mob], updatedAt, lastVisitAt'  (v2)
-   identity = (name, mob), unique via [name+mob]
-   visits: count projection (O(1) maintained by _bump/_touch/_recompute)
-   lastVisitAt: max(createdAt over visits); undefined for pre-projection rows
-   age/gender/weight: latest known values (last explicit edit wins)
- visits: '++id, mob, createdAt, date, [date+token], personId, [personId+createdAt]'  (v2)
-   unique key = (date, token); personId -> people.id
-   historical snapshot of name/mob/age/gender/weight at time of visit
-   date = 'YYYY-MM-DD' local day (single field; no legacy `day`)
+DB tokenbook (Dexie v1) — revisioned, append-only entities + projections.
+(No prior version shipped; a leftover pre-revision DB is dumped to JSON then
+recreated on first open.)
+Dexie `.stores()` declares ONLY the primary key + indexed fields. IndexedDB is
+schemaless — columns are whatever the code writes. Full column lists below.
+
+ people  ('[rootId+v], rootId, [name+mob], v')
+   rootId     int     PK1  stable person id
+   v          int     PK2  revision (1,2,3,...)
+   name       string       UPPER, trimmed
+   mob        string
+   age        int|null
+   gender     string|null  '' when unknown
+   weight     num|null
+   hidden     0|1          per-revision soft delete
+   createdAt  iso          when THIS revision was written
+   -- append-only identity history. No visit data here.
+
+ peopleProj  ('rootId, [name+mob], lastVisitAt, hidden')
+   rootId     int     PK
+   v          int          current revision's v
+   name       string
+   mob        string
+   age        int|null
+   gender     string|null
+   weight     num|null
+   visits     int          count of current (non-hidden) visits
+   lastVisitAt iso|null    max visit updatedAt
+   hidden     0|1
+   updatedAt  iso
+   -- one row per person root. Source of truth for every list/search/point read.
+
+ visits  ('[rootId+v], rootId, [date+token], personId, v')
+   rootId     int     PK1  stable visit id
+   v          int     PK2  revision
+   personId   int          -> people.rootId
+   personV    int          people.v pinned at THIS visit revision's write time
+   date       'YYYY-MM-DD'
+   token      int
+   weight     num|null     per-visit fact (NOT identity)
+   followup   0|1
+   payment    0|1          0=Cash 1=UPI
+   fee        num
+   refundTier int          0..N; amount = N*100
+   hidden     0|1
+   createdAt  iso
+   -- append-only. NO name/mob/age/gender — identity lives on people.
+
+ visitsProj  ('rootId, [date+token], date, personId, hidden')
+   rootId     int     PK
+   v          int          current revision's v
+   personId   int
+   personV    int
+   date       'YYYY-MM-DD'
+   token      int
+   weight     num|null
+   followup   0|1
+   payment    0|1
+   fee        num
+   refundTier int
+   hidden     0|1
+   createdAt  iso          original visit creation time (immutable across edits)
+   updatedAt  iso          last write time
+   -- one row per visit root. read-side joins identity from peopleProj/
+      people revision (listByDate / visitsForPerson).
+
+ meta  ('key')
+   key        string  PK   'singleton'
+   lastDay    'YYYY-MM-DD'|null  daily-snapshot idempotency
+   -- app-only. Never written to the CSV log.
+
 DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirectoryHandle }
 
-# LOG FORMAT (LOG_COLS, delimiter '|', timestamps epoch-seconds)
- date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
- Every line is a full self-describing visit row (never depends on earlier lines).
- Header written once at file creation. Append is byte-length verified.
+# LOG FORMAT (schemaNo-tagged, delimiter '|', timestamps epoch-seconds)
+ Head block (one per schema, typed columns):
+   #head|schema|schemaNo|columns
+   #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch
+   #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch
+ Data line = `schemaNo|value1|value2|...` in the declared column order.
+ Only revision tables are logged. peopleProj/visitsProj/meta are NEVER in the log.
+ Restore = replay revisions (insert [rootId+v], idempotent), then rebuildProj().
+ Unknown schemaNo → line skipped (forward-compatible). Types: str/int/num/epoch/bool.
+ A `?` suffix marks a nullable column (e.g. `weight:num?`). Never use `|` in a spec — it is the delimiter.
  Daily snapshot daily/tokenbook-YYYY-MM-DD.csv (first open of the date); KEEP_SNAPSHOTS = 30.
  Prior full backups archived to archive/tokenbook-<timestamp>.csv; KEEP_ARCHIVES = 30.
 
@@ -108,6 +177,8 @@ DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirecto
 Browser-only; no server, no env vars.
 Folder backup requires File System Access API (Chrome/Edge).
 Fallback when unsupported: CSV download via db.exportAll.
+`?dev=1` → pw.js unregisters the SW and deletes tokenbook-* caches, then skips
+  registration. Dev sessions always see fresh files (no cache-first shell).
 localStorage keys: tokenBook.selectedLayoutId (paperstamp), tokenbook-reload-guard (pw.js).
 
 # DEPENDENCIES
@@ -117,11 +188,20 @@ paperstamp SDK (external <script> from downloaddoctor.github.io; excluded from s
 No npm runtime deps; package-lock.json is dev tooling only.
 
 # PUBLIC-API
-db (core/db.js default): openDb, addVisit, setVisitRefund, replayLog, exportAll, exportAllStream,
-  listByDate, listAll, listPeople, searchPeopleByPrefix/Name/Mob, visitCountsForPeople,
-  visitsForPerson, findVisitByDateToken, lastPaidVisitDaysFor, nextTokenForDate, getPerson,
-  setJournal, refundAmountFor, localDay, raw (-> Dexie), setDbName/deleteDb (DEV/TEST)
-  addVisit input keys: name, mob, personId?, date, token, weight, followup, payment, fee, refundTier, preserve?
+db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisitBilling(rootId,{...}),
+  hideVisit/unhideVisit/setVisitHidden(rootId,0|1), rebuildProj, replayLog,
+  exportAll, exportAllStream, listByDate, listAll, listPeople, searchPeopleByPrefix/Name/Mob,
+  visitCountsForPeople, visitsForPerson, revisionsOf(entity,rootId), findVisitByDateToken,
+  lastPaidVisitDaysFor, nextTokenForDate, getPerson, findPersonByNameMob,
+  setJournal, refundAmountFor, localDay, raw (-> Dexie),
+  deleteVisitsByDate, deletePerson, deletePeopleByNameMob, setDbName, deleteDb (DEV/TEST)
+  addVisit input keys: name, mob, age?, gender?, personId?, date, token, weight, followup,
+    payment, fee, refundTier, preserve?  (preserve carries { rootId, v, personId, personV,
+    hidden, createdAt } for restore)
+  Return shapes (load-bearing): findVisitByDateToken -> { visit, person, proj } where `visit`
+    is identity-joined; addVisit -> { rec, created, person } (rec identity-joined);
+    listByDate/visitsForPerson -> rows with identity joined.
+  Row identity: DB rows use `rootId` (NOT `id`). `id` only appears on DOM dataset attrs.
 backup (backup/backup.js default): init, setFolder, pickOrBackup, writeFullBackup, flush, backupNow,
   restoreFromFolder, restoreFromFileObject, readLog, pendingLines, downloadCsv, state,
   setLogFileName, deleteLog (last two DEV/TEST)
@@ -155,23 +235,27 @@ addVisit is the ONLY write entry; live and restore funnel into _writeVisit.
 _writeVisit(rec, nowIso, log=true) journals itself; restore passes log=false (never re-appends to the log it reads).
 Journal buffers per Dexie transaction; released on 'complete', dropped on abort/error — rolled-back writes never reach the log.
 people projection = { visits count, lastVisitAt = max createdAt }. Identity is NOT derived from visits.
-identity ownership: current name/mob/age/gender/weight set only by explicit edits (_touchPerson/_applyIdentity) or when a person gains their newest visit (_bumpPersonOnGain). _recomputePerson never rewrites identity (would revert renames).
-addVisit fast path: linked personId + unchanged name/mob skips [name+mob] lookup AND clash check.
-0-visit people are KEPT (visits=0, identity preserved); orphans are NOT deleted by app code.
-deletePeopleByNameMob / db.setDbName / db.deleteDb / backup.setLogFileName / backup.deleteLog are DEV/TEST ONLY.
+identity ownership: name/mob/age/gender/weight live ONLY on people revisions. Visits point at them via (personId, personV). No identity is ever copied onto a visit.
+Every write APPENDS: people/visits get a new [rootId+v] row; peopleProj/visitsProj get a put. Revision rows are never mutated. The projection is the only mutable state and it is rebuildable from revisions (rebuildProj).
+The CURRENT revision of a root = MAX(v). Current reads go through the projection tables; history/audit reads go through the revision tables.
+`hidden` (0|1) is per-revision and is soft delete. A hidden current revision disappears from all list/search/day queries. Hide = append rev with hidden=1; unhide = append rev with hidden=0.
+0-visit people are KEPT (visits=0); orphans are NOT deleted by app code.
+deleteVisitsByDate / deletePerson / deletePeopleByNameMob / db.setDbName / db.deleteDb / backup.setLogFileName / backup.deleteLog are DEV/TEST ONLY. Hard delete removes all revisions for a rootId AND its projection row.
+A leftover pre-revision DB (different PK) makes Dexie throw UpgradeError on open; openDb dumps every store to a JSON download, then deletes and recreates. No silent data loss.
 Follow-up window = 6 calendar days anchored on last PAID visit; fee forced to 0 when followup=1.
 Rule lives ONLY in core/billing.js (evaluateFollowup); register form, db._resolveBilling, and dev/seed all call it.
-Refund tier N: amount = N*100. 0 = none. Refunds do NOT touch the fee field.
-Log is append-only; delimiter '|'; timestamps epoch-seconds; header rename is breaking.
-Restore = replayLog over log lines; clears both stores in one rw transaction; skips bad rows (returns {count, skipped, skippedRows}); skippedRows from csvToLog/parseBackup carries {lineNo, reason, raw}.
-Public helper return shapes are load-bearing: csvToLog/parseBackup return {ops, skippedRows} (not an array); replayLog(ops, {skippedRows, onProgress}) — changing any of these requires updating backup.js, ui/app.js, dev/selftest.js. No type checker; selftest catches it.
+Refund tier N: amount = N*100. 0 = none. Refunds do NOT touch the fee field. setVisitRefund takes a ROOT id (not a DB row id).
+Log is append-only; delimiter '|'; timestamps epoch-seconds; schema is declared once per entity in the #head block.
+Restore = replayLog over parsed ops; clears all four stores + inserts revisions verbatim (idempotent on [rootId+v]); rebuilds projections. Returns {count, skipped, skippedRows}; skippedRows carry {lineNo, reason, raw}.
+Public helper return shapes are load-bearing: csvToLog/parseBackup return {ops, skippedRows} (not an array); replayLog(ops, {onProgress}). findVisitByDateToken returns {visit, person, proj}; addVisit returns {rec, created, person}. Changing any of these requires updating backup.js, ui/*.js, dev/selftest.js.
+DB rows use `rootId`; `.id` is reserved for DOM dataset attributes. Any code reading `.id` on a DB row is a bug.
 flush() serialized via _flushPromise; backupNow never no-ops; append verified by byte-length.
 Backup button ALWAYS opens the picker (pickOrBackup -> setFolder -> writeFullBackup). Auto-backup (markDirty) appends to the current folder.
 init() probes persisted handle (validateHandle) and clears it if stale (isStaleHandleError).
 hasFsAccess is a NAMED export of backup.js; backup.hasFsAccess is undefined.
 restore calls resetPendingForRestore() so stale journal lines can't re-append.
 Identity collision on (name, mob) throws DuplicateIdentityError (register) or ConstraintError (Dexie).
-seed.js bypasses _writeVisit by design (bulk) and MUST mirror its projection; uses `date` like the live path.
+seed.js bypasses addVisit by design (bulk) and MUST write all four stores (people, peopleProj, visits, visitsProj); uses `date` and `rootId` like the live path. It emits ONE revision (v=1) per entity. If addVisit's projection logic changes, update seed to match.
 Key names uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API.
 Self-test isolation: db.setDbName('tokenbook-devtest') + backup.setLogFileName('tokenbook-latest-devtest.csv'); DB dropped + name/log restored after. Runs on the current local day.
 
@@ -182,7 +266,7 @@ Module shape: stateful modules export a class + a default instance; call sites i
 Add a page: create src/ui/pages/<name>.js exporting { mount, unmount }; register in
   src/ui/pages/index.js; add to ROUTES + PAGE_ID in src/ui/router.js.
 Default print layout: edit src/print/defaultLayout.js.
-Log format: LOG_COLS in src/backup/csv.js (keep parse/encode in sync; header rename is breaking).
+Log format: SCHEMA_PEOPLE / SCHEMA_VISITS in src/backup/csv.js define the #head column order and types. Keep the encoder (personRevToLogLine / visitRevToLogLine) and decoder (csvToLog) in sync via those constants. Adding a column = new entry in `cols`; old readers ignore unknown trailing columns.
 Journal consumers: db.setJournal(fn) (currently: backup._markDirty).
 Self-test: src/dev/selftest.js runSelfTest({onProgress, confirmReplay, router}); test hooks gate print/dialogs.
 Backup dir handle: backup/meta.js (its own IDB, not Dexie).

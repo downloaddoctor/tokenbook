@@ -62,19 +62,47 @@ async function readLogText() {
   const r = await backup.readLog();
   return r.text == null ? '' : r.text;
 }
-function logRows(text) {
-  return text
-    .split('\n')
-    .filter((l) => l && l.indexOf('|') > 0)
+// Parse the v3 log into { person: [...], visit: [...] } rows, each as an
+// object keyed by the schema columns. Head lines are skipped.
+function parseLogRows(text) {
+  const out = { person: [], visit: [] };
+  const lines = text.split(/\r?\n/).filter((l) => l && !l.startsWith('#head'));
+  // Discover the column order from the #head block once.
+  const heads = text
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith('#head'))
     .map((l) => parseCsvLine(l));
+  const cols = {};
+  for (const f of heads) {
+    if (f.length < 4) continue;
+    const no = Number(f[2]);
+    cols[no] = f.slice(3).map((spec) => {
+      const nullable = spec.endsWith('?');
+      const base = nullable ? spec.slice(0, -1) : spec;
+      return base.split(':')[0];
+    });
+  }
+  for (const l of lines) {
+    const f = parseCsvLine(l);
+    const no = Number(f[0]);
+    const keys = cols[no];
+    if (!keys) continue;
+    const row = {};
+    for (let i = 0; i < keys.length; i++) row[keys[i]] = f[i + 1];
+    const kind = no === 1 ? 'person' : 'visit';
+    out[kind].push(row);
+  }
+  return out;
 }
 function countTestRows(text) {
-  return logRows(text).filter((f) => f[0] === TEST_DATE).length;
+  const { visit } = parseLogRows(text);
+  return visit.filter((r) => r.date === TEST_DATE).length;
 }
 function lastLogRow(text, token) {
+  const { visit } = parseLogRows(text);
   let found = null;
-  for (const f of logRows(text)) {
-    if (f[0] === TEST_DATE && Number(f[1]) === token) found = f;
+  for (const r of visit) {
+    if (r.date === TEST_DATE && Number(r.token) === token) found = r;
   }
   return found;
 }
@@ -306,7 +334,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.check('edit: submit ok', !err4, err4 || '');
 
   const v1b = await db.findVisitByDateToken(TEST_DATE, 1);
-  rep.eq('edit: age updated to 41', v1b && v1b.visit.age, 41);
+  rep.eq('edit: age updated to 41', v1b && v1b.person && v1b.person.age, 41);
   rep.eq('edit: still same person', v1b && v1b.visit.personId, pidA);
 
   // ---- 5. REASSIGN VISIT (token 1 -> patient B) ------------------------
@@ -383,7 +411,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.check('reassign-dialog: return-to-B submit ok', !err5cBack, err5cBack || '');
   const v1g = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: token 1 back on patient B', v1g && v1g.visit.personId, pidB);
-  rep.eq('debug: token1 age after return-to-B', v1g && v1g.visit.age, 46);
+  rep.eq('debug: token1 age after return-to-B', v1g && v1g.person && v1g.person.age, 46);
 
   const v1h = await db.findVisitByDateToken(TEST_DATE, 1);
   if (!v1h) {
@@ -460,12 +488,17 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     const f1 = lastLogRow(text, 1);
     rep.check('log: row token 1 present', !!f1);
     if (f1) {
-      // date token personId name mob age gender weight followup payment fee refundTier createdAt updatedAt
-      rep.eq('log: row1 personId = B', Number(f1[2]), pidB);
-      rep.eq('log: row1 age = 46', Number(f1[5]), 46);
-      rep.eq('log: row1 refundTier = 2', Number(f1[11]), 2);
+      // v3 visits columns: rootId v personId personV date token weight followup
+      //                   payment fee refundTier hidden createdAt
+      rep.eq('log: row1 personId = B', Number(f1.personId), pidB);
+      rep.eq('log: row1 refundTier = 2', Number(f1.refundTier), 2);
+      // Age lives on the person revision, not the visit — read it from the
+      // person row in the same log.
+      const { person } = parseLogRows(text);
+      const pB = person.filter((p) => Number(p.rootId) === pidB).pop();
+      rep.eq('log: person B age = 46', pB && Number(pB.age), 46);
       // Show the REAL log file content, verbatim (no reformatting).
-      rep.info('----- BACKUP LOG (' + logRows(text).length + ' rows) -----');
+      rep.info('----- BACKUP LOG (' + text.split('\n').filter(Boolean).length + ' lines) -----');
       for (const l of text.split('\n')) rep.info(l);
     }
 
@@ -549,7 +582,7 @@ async function doReplay(rep, text, preVisits, prePeople) {
   rep.check('replay: token 1 restored', !!after);
   if (after) {
     rep.eq('replay: restored refundTier = 2', after.visit.refundTier, 2);
-    rep.eq('replay: restored age = 46', after.visit.age, 46);
+    rep.eq('replay: restored age = 46', after.person && after.person.age, 46);
   }
   rep.check('replay: pre-replay DB had rows', preVisits > 0, 'visits=' + preVisits + ' people=' + prePeople);
   // Show what replay restored for the test day, verbatim from DB rows.

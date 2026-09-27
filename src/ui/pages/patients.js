@@ -53,22 +53,22 @@ async function render() {
     st.pager.hidden = false;
   }
 
-  const counts = await db.visitCountsForPeople(rows.map((p) => p.id));
+  const counts = await db.visitCountsForPeople(rows.map((p) => p.rootId));
   st.cache.clear();
-  for (const p of rows) st.cache.set(p.id, p);
+  for (const p of rows) st.cache.set(p.rootId, p);
 
   for (const p of rows) {
     const tr = document.createElement('tr');
     tr.className = 'row-click';
-    tr.dataset.id = String(p.id);
+    tr.dataset.id = String(p.rootId);
     const lastAt = p.lastVisitAt || p.updatedAt;
     const cells = [
-      p.id,
+      p.rootId,
       p.name,
       p.mob,
       p.age,
       p.weight != null ? p.weight : '',
-      counts.get(p.id) || 0,
+      counts.get(p.rootId) || 0,
       lastAt ? new Date(lastAt).toLocaleString() : '',
     ];
     for (const c of cells) {

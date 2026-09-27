@@ -14,7 +14,7 @@ export function askIdentityChange(person, current) {
       return resolve('update');
     }
 
-    sub.textContent = `Currently linked to patient #${person.id}.`;
+    sub.textContent = `Currently linked to patient #${person.rootId}.`;
     body.replaceChildren();
     const dl = document.createElement('dl');
     const row = (label, from, to) => {
@@ -69,7 +69,7 @@ export function askReassign(linked, other, current) {
     ok.className = 'primary';
     ok.textContent = 'Reassign';
     actions.append(cancel, ok);
-    sub.textContent = `Currently linked to patient #${linked.id}. A different patient already has this name + mobile.`;
+    sub.textContent = `Currently linked to patient #${linked.rootId}. A different patient already has this name + mobile.`;
     body.replaceChildren();
     const dl = document.createElement('dl');
     const row = (label, value) => {
@@ -79,8 +79,8 @@ export function askReassign(linked, other, current) {
       dd.textContent = value == null || value === '' ? '—' : String(value);
       dl.append(dt, dd);
     };
-    row('Currently linked', `#${linked.id} ${linked.name}`);
-    row('Reassign to', `#${other.id} ${other.name}`);
+    row('Currently linked', `#${linked.rootId} ${linked.name}`);
+    row('Reassign to', `#${other.rootId} ${other.name}`);
     row('Mobile', other.mob);
     body.appendChild(dl);
     const restore = () => {

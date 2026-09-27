@@ -53,7 +53,7 @@ async function refresh() {
   let cashTotal = 0;
   let upiTotal = 0;
   for (const r of rows) {
-    rowCache.set(r.id, r);
+    rowCache.set(r.rootId, r);
     const fee = Number(r.fee) || 0;
     const refund = db.refundAmountFor(r.refundTier);
     const net = fee - refund;
@@ -67,7 +67,7 @@ async function refresh() {
     }
     const tr = document.createElement('tr');
     tr.className = 'row-click';
-    tr.dataset.id = String(r.id);
+    tr.dataset.id = String(r.rootId);
     for (const c of [
       r.token,
       r.name,

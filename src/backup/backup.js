@@ -13,7 +13,8 @@
 import db from '../core/db.js';
 import {
   csvHeaderLine,
-  visitInputToLogLine,
+  personRevToLogLine,
+  visitRevToLogLine,
   csvToLog,
   parseBackup,
 } from './csv.js';
@@ -235,9 +236,11 @@ class Backup {
     return await f.text();
   }
 
-  // One encoder for both ops: refunds are full rows too (see csv.js).
+  // One encoder for both revision types. `entry` is a stored revision row
+  // (people or visits), tagged with `kind` by the db layer.
   formatLogEntry(entry) {
-    return visitInputToLogLine(entry);
+    if (entry && entry.kind === 'person') return personRevToLogLine(entry);
+    return visitRevToLogLine(entry);
   }
 
   // ---------- public ops ----------
@@ -390,12 +393,11 @@ class Backup {
   markDirty(entry) {
     if (!this._dir) return;
     if (entry) {
-      // Dedupe within the pending window: (date, token) is the visit's upsert
-      // key, so a later write replaces rather than appends twice.
-      const key = entry.date + '|' + entry.token;
-      const idx = this._pending.findIndex((e) => e.date + '|' + e.token === key);
-      if (idx >= 0) this._pending[idx] = entry;
-      else this._pending.push(entry);
+      // v3: every journal entry is an APPENDED REVISION (a new [rootId+v]).
+      // Revisions are history — never dedupe them. The old v2 "same (date,
+      // token) upsert" rule does not apply, and person revisions have no
+      // (date, token) at all.
+      this._pending.push(entry);
     }
     this._dirty = true;
     // Reflect queued line immediately in the status line.

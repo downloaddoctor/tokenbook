@@ -1,15 +1,27 @@
-// IndexedDB wrapper (Dexie). DB 'tokenbook'.
-// Stores:
-//   people  — one row per unique (name, mob). index [name+mob] unique-enforced.
-//             latest identity snapshot + O(1) projection (visits count, lastVisitAt).
-//   visits  — one row per token. Historical snapshot of name/mob/age/gender at visit time.
+// IndexedDB wrapper (Dexie). DB 'tokenbook'. Schema v3.
+//
+// Model: revisioned, append-only entities + a projection table per entity.
+//   people      — append-only revisions. Keyed [rootId+v]. Truth for identity.
+//   peopleProj  — one row per rootId. Current identity + list/search index.
+//   visits      — append-only revisions. Keyed [rootId+v]. Truth for visits.
+//   visitsProj  — one row per rootId. Current visit + list/day index.
+//
+// Invariants:
+//   * Writes append a revision to people/visits AND put the projection row,
+//     in the SAME Dexie transaction. Two stores, one atomic write.
+//   * Revision rows are never mutated. Projection rows are mutated freely.
+//   * `hidden` is soft-delete. A hidden projection row is filtered out of
+//     every list/search/day query. History (revision tables) keeps everything.
+//   * `rebuildProj()` recovers projections from revisions. Idempotent.
+//   * addVisit is the ONLY write entry for visits. Both live and restore use it.
+//
 // Public shape: default export = singleton; `import db from './db.js'; db.addVisit(...)`.
 // rawDb() exposes the current Dexie instance for bulk tools (seed.js).
 
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
-import { csvHeaderLine, visitInputToLogLine, normalizeRefundTier } from '../backup/csv.js';
 import { evaluateFollowup, normalizeFee } from './billing.js';
+import { csvHeaderLine, personRevToLogLine, visitRevToLogLine } from '../backup/csv.js';
 
 const DB_NAME = 'tokenbook';
 
@@ -18,48 +30,140 @@ export const REFUND_TIER_STEP = 100;
 export function refundAmountFor(tier) {
   return normalizeRefundTier(tier) * REFUND_TIER_STEP;
 }
+export function normalizeRefundTier(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '' || s === '0') return 0;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
 
 class DB {
   constructor() {
-    // Instance state so self-test can swap to an isolated DB (tokenbook-devtest).
     this._dbName = DB_NAME;
     this._db = new Dexie(this._dbName);
     this._declareSchema(this._db);
-    // Shared open promise so concurrent callers reuse the same connection.
     this._openPromise = null;
-    // Journal hook (backup.js registers). Emits the INPUT addVisit got, so
-    // restore replays through the same code path. Keeps db.js decoupled from backup.
     this._journal = null;
-    // Per-transaction buffers. Released on 'complete', dropped on abort/error
-    // — so the log only records committed writes.
     this._journalBuffers = new Map();
   }
 
-  // No prod data yet — schema resets freely.
+  // No prod data yet — schema resets freely. This IS version 1 of the
+  // revisioned model; there is no older version to upgrade from. A local DB
+  // left over from the pre-revision build cannot upgrade (its primary keys
+  // differ), so openDb() deletes-and-recreates it after a JSON dump.
   _declareSchema(instance) {
     instance.version(1).stores({
-      people: '++id, name, mob, [name+mob], updatedAt',
-      visits: '++id, mob, createdAt, date, [date+token], personId',
-    });
-    // v2: index lastVisitAt so listPeople can page via the index instead of a full sort.
-    //     index [personId+createdAt] so _recomputePerson finds the newest visit in O(1).
-    instance.version(2).stores({
-      people: '++id, name, mob, [name+mob], updatedAt, lastVisitAt',
-      visits: '++id, mob, createdAt, date, [date+token], personId, [personId+createdAt]',
+      people: '[rootId+v], rootId, [name+mob], v',
+      peopleProj: 'rootId, [name+mob], lastVisitAt, hidden',
+      visits: '[rootId+v], rootId, [date+token], personId, v',
+      visitsProj: 'rootId, [date+token], date, personId, hidden',
+      meta: 'key',
     });
   }
 
-  // Raw Dexie for bulk tools (dev/seed.js). Not part of the app surface.
   raw() {
     return this._db;
   }
 
   openDb() {
-    if (!this._openPromise) this._openPromise = this._db.open();
+    if (!this._openPromise) {
+      this._openPromise = this._db
+        .open()
+        .catch(async (err) => {
+          // A leftover DB from the pre-revision build has different primary
+          // keys (++id vs [rootId+v]); Dexie cannot upgrade in place and throws
+          // UpgradeError. Never drop silently: dump the old DB to a JSON file
+          // (browser download), then recreate.
+          if (err && err.name === 'UpgradeError') {
+            console.warn('[tokenbook] incompatible schema — backing up then recreating');
+            // Close the failed Dexie connection FIRST and let IDB release it,
+            // otherwise the later delete is blocked by our own open handle.
+            try { this._db.close(); } catch (_) {}
+            await new Promise((r) => setTimeout(r, 50));
+            try {
+              await this._dumpRawDbToFile(this._dbName);
+            } catch (dumpErr) {
+              console.error('[tokenbook] pre-migration backup failed', dumpErr);
+              throw dumpErr; // never delete without a backup
+            }
+            // Delete can still be blocked by another tab. Retry a few times.
+            for (let i = 0; i < 5; i++) {
+              try {
+                await Dexie.delete(this._dbName);
+                break;
+              } catch (delErr) {
+                console.warn('[tokenbook] delete blocked, retry', i + 1);
+                await new Promise((r) => setTimeout(r, 200));
+                if (i === 4) throw delErr;
+              }
+            }
+            this._db = new Dexie(this._dbName);
+            this._declareSchema(this._db);
+            await this._db.open();
+            return;
+          }
+          throw err;
+        })
+        .then(async () => {
+          const m = await this._db.meta.get('singleton');
+          if (!m) {
+            await this._db.meta.put({ key: 'singleton', lastDay: null });
+          }
+        });
+    }
     return this._openPromise;
   }
 
-  // DEV/TEST ONLY: swap DB (self-test isolation). All methods use this._db, so they follow.
+  // Read EVERY object store of an existing raw IndexedDB (no version arg, so
+  // the current version is used) and trigger a JSON download. Used before a
+  // destructive schema recreate so no data is ever silently dropped.
+  _dumpRawDbToFile(name) {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(name);
+      req.onerror = () => reject(req.error || new Error('indexedDB.open failed'));
+      req.onupgradeneeded = () => {
+        // No DB existed -> nothing to dump. Abort the implicit upgrade.
+        req.transaction && req.transaction.abort();
+      };
+      req.onsuccess = () => {
+        const idb = req.result;
+        if (!idb.objectStoreNames.length) {
+          idb.close();
+          return resolve(null);
+        }
+        const storeNames = Array.from(idb.objectStoreNames);
+        const dump = { db: name, version: idb.version, exportedAt: new Date().toISOString(), stores: {} };
+        const tx = idb.transaction(storeNames, 'readonly');
+        let remaining = storeNames.length;
+        tx.onerror = () => { try { idb.close(); } catch (_) {} reject(tx.error); };
+        for (const sn of storeNames) {
+          const all = tx.objectStore(sn).getAll();
+          all.onsuccess = () => {
+            dump.stores[sn] = all.result;
+            if (--remaining === 0) {
+              try { idb.close(); } catch (_) {}
+              try {
+                const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = name + '-pre-v3-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              } catch (e) {
+                return reject(e);
+              }
+              resolve(dump);
+            }
+          };
+          all.onerror = () => { try { idb.close(); } catch (_) {} reject(all.error); };
+        }
+      };
+    });
+  }
+
   async setDbName(name) {
     const next = name || DB_NAME;
     if (next === this._dbName) return;
@@ -70,7 +174,6 @@ class DB {
     this._openPromise = null;
   }
 
-  // DEV/TEST ONLY: drop the current DB.
   deleteDb() {
     return Dexie.delete(this._dbName);
   }
@@ -79,353 +182,292 @@ class DB {
     return localDay(d);
   }
 
-  nextTokenForDate(date) {
+  // ---------- revision helpers ----------
+
+  async _appendPersonRev(rec) {
+    await this._db.people.add(rec);
+    return { rootId: rec.rootId, v: rec.v };
+  }
+
+  async _appendVisitRev(rec) {
+    await this._db.visits.add(rec);
+    return { rootId: rec.rootId, v: rec.v };
+  }
+
+  async _nextRev(table, rootId) {
+    if (rootId == null) return 1;
+    const last = await this._db[table]
+      .where('[rootId+v]')
+      .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
+      .last();
+    return last ? last.v + 1 : 1;
+  }
+
+  async _nextRootId(table) {
+    const last = await this._db[table].orderBy('rootId').last();
+    return (last && last.rootId ? last.rootId : 0) + 1;
+  }
+
+  async _currentPerson(rootId) {
+    if (rootId == null) return null;
+    return this._db.people
+      .where('[rootId+v]')
+      .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
+      .last();
+  }
+
+  async _currentVisit(rootId) {
+    if (rootId == null) return null;
     return this._db.visits
+      .where('[rootId+v]')
+      .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
+      .last();
+  }
+
+  // Attach identity fields (name/mob/age/gender/weight) onto a visit-shaped
+  // row for UI callers. `p` is a person row (revision or projection); null-safe.
+  _joinIdentity(row, p) {
+    if (!row) return row;
+    const out = { ...row };
+    if (p) {
+      out.name = p.name;
+      out.mob = p.mob;
+      out.age = p.age;
+      out.gender = p.gender;
+      out.weight = row.weight != null ? row.weight : p.weight != null ? p.weight : null;
+    }
+    return out;
+  }
+
+  // Write (or overwrite) a projection row for a person rootId.
+  async _putPersonProj(rootId) {
+    const db = this._db;
+    const cur = await this._currentPerson(rootId);
+    if (!cur) {
+      await db.peopleProj.delete(rootId);
+      return null;
+    }
+    let count = 0;
+    let lastVisitAt = null;
+    const hits = await db.visitsProj.where('personId').equals(rootId).toArray();
+    for (const h of hits) {
+      if (h.hidden) continue;
+      count++;
+      const iso = h.updatedAt || null;
+      if (iso && (!lastVisitAt || iso > lastVisitAt)) lastVisitAt = iso;
+    }
+    const row = {
+      rootId,
+      v: cur.v,
+      name: cur.name,
+      mob: cur.mob,
+      age: cur.age != null ? cur.age : null,
+      gender: cur.gender != null ? cur.gender : null,
+      weight: cur.weight != null ? cur.weight : null,
+      visits: count,
+      lastVisitAt,
+      hidden: cur.hidden ? 1 : 0,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.peopleProj.put(row);
+    return row;
+  }
+
+  async _putVisitProj(rootId) {
+    const db = this._db;
+    const cur = await this._currentVisit(rootId);
+    if (!cur) {
+      await db.visitsProj.delete(rootId);
+      return null;
+    }
+    const row = {
+      rootId,
+      v: cur.v,
+      personId: cur.personId,
+      personV: cur.personV,
+      date: cur.date,
+      token: cur.token,
+      weight: cur.weight != null ? cur.weight : null,
+      followup: cur.followup ? 1 : 0,
+      payment: cur.payment ? 1 : 0,
+      fee: Number(cur.fee) || 0,
+      refundTier: normalizeRefundTier(cur.refundTier),
+      hidden: cur.hidden ? 1 : 0,
+      createdAt: cur.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.visitsProj.put(row);
+    return row;
+  }
+
+  // Rebuild every projection row from the revision tables. Idempotent.
+  async rebuildProj() {
+    const db = this._db;
+    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
+      await db.peopleProj.clear();
+      await db.visitsProj.clear();
+      const visitRoots = new Set();
+      await db.visits.each((r) => visitRoots.add(r.rootId));
+      for (const rid of visitRoots) await this._putVisitProj(rid);
+      const personRoots = new Set();
+      await db.people.each((r) => personRoots.add(r.rootId));
+      for (const rid of personRoots) await this._putPersonProj(rid);
+      return {
+        people: await db.peopleProj.count(),
+        visits: await db.visitsProj.count(),
+      };
+    });
+  }
+
+  // ---------- reads: current state (projection tables) ----------
+
+  async nextTokenForDate(date) {
+    const last = await this._db.visitsProj
       .where('[date+token]')
       .between([date, Dexie.minKey], [date, Dexie.maxKey])
-      .last()
-      .then((v) => (v ? v.token + 1 : 1));
+      .last();
+    return last ? last.token + 1 : 1;
   }
 
-  // Find person by (name, mob); create if absent; refresh age/gender.
-  findOrCreatePerson({ name, mob, age, gender }) {
-    name = String(name).trim().toUpperCase();
-    mob = String(mob).trim();
-    const now = new Date().toISOString();
-    gender = gender == null ? '' : String(gender).trim();
+  async findVisitByDateToken(date, token) {
     const db = this._db;
-    return db.transaction('rw', db.people, async () => {
-      const existing = await db.people.where('[name+mob]').equals([name, mob]).first();
-      if (existing) {
-        existing.age = age;
-        if (gender) existing.gender = gender;
-        existing.updatedAt = now;
-        await db.people.put(existing);
-        return existing;
-      }
-      const id = await db.people.add({ name, mob, age, gender, createdAt: now, updatedAt: now });
-      return { id, name, mob, age, gender, createdAt: now, updatedAt: now };
-    });
+    const proj = await db.visitsProj.where('[date+token]').equals([date, Number(token)]).first();
+    if (!proj) return null;
+    const rev = await this._currentVisit(proj.rootId);
+    const person = proj.personId != null ? await db.peopleProj.get(proj.personId) : null;
+    const visit = this._joinIdentity(rev || proj, person);
+    return { visit, person: person || null, proj };
   }
 
-  // DEV/TEST ONLY: delete a person row by exact (name, mob). App never deletes people.
-  async deletePeopleByNameMob(name, mob) {
-    name = String(name || '').trim().toUpperCase();
-    mob = String(mob || '').trim();
-    if (!name || !mob) return 0;
-    const db = this._db;
-    return db.transaction('rw', db.people, async () => {
-      const rows = await db.people.where('[name+mob]').equals([name, mob]).toArray();
-      for (const p of rows) await db.people.delete(p.id);
-      return rows.length;
-    });
-  }
-
-  // Exact (name, mob) lookup via compound index. Used for identity-collision checks.
   findPersonByNameMob(name, mob) {
     name = String(name || '').trim().toUpperCase();
     mob = String(mob || '').trim();
     if (!name || !mob) return Promise.resolve(null);
-    return this._db.people.where('[name+mob]').equals([name, mob]).first();
+    return this._db.peopleProj.where('[name+mob]').equals([name, mob]).first();
   }
 
-  // Prefix search on mobile for autofill.
+  getPerson(rootId) {
+    if (rootId == null) return Promise.resolve(null);
+    return this._db.peopleProj.get(rootId);
+  }
+
   searchPeopleByMob(prefix, limit = 8) {
     if (!prefix) return Promise.resolve([]);
-    return this._db.people.where('mob').startsWith(prefix).limit(limit).toArray();
+    return this._db.peopleProj.where('mob').startsWith(prefix).limit(limit).toArray();
   }
 
-  // Prefix search on name for autofill.
   searchPeopleByName(prefix, limit = 8) {
     prefix = String(prefix || '').trim().toUpperCase();
     if (!prefix) return Promise.resolve([]);
-    return this._db.people.where('name').startsWith(prefix).limit(limit).toArray();
+    return this._db.peopleProj.where('name').startsWith(prefix).limit(limit).toArray();
   }
 
-  // Upsert visit keyed on (date, token). Existing -> updated in place (same id,
-  // createdAt kept, updatedAt bumped, person may be reassigned). Otherwise insert.
-  // Identity resolution: personId given+founds -> use it; else (name,mob) match;
-  // else create. Collisions on (name,mob) between distinct people throw.
-  // Returns { rec, created } (created=false == updated existing).
-  addVisit(input) {
-    const { preserve } = input;
-    let { name, mob, age, gender, token, date, personId, weight, followup, payment, fee, refundTier, createdAt, updatedAt } = input;
-    // Normalize: blank -> null; trim/uppercase strings; coerce numbers.
-    name = name == null ? null : String(name).trim().toUpperCase();
-    mob = mob == null ? null : String(mob).trim();
-    age = age == null || age === '' ? null : Number(age);
-    gender = gender == null ? null : String(gender).trim();
-    token = Number(token);
-    weight = weight == null || weight === '' ? null : Number(weight);
-    if (weight != null && !Number.isFinite(weight)) weight = null;
-    payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
-    followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
-    // refundTier: non-negative int N; amount = N*100; 0 = none.
-    refundTier = normalizeRefundTier(refundTier);
-    const now = new Date();
-    const nowIso = now.toISOString();
-    date = date || localDay(now); // form's date drives the visit key
-    personId = personId ? Number(personId) : null;
+  searchPeopleByPrefix(q, limit = 50) {
+    q = String(q || '').trim();
+    if (!q) return this.listPeople({ offset: 0, limit });
+    if (/^\d/.test(q)) return this.searchPeopleByMob(q, limit);
+    return this.searchPeopleByName(q, limit);
+  }
+
+  async listPeople({ offset = 0, limit = 50 } = {}) {
     const db = this._db;
+    const indexed = await db.peopleProj
+      .orderBy('lastVisitAt')
+      .reverse()
+      .offset(offset)
+      .limit(limit)
+      .toArray();
+    if (indexed.length >= limit) return indexed;
+    const have = new Set(indexed.map((p) => p.rootId));
+    const rest = (await db.peopleProj.toArray())
+      .filter((p) => !p.lastVisitAt && !have.has(p.rootId))
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const need = limit - indexed.length;
+    return indexed.concat(rest.slice(0, need));
+  }
 
-    return db.transaction('rw', db.people, db.visits, async () => {
-      if (preserve) {
-        // ---- restore path: trust the backup row ----
-        personId = preserve.personId != null ? Number(preserve.personId) : null;
-        if (personId == null) {
-          const e = new Error('Restore row missing personId.');
-          e.name = 'MissingPersonIdError';
-          throw e;
-        }
-        // Seed person on first sight; _writeVisit bumps it.
-        const exists = await db.people.get(personId);
-        if (!exists) {
-          await db.people.add({
-            id: personId,
-            name,
-            mob,
-            age,
-            gender,
-            weight: weight != null ? weight : undefined,
-            visits: 0,
-            createdAt: preserve.createdAt || nowIso,
-            updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
-          });
-        }
-        const rec = {
-          name,
-          mob,
-          age,
-          gender,
-          weight,
-          followup: preserve.followup != null ? preserve.followup : followup != null ? followup : 0,
-          payment,
-          fee: preserve.fee != null ? Number(preserve.fee) : fee == null ? 0 : Number(fee),
-          refundTier: normalizeRefundTier(preserve.refundTier),
-          token,
-          date,
-          createdAt: preserve.createdAt || nowIso,
-          updatedAt: preserve.updatedAt || preserve.createdAt || nowIso,
-          personId,
-        };
-        // Restore: never journal (replay must not append to the log it reads).
-        return this._writeVisit(rec, nowIso, false);
-      }
+  countPeople() {
+    return this._db.peopleProj.count();
+  }
 
-      // ---- live save: resolve identity + billing ----
-      let person = null;
-      // Fast path: linked person with UNCHANGED identity skips the [name+mob]
-      // lookup entirely — a plain edit must not run identity resolution.
-      let identityChanged = false;
-      if (personId) {
-        person = await db.people.get(personId);
-        if (person && (person.name !== name || person.mob !== mob)) identityChanged = true;
-      }
-      if (!person) {
-        person = await db.people.where('[name+mob]').equals([name, mob]).first();
-      }
-      if (person) {
-        // Only when identity is actually changing: guard against collision with
-        // another person already holding the target (name, mob).
-        if (identityChanged) {
-          const clash = await db.people.where('[name+mob]').equals([name, mob]).first();
-          if (clash && clash.id !== person.id) {
-            const e = new Error('Another patient already has this name + mobile.');
-            e.name = 'DuplicateIdentityError';
-            throw e;
-          }
-        }
-        person.name = name;
-        person.mob = mob;
-        person.age = age;
-        if (gender) person.gender = gender;
-        if (weight != null) person.weight = weight;
-        // updatedAt / lastVisitAt / visits set by _writeVisit (see below), so a
-        // visit reassigned away doesn't stamp this person with a visit they lose.
-        if (!Number.isFinite(person.visits)) person.visits = 0;
-        await db.people.put(person);
-        personId = person.id;
-      } else {
-        personId = await db.people.add({
-          name,
-          mob,
-          age,
-          gender,
-          weight: weight != null ? weight : undefined,
-          visits: 0,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        });
-      }
-
-      // Resolve followup/fee AFTER personId is known (auto-followup needs prior paid visits).
-      const billing = await this._resolveBilling({ personId, date, followup, fee });
-      followup = billing.followup;
-      fee = billing.fee;
-
-      const rec = {
-        name,
-        mob,
-        age,
-        gender,
-        weight,
-        followup,
-        payment,
-        fee,
-        refundTier,
-        token,
-        date,
-        createdAt: createdAt || nowIso,
-        updatedAt: updatedAt || createdAt || nowIso,
-        personId,
-      };
-      // _writeVisit journals this write (log defaults true).
-      return this._writeVisit(rec, nowIso);
+  visitCountsForPeople(rootIds) {
+    const m = new Map();
+    if (!rootIds || !rootIds.length) return Promise.resolve(m);
+    return this._db.peopleProj.bulkGet(rootIds).then((rows) => {
+      rows.forEach((p, i) => m.set(rootIds[i], p ? Number(p.visits) || 0 : 0));
+      return m;
     });
   }
 
-  // THE write path. Upserts the visit on (date, token), maintains the people
-  // projection, and emits one journal line (unless log=false) — the single
-  // place backup learns about a committed write. Runs in caller's rw txn.
-  async _writeVisit(rec, nowIso, log = true) {
-    const db = this._db;
-    const { date, token, personId } = rec;
-    const existing = await db.visits.where('[date+token]').equals([date, token]).first();
-    let stored;
-    let created;
-    let prevPerson = null;
+  // Visits on a day, issue order. O(rows that day). Hidden filtered.
+  // Identity (name/mob/age/gender/weight) is JOINED from the person projection
+  // so UI callers see the v2-shaped row without changes.
+  async listByDate(date) {
+    const rows = await this._db.visitsProj
+      .where('[date+token]')
+      .between([date, Dexie.minKey], [date, Dexie.maxKey])
+      .toArray();
+    const live = rows.filter((r) => !r.hidden);
+    const ids = Array.from(new Set(live.map((r) => r.personId).filter((x) => x != null)));
+    const people = await this._db.peopleProj.bulkGet(ids);
+    const byId = new Map();
+    ids.forEach((id, i) => byId.set(id, people[i] || null));
+    return live.map((r) => this._joinIdentity(r, byId.get(r.personId)));
+  }
 
-    if (existing) {
-      const prevPersonId = existing.personId;
-      const reassignedAway = prevPersonId != null && prevPersonId !== personId;
-      const visitCreatedAt = rec.createdAt || existing.createdAt || nowIso;
+  async listAll({ offset = 0, limit = 50 } = {}) {
+    const rows = await this._db.visitsProj.toArray();
+    rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    return rows.filter((r) => !r.hidden).slice(offset, offset + limit);
+  }
 
-      existing.name = rec.name;
-      existing.mob = rec.mob;
-      existing.age = rec.age;
-      existing.gender = rec.gender;
-      existing.weight = rec.weight;
-      existing.followup = rec.followup;
-      existing.payment = rec.payment;
-      existing.fee = rec.fee;
-      existing.refundTier = rec.refundTier != null ? rec.refundTier : existing.refundTier;
-      existing.date = date;
-      existing.personId = personId;
-      if (rec.createdAt) existing.createdAt = rec.createdAt;
-      existing.updatedAt = rec.updatedAt || nowIso;
-      await db.visits.put(existing);
-      stored = existing;
-      created = false;
+  countAll() {
+    return this._db.visitsProj.count();
+  }
 
-      if (reassignedAway) {
-        await this._recomputePerson(prevPersonId);
-        prevPerson = await db.people.get(prevPersonId); // null if orphan-deleted
-        await this._bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso);
-      } else {
-        await this._touchPerson(personId, rec, visitCreatedAt, nowIso);
+  // Full visit history for one person, newest first. Reads CURRENT visits from
+  // the projection (a reassigned-away visit must NOT appear), then joins each
+  // visit's identity from the person revision pinned by (personId, personV) so
+  // the operator sees the identity EXACTLY as it was at visit time.
+  async visitsForPerson(personId) {
+    if (personId == null) return [];
+    const cur = await this._db.visitsProj.where('personId').equals(personId).toArray();
+    const rows = cur
+      .filter((r) => !r.hidden)
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const out = [];
+    const cache = new Map();
+    for (const v of rows) {
+      const key = personId + ':' + v.personV;
+      let p = cache.get(key);
+      if (p === undefined) {
+        p = (await this._db.people.get([personId, v.personV])) || null;
+        if (!p) p = await this._currentPerson(personId);
+        cache.set(key, p);
       }
-    } else {
-      stored = { ...rec };
-      stored.id = await db.visits.add(stored);
-      await this._bumpPersonOnGain(personId, stored, stored.createdAt || nowIso, nowIso);
-      created = true;
+      out.push(this._joinIdentity(v, p));
     }
-
-    const person = await db.people.get(personId);
-    if (log) this._emitJournal(stored);
-    return { rec: stored, created, person, prevPerson };
+    return out;
   }
 
-  // O(1) projection bump when a person GAINS a visit (new, or reassigned TO them).
-  async _bumpPersonOnGain(personId, rec, visitCreatedAt, nowIso) {
-    const db = this._db;
-    const p = await db.people.get(personId);
-    if (!p) return;
-    p.visits = (Number.isFinite(p.visits) ? p.visits : 0) + 1;
-    const isNewest = !p.lastVisitAt || (visitCreatedAt || '') > (p.lastVisitAt || '');
-    if (isNewest) {
-      p.lastVisitAt = visitCreatedAt;
-      this._applyIdentity(p, rec);
-    }
-    p.updatedAt = nowIso;
-    await db.people.put(p);
+  revisionsOf(entity, rootId) {
+    const table = entity === 'person' ? 'people' : 'visits';
+    return this._db[table]
+      .where('[rootId+v]')
+      .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
+      .toArray();
   }
 
-  // O(1) touch when a person's own visit was edited in place.
-  async _touchPerson(personId, rec, visitCreatedAt, nowIso) {
-    const db = this._db;
-    const p = await db.people.get(personId);
-    if (!p) return;
-    this._applyIdentity(p, rec);
-    p.updatedAt = nowIso;
-    await db.people.put(p);
-  }
-
-  // Mirror a visit's identity snapshot onto the person row.
-  _applyIdentity(p, rec) {
-    if (!p || !rec) return;
-    p.name = String(rec.name || p.name || '').trim().toUpperCase();
-    if (rec.mob != null) p.mob = rec.mob;
-    if (rec.age != null) p.age = rec.age;
-    if (rec.gender) p.gender = rec.gender;
-    if (rec.weight != null) p.weight = rec.weight;
-  }
-
-  // Re-derive projection (visits count + lastVisitAt). Identity NOT re-derived —
-  // see _applyIdentity (would revert renames). Uses 2 indexed reads, not a full scan.
-  async _recomputePerson(personId) {
-    const db = this._db;
-    const p = await db.people.get(personId);
-    if (!p) return;
-    const visits = db.visits.where('[personId+createdAt]');
-    const count = await db.visits.where('personId').equals(personId).count();
-    if (!count) {
-      p.visits = 0;
-      p.lastVisitAt = undefined;
-      p.updatedAt = new Date().toISOString();
-      await db.people.put(p);
-      return;
-    }
-    // Newest = last entry on the compound index; one indexed read.
-    const newest = await visits.between([personId, Dexie.minKey], [personId, Dexie.maxKey]).last();
-    p.visits = count;
-    p.lastVisitAt = (newest && newest.createdAt) || undefined;
-    p.updatedAt = new Date().toISOString();
-    await db.people.put(p);
-  }
-
-  // Newest-first walk of a person's visits; returns the last PAID (followup=0) one.
-  // Walks the [personId+createdAt] index backwards and stops at the first paid
-  // visit — O(k), not O(N). Loads a small page at a time so a person with many
-  // free follow-ups still doesn't scan the whole history in one shot.
-  async _lastPaidVisitDaysFor(personId, date) {
+  async lastPaidVisitDaysFor(personId, date) {
     if (!personId) return null;
-    const db = this._db;
-    const PAGE = 50;
-    let hi = [personId, Dexie.maxKey];
-    for (;;) {
-      const batch = await db.visits
-        .where('[personId+createdAt]')
-        .between([personId, Dexie.minKey], hi)
-        .reverse()
-        .limit(PAGE)
-        .toArray();
-      if (!batch.length) return null;
-      for (const v of batch) {
-        if (!v.followup) return { visit: v, days: this._daysBetween(v.date, date) };
-      }
-      if (batch.length < PAGE) return null;
-      // Continue below the oldest row we just saw (exclusive upper bound).
-      hi = [personId, batch[batch.length - 1].createdAt];
+    const rows = await this._db.visitsProj.where('personId').equals(personId).toArray();
+    const vis = rows.filter((v) => !v.hidden).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    for (const v of vis) {
+      if (!v.followup) return { visit: v, days: this._daysBetween(v.date, date) };
     }
+    return null;
   }
 
-  // Public alias for register + self-test.
-  lastPaidVisitDaysFor(personId, date) {
-    return this._lastPaidVisitDaysFor(personId, date);
-  }
-
-  // Whole-day diff between two 'YYYY-MM-DD' (b - a).
   _daysBetween(a, b) {
     if (!a || !b) return null;
     const da = new Date(a + 'T00:00:00');
@@ -434,36 +476,456 @@ class DB {
     return Math.round((db2 - da) / 86400000);
   }
 
-  // Public alias.
   daysBetween(a, b) {
     return this._daysBetween(a, b);
   }
 
-  // Compute fee + auto-followup. Window rule lives in core/billing.js so the
-  // register form and this write path share one definition (never diverge).
+  // ---------- write path ----------
+
   async _resolveBilling({ personId, date, followup, fee }) {
     const baseFee = normalizeFee(fee);
     const explicit = followup === 0 || followup === 1 ? followup : null;
-    let anchoredOn = null;
     let lastPaidDays = null;
     if (explicit !== 0) {
-      const last = await this._lastPaidVisitDaysFor(personId, date);
+      const last = await this.lastPaidVisitDaysFor(personId, date);
       if (last && last.days != null) lastPaidDays = last.days;
-      if (last && last.days != null && last.days >= 0 && last.days <= 6) {
-        anchoredOn = { visitId: last.visit.id, days: last.days, date: last.visit.date };
-      }
     }
-    const { followup: fu, fee: outFee, auto } = evaluateFollowup({ lastPaidDays, explicit, baseFee });
-    return { followup: fu, fee: outFee, anchoredOn: auto ? anchoredOn : null };
+    const { followup: fu, fee: outFee } = evaluateFollowup({ lastPaidDays, explicit, baseFee });
+    return { followup: fu, fee: outFee };
   }
 
-  // Journal hook — backup.js registers a callback at boot.
+  async _resolvePerson({ rootId, name, mob, age, gender, weight }, nowIso) {
+    const db = this._db;
+    name = String(name).trim().toUpperCase();
+    mob = String(mob).trim();
+    gender = gender == null ? null : String(gender).trim() || null;
+
+    let current = null;
+    if (rootId != null) current = await this._currentPerson(rootId);
+    if (!current) {
+      const hit = await db.peopleProj.where('[name+mob]').equals([name, mob]).first();
+      if (hit) {
+        rootId = hit.rootId;
+        current = await this._currentPerson(rootId);
+      }
+    }
+
+    if (!current) {
+      rootId = await this._nextRootId('people');
+      const rec = {
+        rootId,
+        v: 1,
+        name,
+        mob,
+        age: age == null || age === '' ? null : Number(age),
+        gender,
+        weight: weight == null || weight === '' ? null : Number(weight),
+        hidden: 0,
+        createdAt: nowIso,
+      };
+      await this._appendPersonRev(rec);
+      this._emitJournalPerson(rec);
+      return { rootId, v: 1, created: true };
+    }
+
+    const same =
+      current.name === name &&
+      current.mob === mob &&
+      (age == null || age === '' ? current.age == null : Number(age) === current.age) &&
+      (gender == null ? current.gender == null : gender === current.gender) &&
+      (weight == null || weight === '' ? current.weight == null : Number(weight) === current.weight);
+    if (same) return { rootId, v: current.v, created: false };
+
+    const next = {
+      ...current,
+      v: current.v + 1,
+      name,
+      mob,
+      age: age == null || age === '' ? null : Number(age),
+      gender: gender == null ? current.gender : gender,
+      weight: weight == null || weight === '' ? current.weight : Number(weight),
+      hidden: current.hidden ? 1 : 0,
+      createdAt: nowIso,
+    };
+    this._emitJournalPerson(next);
+    await this._appendPersonRev(next);
+    return { rootId, v: next.v, created: false };
+  }
+
+  addVisit(input) {
+    let {
+      name, mob, age, gender, token, date, personId, weight,
+      followup, payment, fee, refundTier, preserve,
+    } = input;
+
+    name = name == null ? null : String(name).trim().toUpperCase();
+    mob = mob == null ? null : String(mob).trim();
+    age = age == null || age === '' ? null : Number(age);
+    gender = gender == null ? null : String(gender).trim() || null;
+    weight = weight == null || weight === '' ? null : Number(weight);
+    if (weight != null && !Number.isFinite(weight)) weight = null;
+    payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
+    followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
+    refundTier = normalizeRefundTier(refundTier);
+    token = Number(token);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    date = date || localDay(now);
+    personId = personId ? Number(personId) : null;
+
+    const db = this._db;
+    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
+      if (preserve) {
+        const rootId = preserve.rootId != null ? Number(preserve.rootId) : null;
+        const v = preserve.v != null ? Number(preserve.v) : 1;
+        const pv = preserve.personV != null ? Number(preserve.personV) : 1;
+        const pid = preserve.personId != null ? Number(preserve.personId) : null;
+        if (rootId == null || pid == null) {
+          const e = new Error('Restore row missing rootId/personId.');
+          e.name = 'MissingRootIdError';
+          throw e;
+        }
+        const projP = await db.peopleProj.get(pid);
+        if (!projP) {
+          const existingPerson = await this._currentPerson(pid);
+          if (!existingPerson) {
+            const prec = {
+              rootId: pid,
+              v: 1,
+              name: name || '',
+              mob: mob || '',
+              age,
+              gender,
+              weight,
+              hidden: preserve.personHidden ? 1 : 0,
+              createdAt: preserve.createdAt || nowIso,
+            };
+            await this._appendPersonRev(prec);
+            await this._putPersonProj(pid);
+          }
+        }
+        const rec = {
+          rootId, v, personId: pid, personV: pv, date, token, weight,
+          followup: followup != null ? followup : 0,
+          payment,
+          fee: fee == null ? 0 : Number(fee),
+          refundTier,
+          hidden: preserve.hidden ? 1 : 0,
+          createdAt: preserve.createdAt || nowIso,
+        };
+        const exists = await db.visits.get([rootId, v]);
+        if (!exists) await this._appendVisitRev(rec);
+        const proj = await this._putVisitProj(rootId);
+        await this._putPersonProj(pid);
+        this._emitJournalVisit(rec);
+        const person = await db.peopleProj.get(pid);
+        return { rec: this._joinIdentity(proj, person), created: !exists, person };
+      }
+
+      const person = await this._resolvePerson(
+        { rootId: personId, name, mob, age, gender, weight },
+        nowIso
+      );
+      personId = person.rootId;
+      const personV = person.v;
+
+      const billing = await this._resolveBilling({ personId, date, followup, fee });
+      followup = billing.followup;
+      fee = billing.fee;
+
+      const existingProj = await db.visitsProj.where('[date+token]').equals([date, token]).first();
+      let rootId;
+      let v;
+      let created = false;
+      let prevPersonId = null;
+      let visitCreatedAt = nowIso;
+      if (existingProj) {
+        rootId = existingProj.rootId;
+        v = await this._nextRev('visits', rootId);
+        prevPersonId = existingProj.personId;
+        // Carry the visit's original createdAt across edits (immutable birth
+        // time); `updatedAt` on the projection tracks the latest write.
+        const cur = await this._currentVisit(rootId);
+        if (cur && cur.createdAt) visitCreatedAt = cur.createdAt;
+      } else {
+        rootId = await this._nextRootId('visits');
+        v = 1;
+        created = true;
+      }
+
+      const rec = {
+        rootId, v, personId, personV, date, token, weight, followup, payment, fee,
+        refundTier, hidden: 0, createdAt: visitCreatedAt,
+      };
+      await this._appendVisitRev(rec);
+      const proj = await this._putVisitProj(rootId);
+      await this._putPersonProj(personId);
+      // If the visit moved away from a previous owner, refresh that person's
+      // projection too (its visit count / lastVisitAt just changed).
+      if (prevPersonId != null && prevPersonId !== personId) {
+        await this._putPersonProj(prevPersonId);
+      }
+      this._emitJournalVisit(rec);
+      const personRow = await db.peopleProj.get(personId);
+      return { rec: this._joinIdentity(proj, personRow), created, person: personRow };
+    });
+  }
+
+  async setVisitRefund(rootId, tier) {
+    const t = normalizeRefundTier(tier);
+    const nowIso = new Date().toISOString();
+    const db = this._db;
+    return db.transaction('rw', db.visits, db.visitsProj, db.peopleProj, async () => {
+      const cur = await this._currentVisit(rootId);
+      if (!cur) throw new Error('Visit not found: ' + rootId);
+      const rec = { ...cur, v: cur.v + 1, refundTier: t };
+      await this._appendVisitRev(rec);
+      const proj = await this._putVisitProj(rootId);
+      this._emitJournalVisit(rec);
+      return proj;
+    });
+  }
+
+  async setVisitBilling(rootId, { followup, payment, fee }) {
+    const nowIso = new Date().toISOString();
+    const db = this._db;
+    return db.transaction('rw', db.visits, db.visitsProj, async () => {
+      const cur = await this._currentVisit(rootId);
+      if (!cur) throw new Error('Visit not found: ' + rootId);
+      const rec = {
+        ...cur,
+        v: cur.v + 1,
+        followup: followup != null ? (followup ? 1 : 0) : cur.followup,
+        payment: payment != null ? (payment ? 1 : 0) : cur.payment,
+        fee: fee != null ? Number(fee) : cur.fee,
+      };
+      await this._appendVisitRev(rec);
+      const proj = await this._putVisitProj(rootId);
+      this._emitJournalVisit(rec);
+      return proj;
+    });
+  }
+
+  hideVisit(rootId) {
+    return this.setVisitHidden(rootId, 1);
+  }
+  unhideVisit(rootId) {
+    return this.setVisitHidden(rootId, 0);
+  }
+  async setVisitHidden(rootId, hidden) {
+    const h = hidden ? 1 : 0;
+    const nowIso = new Date().toISOString();
+    const db = this._db;
+    return db.transaction('rw', db.visits, db.visitsProj, db.peopleProj, async () => {
+      const cur = await this._currentVisit(rootId);
+      if (!cur) throw new Error('Visit not found: ' + rootId);
+      const rec = { ...cur, v: cur.v + 1, hidden: h };
+      await this._appendVisitRev(rec);
+      const proj = await this._putVisitProj(rootId);
+      await this._putPersonProj(cur.personId);
+      this._emitJournalVisit(rec);
+      return proj;
+    });
+  }
+
+  async deleteVisitsByDate(date) {
+    const db = this._db;
+    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
+      const proj = await db.visitsProj
+        .where('[date+token]')
+        .between([date, Dexie.minKey], [date, Dexie.maxKey])
+        .toArray();
+      const peopleTouched = new Set();
+      for (const p of proj) {
+        peopleTouched.add(p.personId);
+        await db.visits
+          .where('[rootId+v]')
+          .between([p.rootId, Dexie.minKey], [p.rootId, Dexie.maxKey])
+          .delete();
+        await db.visitsProj.delete(p.rootId);
+      }
+      for (const pid of peopleTouched) if (pid != null) await this._putPersonProj(pid);
+      return { visits: proj.length };
+    });
+  }
+
+  async deletePerson(rootId) {
+    const db = this._db;
+    return db.transaction('rw', db.people, db.peopleProj, async () => {
+      await db.people
+        .where('[rootId+v]')
+        .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
+        .delete();
+      await db.peopleProj.delete(rootId);
+      return 1;
+    });
+  }
+
+  async deletePeopleByNameMob(name, mob) {
+    name = String(name || '').trim().toUpperCase();
+    mob = String(mob || '').trim();
+    if (!name || !mob) return 0;
+    const hit = await this._db.peopleProj.where('[name+mob]').equals([name, mob]).first();
+    if (!hit) return 0;
+    return this.deletePerson(hit.rootId);
+  }
+
+  // ---------- restore ----------
+
+  async replayLog(ops, { onProgress = null } = {}) {
+    const db = this._db;
+    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
+      await db.people.clear();
+      await db.peopleProj.clear();
+      await db.visits.clear();
+      await db.visitsProj.clear();
+
+      const total = ops.length;
+      const TICK = 250;
+      let processed = 0;
+      let restored = 0;
+      let skipped = 0;
+      const skippedRows = [];
+      const tick = (force) => {
+        if (!onProgress) return;
+        if (!force && processed % TICK !== 0) return;
+        try { onProgress({ processed, total, restored, skipped }); } catch (_) {}
+      };
+
+      for (const op of ops) {
+        processed++;
+        try {
+          if (op.kind === 'person') await this._replayPerson(op);
+          else if (op.kind === 'visit') await this._replayVisit(op);
+          else {
+            skipped++;
+            skippedRows.push({ lineNo: op.lineNo, reason: 'unknown kind', raw: op.raw || '' });
+            tick(false);
+            continue;
+          }
+          restored++;
+        } catch (e) {
+          skipped++;
+          skippedRows.push({ lineNo: op.lineNo, reason: e.message || String(e), raw: op.raw || '' });
+        }
+        tick(false);
+      }
+      tick(true);
+      return { count: restored, skipped, skippedRows };
+    });
+  }
+
+  async _replayPerson(op) {
+    const db = this._db;
+    if (op.rootId == null || op.v == null) throw new Error('person: missing rootId/v');
+    const exists = await db.people.get([op.rootId, op.v]);
+    if (!exists) {
+      await db.people.add({
+        rootId: op.rootId,
+        v: op.v,
+        name: op.name || '',
+        mob: op.mob || '',
+        age: op.age != null ? op.age : null,
+        gender: op.gender != null ? op.gender : null,
+        weight: op.weight != null ? op.weight : null,
+        hidden: op.hidden ? 1 : 0,
+        createdAt: op.createdAt || new Date().toISOString(),
+      });
+    }
+    await this._putPersonProj(op.rootId);
+  }
+
+  async _replayVisit(op) {
+    const db = this._db;
+    if (op.rootId == null || op.v == null) throw new Error('visit: missing rootId/v');
+    if (op.personId == null) throw new Error('visit: missing personId');
+    const exists = await db.visits.get([op.rootId, op.v]);
+    if (!exists) {
+      await db.visits.add({
+        rootId: op.rootId,
+        v: op.v,
+        personId: op.personId,
+        personV: op.personV != null ? op.personV : 1,
+        date: op.date || '',
+        token: op.token,
+        weight: op.weight != null ? op.weight : null,
+        followup: op.followup ? 1 : 0,
+        payment: op.payment ? 1 : 0,
+        fee: op.fee != null ? Number(op.fee) : 0,
+        refundTier: normalizeRefundTier(op.refundTier),
+        hidden: op.hidden ? 1 : 0,
+        createdAt: op.createdAt || new Date().toISOString(),
+      });
+    }
+    await this._putVisitProj(op.rootId);
+    await this._putPersonProj(op.personId);
+  }
+
+  // ---------- export ----------
+
+  async exportAllStream(onChunk, { pageSize = 2000 } = {}) {
+    const db = this._db;
+    onChunk(csvHeaderLine() + '\n');
+    let count = 0;
+    let lastKey = [Dexie.minKey, Dexie.minKey];
+    for (;;) {
+      const rows = await db.people.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
+      if (!rows.length) break;
+      let buf = '';
+      for (const p of rows) buf += personRevToLogLine(p) + '\n';
+      onChunk(buf);
+      count += rows.length;
+      const last = rows[rows.length - 1];
+      lastKey = [last.rootId, last.v];
+      if (rows.length < pageSize) break;
+    }
+    lastKey = [Dexie.minKey, Dexie.minKey];
+    for (;;) {
+      const rows = await db.visits.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
+      if (!rows.length) break;
+      let buf = '';
+      for (const v of rows) buf += visitRevToLogLine(v) + '\n';
+      onChunk(buf);
+      count += rows.length;
+      const last = rows[rows.length - 1];
+      lastKey = [last.rootId, last.v];
+      if (rows.length < pageSize) break;
+    }
+    return { count };
+  }
+
+  async exportAll() {
+    const db = this._db;
+    const people = (await db.people.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
+    const visits = (await db.visits.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
+    const lines = [csvHeaderLine()];
+    for (const p of people) lines.push(personRevToLogLine(p));
+    for (const v of visits) lines.push(visitRevToLogLine(v));
+    return { text: lines.join('\n') + '\n', count: people.length + visits.length };
+  }
+
+  refundAmountFor(tier) {
+    return refundAmountFor(tier);
+  }
+
+  // ---------- journal ----------
+
   setJournal(fn) {
     this._journal = typeof fn === 'function' ? fn : null;
   }
 
-  // Journal buffering: entries emitted during a txn are held per-txn and
-  // released only on 'complete' (so rolled-back writes never reach the log).
+  // Tag + emit a person revision for backup. Callers pass the full revision row.
+  _emitJournalPerson(rec) {
+    if (!this._journal) return;
+    this._emitJournal({ kind: 'person', ...rec });
+  }
+
+  // Tag + emit a visit revision for backup.
+  _emitJournalVisit(rec) {
+    if (!this._journal) return;
+    this._emitJournal({ kind: 'visit', ...rec });
+  }
+
   _emitJournal(entry) {
     if (!this._journal) return;
     const txn = Dexie.currentTransaction;
@@ -475,7 +937,6 @@ class DB {
       }
       const fresh = [entry];
       this._journalBuffers.set(txn, fresh);
-      // Remove the map entry once and only once, regardless of which event wins.
       let done = false;
       const clear = () => {
         if (done) return;
@@ -495,7 +956,6 @@ class DB {
         clear();
         this._deliverJournal(entry);
       }
-      // Defensive: bound the map if an exotic txn never fires any listener.
       if (this._journalBuffers.size > 256) {
         const oldest = this._journalBuffers.keys().next().value;
         if (oldest && oldest !== txn) this._journalBuffers.delete(oldest);
@@ -512,297 +972,9 @@ class DB {
       console.error('journal', e);
     }
   }
-
-  listByDate(date) {
-    const db = this._db;
-    return db.visits
-      .where('[date+token]')
-      .between([date, Dexie.minKey], [date, Dexie.maxKey])
-      .toArray();
-  }
-
-  // Delete every visit on `date` and recompute affected people (0-visit people KEPT).
-  async deleteVisitsByDate(date) {
-    const db = this._db;
-    return db.transaction('rw', db.people, db.visits, async () => {
-      const rows = await db.visits
-        .where('[date+token]')
-        .between([date, Dexie.minKey], [date, Dexie.maxKey])
-        .toArray();
-      const peopleBefore = new Set();
-      for (const v of rows) {
-        if (v.personId != null) peopleBefore.add(v.personId);
-        await db.visits.delete(v.id);
-      }
-      for (const pid of peopleBefore) {
-        const p = await db.people.get(pid);
-        if (!p) continue;
-        await this._recomputePerson(pid);
-      }
-      return { visits: rows.length };
-    });
-  }
-
-  // Set (or clear) the refund tier on a single visit.
-  async setVisitRefund(visitId, tier, whenIso) {
-    const t = normalizeRefundTier(tier);
-    const nowIso = whenIso || new Date().toISOString();
-    const db = this._db;
-    return db.transaction('rw', db.people, db.visits, async () => {
-      const v = await db.visits.get(visitId);
-      if (!v) throw new Error('Visit not found: ' + visitId);
-      const rec = {
-        name: v.name,
-        mob: v.mob,
-        age: v.age,
-        gender: v.gender,
-        weight: v.weight,
-        followup: v.followup,
-        payment: v.payment,
-        fee: v.fee,
-        refundTier: t,
-        token: v.token,
-        date: v.date,
-        createdAt: v.createdAt,
-        updatedAt: nowIso,
-        personId: v.personId,
-      };
-      const result = await this._writeVisit(rec, nowIso);
-      return result.rec;
-    });
-  }
-
-  // Unique patients, most recently SEEN first. Indexed on lastVisitAt so paging
-  // is O(limit), not O(N). Rows without lastVisitAt (0-visit / pre-projection)
-  // are appended after the indexed page so they are not silently dropped.
-  async listPeople({ offset = 0, limit = 50 } = {}) {
-    const db = this._db;
-    const indexed = await db.people
-      .orderBy('lastVisitAt')
-      .reverse()
-      .offset(offset)
-      .limit(limit)
-      .toArray();
-    if (indexed.length >= limit) return indexed;
-    // Fill the remainder with unindexed rows (no lastVisitAt), most-recently-updated first.
-    const have = new Set(indexed.map((p) => p.id));
-    const all = await db.people.toArray();
-    const rest = all
-      .filter((p) => !p.lastVisitAt && !have.has(p.id))
-      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-    const need = limit - indexed.length;
-    return indexed.concat(rest.slice(0, need));
-  }
-
-  countPeople() {
-    return this._db.people.count();
-  }
-
-  getPerson(id) {
-    return this._db.people.get(id);
-  }
-
-  // Prefix search. Dispatch by first char: digit -> mob index, else -> name
-  // index (uppercased, matching the stored form). Single scan, no merge/dedup.
-  async searchPeopleByPrefix(q, limit = 50) {
-    q = String(q || '').trim();
-    if (!q) return this.listPeople({ offset: 0, limit });
-    const db = this._db;
-    if (/^\d/.test(q)) {
-      return db.people.where('mob').startsWith(q).limit(limit).toArray();
-    }
-    return db.people.where('name').startsWith(q.toUpperCase()).limit(limit).toArray();
-  }
-
-  // Number of visits per person, keyed by personId. Uses projection if present.
-  async visitCountsForPeople(ids) {
-    const m = new Map();
-    if (!ids || !ids.length) return m;
-    const db = this._db;
-    const people = await db.people.bulkGet(ids);
-    const missing = [];
-    people.forEach((p) => {
-      if (!p) return;
-      if (Number.isFinite(p.visits)) m.set(p.id, p.visits);
-      else missing.push(p.id);
-    });
-    if (missing.length) {
-      const rows = await db.visits.where('personId').anyOf(missing).toArray();
-      for (const r of rows) m.set(r.personId, (m.get(r.personId) || 0) + 1);
-      for (const id of missing) if (!m.has(id)) m.set(id, 0);
-    }
-    return m;
-  }
-
-  // Full visit history for one person, newest first.
-  visitsForPerson(personId) {
-    return this._db.visits.where('personId').equals(personId).reverse().sortBy('createdAt');
-  }
-
-  // Look up a single visit by (date, token), plus its person row.
-  async findVisitByDateToken(date, token) {
-    const db = this._db;
-    const visit = await db.visits.where('[date+token]').equals([date, Number(token)]).first();
-    if (!visit) return null;
-    const person = visit.personId ? await db.people.get(visit.personId) : null;
-    return { visit, person };
-  }
-
-  listAll({ offset = 0, limit = 50 } = {}) {
-    return this._db.visits.orderBy('createdAt').reverse().offset(offset).limit(limit).toArray();
-  }
-
-  countAll() {
-    return this._db.visits.count();
-  }
-
-  // Wipe stores, then replay every row through the SAME write path that produced
-  // it: addVisit({preserve}). Returns {count, skipped, skippedRows}.
-  // `skippedRows` is an optional passthrough from csvToLog (line-level detail);
-  // when omitted, replay-level skips are reported without line info.
-  // `onProgress` (optional) is called SYNCHRONOUSLY inside the tx every ~250
-  // rows and once at the end: { processed, total, restored, skipped }.
-  // Must NOT await/yield — Dexie would auto-commit an idle transaction.
-  async replayLog(ops, { skippedRows = [], onProgress = null } = {}) {
-    const db = this._db;
-    return await db.transaction('rw', db.people, db.visits, async () => {
-      await db.people.clear();
-      await db.visits.clear();
-      const total = ops.length;
-      const TICK = 250;
-      let n = 0;
-      let skipped = 0;
-      let processed = 0;
-      const replayed = [];
-      const tick = (force) => {
-        if (!onProgress) return;
-        if (!force && processed % TICK !== 0) return;
-        try {
-          onProgress({ processed, total, restored: n, skipped });
-        } catch {
-          /* progress is best-effort — never let it break the tx */
-        }
-      };
-      for (const op of ops) {
-        processed++;
-        if (op.personId == null || !op.date || !Number.isInteger(op.token) || op.token < 1) {
-          skipped++;
-          replayed.push({ reason: 'replay rejected (missing personId/date/token)', raw: '' });
-          tick(false);
-          continue;
-        }
-        await this.addVisit({
-          name: op.name,
-          mob: op.mob,
-          age: op.age,
-          gender: op.gender,
-          weight: op.weight,
-          payment: op.payment,
-          token: op.token,
-          date: op.date,
-          personId: op.personId,
-          preserve: {
-            personId: op.personId,
-            followup: op.followup,
-            fee: op.fee,
-            refundTier: op.refundTier,
-            createdAt: op.createdAt,
-            updatedAt: op.updatedAt,
-          },
-        });
-        n++;
-        tick(false);
-      }
-      tick(true);
-      return { count: n, skipped, skippedRows: skippedRows.concat(replayed) };
-    });
-  }
-
-  // Stream the whole DB as a fresh log (header + one row per visit) in pages,
-  // so a huge DB never becomes one giant string. Calls onChunk(string) per page.
-  // Returns { count }. Order = (date, token) via the [date+token] index.
-  // Pages by KEY RANGE (above(lastKey)), not offset/limit: reusing one collection
-  // with .offset() across iterations silently returns only the first page.
-  async exportAllStream(onChunk, { pageSize = 2000 } = {}) {
-    const db = this._db;
-    onChunk(csvHeaderLine() + '\n');
-    let count = 0;
-    let lastKey = [Dexie.minKey, Dexie.minKey];
-    for (;;) {
-      const rows = await db.visits
-        .where('[date+token]')
-        .above(lastKey)
-        .limit(pageSize)
-        .toArray();
-      if (!rows.length) break;
-      let buf = '';
-      for (const v of rows) {
-        buf +=
-          visitInputToLogLine({
-            date: v.date || '',
-            token: v.token,
-            personId: v.personId,
-            name: v.name,
-            mob: v.mob,
-            age: v.age,
-            gender: v.gender,
-            weight: v.weight,
-            followup: v.followup,
-            payment: v.payment,
-            fee: v.fee,
-            refundTier: v.refundTier,
-            createdAt: v.createdAt,
-            updatedAt: v.updatedAt,
-          }) + '\n';
-        count++;
-      }
-      onChunk(buf);
-      const last = rows[rows.length - 1];
-      lastKey = [last.date, last.token];
-      if (rows.length < pageSize) break;
-    }
-    return { count };
-  }
-
-  // Serialize the whole DB as a fresh log (header + one full row per visit).
-  async exportAll() {
-    const db = this._db;
-    const [visits] = await Promise.all([db.visits.toArray()]);
-    const lines = [csvHeaderLine()];
-    const sorted = visits.slice().sort((a, b) => {
-      if ((a.date || '') !== (b.date || '')) return (a.date || '').localeCompare(b.date || '');
-      return (Number(a.token) || 0) - (Number(b.token) || 0);
-    });
-    let count = 0;
-    for (const v of sorted) {
-      lines.push(
-        visitInputToLogLine({
-          date: v.date || '',
-          token: v.token,
-          personId: v.personId,
-          name: v.name,
-          mob: v.mob,
-          age: v.age,
-          gender: v.gender,
-          weight: v.weight,
-          followup: v.followup,
-          payment: v.payment,
-          fee: v.fee,
-          refundTier: v.refundTier,
-          createdAt: v.createdAt,
-          updatedAt: v.updatedAt,
-        })
-      );
-      count++;
-    }
-    return { text: lines.join('\n') + '\n', count };
-  }
-
-  // Alias kept for callers that read the tier step via the instance.
-  refundAmountFor(tier) {
-    return refundAmountFor(tier);
-  }
 }
+
+// ---------- singleton ----------
 
 const clinicDb = new DB();
 
@@ -813,3 +985,4 @@ export function rawDb() {
 
 export default clinicDb;
 export { DB };
+   
