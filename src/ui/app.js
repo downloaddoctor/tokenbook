@@ -12,7 +12,7 @@ import { csvToLog } from '../backup/csv.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter, ADMIN_ONLY } from './router.js';
 import { toast } from './toast.js';
-import { requireAuth, currentUser, isAdmin, logout } from '../core/auth.js';
+import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../core/auth.js';
 import { showAuthGate, hideGate } from './auth.js';
 
 // ---------- restore helpers ----------
@@ -138,6 +138,18 @@ async function applySessionToShell(router) {
 async function bootAuthed(router) {
   hideGate();
   await applySessionToShell(router);
+
+  // Wire the DB actor hook once: every appended revision is stamped with the
+  // current session's userId + username (denormalized so it survives renames).
+  if (!bootAuthed._actorWired) {
+    bootAuthed._actorWired = true;
+    db.setActor(() => {
+      const u = currentUserSync();
+      return u
+        ? { userId: u.id, userV: u.v != null ? u.v : 1 }
+        : { userId: null, userV: null };
+    });
+  }
 
   if (navigator.storage && navigator.storage.persist) {
     try {

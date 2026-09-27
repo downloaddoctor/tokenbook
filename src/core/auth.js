@@ -154,7 +154,10 @@ export async function createUser({ username, password, role = 'user' }) {
     lastLoginAt: null,
   };
   const id = await db.raw().users.add(row);
-  return { ...row, id };
+  const saved = { ...row, id };
+  // Append the user revision (audit trail; logged to CSV without secrets).
+  await db.appendUserRevision(saved);
+  return saved;
 }
 
 export async function setUserDisabled(id, disabled) {
@@ -167,9 +170,11 @@ export async function setUserDisabled(id, disabled) {
   // Disabling also invalidates any live session immediately.
   if (disabled) patch.sessionToken = '';
   await db.raw().users.update(id, patch);
+  const saved = { ...u, ...patch };
+  await db.appendUserRevision(saved);
   // If the disabled user is the current session, drop it.
   if (disabled && _current && _current.id === u.id) logout();
-  return { ...u, ...patch };
+  return saved;
 }
 
 export async function resetPassword(id, newPassword) {
@@ -184,8 +189,10 @@ export async function resetPassword(id, newPassword) {
     updatedAt: new Date().toISOString(),
   };
   await db.raw().users.update(id, patch);
+  const saved = { ...u, ...patch };
+  await db.appendUserRevision(saved);
   if (_current && _current.id === u.id) logout();
-  return { ...u, ...patch };
+  return saved;
 }
 
 // ---------- session ----------
@@ -244,8 +251,18 @@ export async function login(username, password) {
   const exp = Date.now() + SESSION_DAYS * 86400000;
   await db.raw().users.update(u.id, { sessionToken: token, lastLoginAt: now, updatedAt: now });
   writeSession(u.id, token, exp);
-  _current = { ...u, sessionToken: token, lastLoginAt: now };
+  _current = { ...u, sessionToken: token, lastLoginAt: now, v: await _latestUserV(u.id) };
   return _current;
+}
+
+// Latest user revision number (1 if none). Used to stamp the actor on DB writes.
+async function _latestUserV(id) {
+  try {
+    const revs = await db.userRevisions(id);
+    return revs.length ? revs[revs.length - 1].v : 1;
+  } catch (_) {
+    return 1;
+  }
 }
 
 // Log out: clear the token on the row + the localStorage entry + memory cache.
@@ -279,8 +296,8 @@ export async function currentUser() {
     clearSession();
     return null;
   }
-  _current = u;
-  return u;
+  _current = { ...u, v: await _latestUserV(u.id) };
+  return _current;
 }
 
 // Boot gate helper. Returns:
@@ -298,6 +315,14 @@ export async function requireAuth() {
 export function isAdmin(user) {
   return !!(user && user.role === 'admin');
 }
+
+// Synchronous view of the cached session user (null if none). Used by the
+// db actor hook — DB writes are sync-path and cannot await the session check.
+export function currentUserSync() {
+  return _current || null;
+}
+
+
 
 // Used by login view: which mode to render.
 export async function needsFirstAdmin() {

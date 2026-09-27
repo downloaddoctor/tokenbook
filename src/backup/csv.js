@@ -19,7 +19,25 @@ export const CSV_DELIM = '|';
 
 // ---- schema registry (the ONLY place column shape lives) ----
 
+// Users revision (audit trail). schemaNo 0. NEVER carries secrets — no
+// salt/hash/iter/sessionToken. Rebuilt on restore so attribution survives; a
+// restored user must have its password reset by an admin.
+export const SCHEMA_USER = {
+  no: 0,
+  name: 'user',
+  cols: [
+    'id:int',
+    'v:int',
+    'username:str',
+    'role:str',
+    'disabled:int',
+    'createdAt:epoch',
+    'revAt:epoch?',
+  ],
+};
+
 // People revision. Every field is written; nullable fields carry null as ''.
+// userId/username = the acting user at THIS revision (nullable: pre-auth rows).
 export const SCHEMA_PEOPLE = {
   no: 1,
   name: 'people',
@@ -34,10 +52,12 @@ export const SCHEMA_PEOPLE = {
     'hidden:int',
     'createdAt:epoch',
     'revAt:epoch?',
+    'userId:int?',
+    'userV:int?',
   ],
 };
 
-// Visits revision.
+// Visits revision. userId/userV = acting user + its revision at THIS write.
 export const SCHEMA_VISITS = {
   no: 2,
   name: 'visits',
@@ -56,10 +76,12 @@ export const SCHEMA_VISITS = {
     'hidden:int',
     'createdAt:epoch',
     'revAt:epoch?',
+    'userId:int?',
+    'userV:int?',
   ],
 };
 
-export const SCHEMAS = [SCHEMA_PEOPLE, SCHEMA_VISITS];
+export const SCHEMAS = [SCHEMA_USER, SCHEMA_PEOPLE, SCHEMA_VISITS];
 
 export function schemaByNo(no) {
   return SCHEMAS.find((s) => s.no === no) || null;
@@ -139,7 +161,8 @@ function rowForLine(schema, row) {
   const values = [];
   for (let i = 0; i < schema.cols.length; i++) {
     const key = schema.cols[i].split(':')[0];
-    const type = schema.cols[i].split(':')[1].split('|')[0];
+    // Strip the nullable `?` suffix so `epoch?` still encodes as an epoch.
+    const type = schema.cols[i].split(':')[1].replace(/\?$/, '');
     let v = row[key];
     if (type === 'int') v = v == null || v === '' ? '' : Number(v);
     if (type === 'num') v = v == null || v === '' ? '' : Number(v);
@@ -159,6 +182,12 @@ export function personRevToLogLine(p) {
 // Encode a visits revision row.
 export function visitRevToLogLine(v) {
   return rowForLine(SCHEMA_VISITS, v);
+}
+
+// Encode a user revision row. Secrets are NOT part of SCHEMA_USER, so only the
+// identity/role/disabled fields are ever written.
+export function userRevToLogLine(u) {
+  return rowForLine(SCHEMA_USER, u);
 }
 
 // ---- decoding ----
@@ -219,7 +248,9 @@ export function csvToLog(text) {
       });
       continue;
     }
-    const row = { kind: schema.name === 'people' ? 'person' : 'visit', lineNo, raw };
+    const kind =
+      schema.name === 'people' ? 'person' : schema.name === 'user' ? 'user' : 'visit';
+    const row = { kind, lineNo, raw };
     for (let i = 0; i < schema.cols.length; i++) {
       const { key, type } = schema.cols[i];
       const rawVal = f[i + 1];

@@ -27,7 +27,12 @@ import {
   refundAmountFor,
   normalizeRefundTier,
 } from './billing.js';
-import { csvHeaderLine, personRevToLogLine, visitRevToLogLine } from '../backup/csv.js';
+import {
+  csvHeaderLine,
+  personRevToLogLine,
+  visitRevToLogLine,
+  userRevToLogLine,
+} from '../backup/csv.js';
 
 const DB_NAME = 'tokenbook';
 
@@ -43,6 +48,9 @@ class DB {
     this._openPromise = null;
     this._journal = null;
     this._journalBuffers = new Map();
+    // Actor hook: returns { userId, userV } for the current session, or null.
+    // Wired by app.js (auth is a higher layer; db must not import it directly).
+    this._actorFn = null;
     // Optional hook: fired after a pre-revision DB is dumped + recreated, with
     // { filename, stores }. app.js wires this to a toast so the backup is seen.
     this._migrationNotice = null;
@@ -68,6 +76,12 @@ class DB {
     // stores are untouched. `username` is unique and stored UPPER-cased.
     instance.version(2).stores({
       users: '++id, &username, role, disabled',
+    });
+    // v3: userRevs — append-only user history, [id+v] keyed (mirrors people).
+    // `users` stays the current-state projection (PK id) so auth reads are
+    // unchanged. Every user write appends here + puts `users`.
+    instance.version(3).stores({
+      userRevs: '[id+v], id, v',
     });
   }
 
@@ -122,6 +136,30 @@ class DB {
           const m = await this._db.meta.get('singleton');
           if (!m) {
             await this._db.meta.put({ key: 'singleton', lastDay: null });
+          }
+          // Backfill: any user without a revision gets a baseline v1 so the
+          // audit trail + CSV have an id<->username mapping. No secrets logged.
+          try {
+            const users = await this._db.users.toArray();
+            for (const u of users) {
+              const existing = await this._db.userRevs
+                .where('[id+v]')
+                .between([u.id, Dexie.minKey], [u.id, Dexie.maxKey])
+                .first();
+              if (!existing) {
+                await this._db.userRevs.add({
+                  id: u.id,
+                  v: 1,
+                  username: u.username,
+                  role: u.role === 'admin' ? 'admin' : 'user',
+                  disabled: u.disabled ? 1 : 0,
+                  createdAt: u.createdAt || new Date().toISOString(),
+                  revAt: new Date().toISOString(),
+                });
+              }
+            }
+          } catch (e) {
+            if (!e || e.name !== 'NotFoundError') console.warn('[tokenbook] user backfill skipped', e);
           }
         });
     }
@@ -202,15 +240,26 @@ class DB {
 
   // Append a person revision. `revAt` = when THIS revision was written; if the
   // caller did not set it (restore does, to preserve the original), stamp now.
+  // Actor (userId/userV) is stamped here unless already set (restore).
   async _appendPersonRev(rec) {
     if (!rec.revAt) rec.revAt = new Date().toISOString();
+    if (rec.userId == null && rec.userV == null) {
+      const a = this._actor();
+      rec.userId = a.userId;
+      rec.userV = a.userV;
+    }
     await this._db.people.add(rec);
     return { rootId: rec.rootId, v: rec.v };
   }
 
-  // Append a visit revision. Same `revAt` rule as _appendPersonRev.
+  // Append a visit revision. Same `revAt` + actor rules as _appendPersonRev.
   async _appendVisitRev(rec) {
     if (!rec.revAt) rec.revAt = new Date().toISOString();
+    if (rec.userId == null && rec.userV == null) {
+      const a = this._actor();
+      rec.userId = a.userId;
+      rec.userV = a.userV;
+    }
     await this._db.visits.add(rec);
     return { rootId: rec.rootId, v: rec.v };
   }
@@ -918,11 +967,23 @@ class DB {
 
   async replayLog(ops, { onProgress = null } = {}) {
     const db = this._db;
-    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
+    return db.transaction(
+      'rw',
+      db.people,
+      db.peopleProj,
+      db.visits,
+      db.visitsProj,
+      db.userRevs,
+      db.users,
+      async () => {
       await db.people.clear();
       await db.peopleProj.clear();
       await db.visits.clear();
       await db.visitsProj.clear();
+      await db.userRevs.clear();
+      // NOTE: the `users` projection is NOT cleared — passwords live only there
+      // and must never be destroyed by a restore. User revisions are merged in
+      // (idempotent) so attribution resolves; existing credentials survive.
 
       const total = ops.length;
       const TICK = 250;
@@ -941,6 +1002,7 @@ class DB {
         try {
           if (op.kind === 'person') await this._replayPerson(op);
           else if (op.kind === 'visit') await this._replayVisit(op);
+          else if (op.kind === 'user') await this._replayUser(op);
           else {
             skipped++;
             skippedRows.push({ lineNo: op.lineNo, reason: 'unknown kind', raw: op.raw || '' });
@@ -956,7 +1018,8 @@ class DB {
       }
       tick(true);
       return { count: restored, skipped, skippedRows };
-    });
+      }
+    );
   }
 
   async _replayPerson(op) {
@@ -975,6 +1038,8 @@ class DB {
         hidden: op.hidden ? 1 : 0,
         createdAt: op.createdAt || new Date().toISOString(),
         revAt: op.revAt || op.createdAt || new Date().toISOString(),
+        userId: op.userId != null ? op.userId : null,
+        userV: op.userV != null ? op.userV : null,
       });
     }
     await this._putPersonProj(op.rootId);
@@ -1001,10 +1066,50 @@ class DB {
         hidden: op.hidden ? 1 : 0,
         createdAt: op.createdAt || new Date().toISOString(),
         revAt: op.revAt || op.createdAt || new Date().toISOString(),
+        userId: op.userId != null ? op.userId : null,
+        userV: op.userV != null ? op.userV : null,
       });
     }
     await this._putVisitProj(op.rootId);
     await this._putPersonProj(op.personId);
+  }
+
+  // Replay a user revision into userRevs ONLY. The `users` projection (which
+  // holds secrets) is intentionally NOT touched: a restore must not recreate
+  // or overwrite credentials. A user present in the log but absent locally
+  // gets a secret-less projection stub so attribution renders; an admin must
+  // set its password before it can log in.
+  async _replayUser(op) {
+    const db = this._db;
+    if (op.id == null || op.v == null) throw new Error('user: missing id/v');
+    const exists = await db.userRevs.get([op.id, op.v]);
+    if (!exists) {
+      await db.userRevs.add({
+        id: op.id,
+        v: op.v,
+        username: op.username || '',
+        role: op.role === 'admin' ? 'admin' : 'user',
+        disabled: op.disabled ? 1 : 0,
+        createdAt: op.createdAt || new Date().toISOString(),
+        revAt: op.revAt || op.createdAt || new Date().toISOString(),
+      });
+    }
+    const proj = await db.users.get(op.id);
+    if (!proj) {
+      await db.users.add({
+        id: op.id,
+        username: op.username || '',
+        role: op.role === 'admin' ? 'admin' : 'user',
+        salt: '',
+        hash: '',
+        iter: 0,
+        disabled: op.disabled ? 1 : 0,
+        sessionToken: '',
+        createdAt: op.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastLoginAt: null,
+      });
+    }
   }
 
   // ---------- export ----------
@@ -1013,6 +1118,19 @@ class DB {
     const db = this._db;
     onChunk(csvHeaderLine() + '\n');
     let count = 0;
+    // Users first (schemaNo 0) so attribution resolves during a streaming read.
+    let lastUserKey = [Dexie.minKey, Dexie.minKey];
+    for (;;) {
+      const rows = await db.userRevs.where('[id+v]').above(lastUserKey).limit(pageSize).toArray();
+      if (!rows.length) break;
+      let buf = '';
+      for (const u of rows) buf += userRevToLogLine(u) + '\n';
+      onChunk(buf);
+      count += rows.length;
+      const last = rows[rows.length - 1];
+      lastUserKey = [last.id, last.v];
+      if (rows.length < pageSize) break;
+    }
     let lastKey = [Dexie.minKey, Dexie.minKey];
     for (;;) {
       const rows = await db.people.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
@@ -1042,12 +1160,14 @@ class DB {
 
   async exportAll() {
     const db = this._db;
+    const users = (await db.userRevs.toArray()).sort((a, b) => a.id - b.id || a.v - b.v);
     const people = (await db.people.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
     const visits = (await db.visits.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
     const lines = [csvHeaderLine()];
+    for (const u of users) lines.push(userRevToLogLine(u));
     for (const p of people) lines.push(personRevToLogLine(p));
     for (const v of visits) lines.push(visitRevToLogLine(v));
-    return { text: lines.join('\n') + '\n', count: people.length + visits.length };
+    return { text: lines.join('\n') + '\n', count: users.length + people.length + visits.length };
   }
 
   refundAmountFor(tier) {
@@ -1060,6 +1180,24 @@ class DB {
     this._journal = typeof fn === 'function' ? fn : null;
   }
 
+  // Wire the current-actor source. fn() -> { userId, userV } | null.
+  setActor(fn) {
+    this._actorFn = typeof fn === 'function' ? fn : null;
+  }
+
+  _actor() {
+    if (!this._actorFn) return { userId: null, userV: null };
+    try {
+      const a = this._actorFn();
+      return {
+        userId: a && a.userId != null ? a.userId : null,
+        userV: a && a.userV != null ? a.userV : null,
+      };
+    } catch (_) {
+      return { userId: null, userV: null };
+    }
+  }
+
   // Tag + emit a person revision for backup. Callers pass the full revision row.
   _emitJournalPerson(rec) {
     if (!this._journal) return;
@@ -1070,6 +1208,49 @@ class DB {
   _emitJournalVisit(rec) {
     if (!this._journal) return;
     this._emitJournal({ kind: 'visit', ...rec });
+  }
+
+  // Tag + emit a user revision for backup (secrets excluded by SCHEMA_USER).
+  _emitJournalUser(rec) {
+    if (!this._journal) return;
+    this._emitJournal({ kind: 'user', ...rec });
+  }
+
+  // Append a user revision + refresh the `users` projection. Called by auth.js
+  // on create/disable/enable/reset. NEVER journals salt/hash/sessionToken.
+  async appendUserRevision(user, { log = true } = {}) {
+    const db = this._db;
+    const id = Number(user.id);
+    if (!id) throw new Error('appendUserRevision requires a numeric id');
+    const v = await this._nextRevUser(id);
+    const rev = {
+      id,
+      v,
+      username: user.username,
+      role: user.role === 'admin' ? 'admin' : 'user',
+      disabled: user.disabled ? 1 : 0,
+      createdAt: user.createdAt || new Date().toISOString(),
+      revAt: new Date().toISOString(),
+    };
+    await db.userRevs.add(rev);
+    if (log) this._emitJournalUser(rev);
+    return rev;
+  }
+
+  async _nextRevUser(id) {
+    const last = await this._db.userRevs
+      .where('[id+v]')
+      .between([id, Dexie.minKey], [id, Dexie.maxKey])
+      .last();
+    return last ? last.v + 1 : 1;
+  }
+
+  // Every user revision, oldest first. For restore + audit.
+  userRevisions(id) {
+    return this._db.userRevs
+      .where('[id+v]')
+      .between([id, Dexie.minKey], [id, Dexie.maxKey])
+      .toArray();
   }
 
   _emitJournal(entry) {

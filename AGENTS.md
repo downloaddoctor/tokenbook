@@ -171,7 +171,22 @@ schemaless — columns are whatever the code writes. Full column lists below.
    lastDay    'YYYY-MM-DD'|null  daily-snapshot idempotency
    -- app-only. Never written to the CSV log.
 
- users  ('++id, &username, role, disabled')   [Dexie v2, added for auth]
+ users  ('++id, &username, role, disabled')   [Dexie v2, added for auth] — CURRENT-STATE projection
+   id           int     PK  autoincrement
+   username     string  UNIQUE, UPPER-cased
+   role         'admin'|'user'
+   salt, hash   string  base64 (PBKDF2-SHA256, 150k iter); SECRETS, never logged
+   iter         int     PBKDF2 iteration count
+   disabled     0|1
+   sessionToken string  rotated on login/reset; SECRET, never logged
+   createdAt, updatedAt, lastLoginAt  iso
+
+ userRevs  ('[id+v], id, v')   [Dexie v3] — append-only user history
+   id           int     PK1  -> users.id
+   v            int     PK2  revision
+   username, role, disabled, createdAt, revAt
+   -- NO secrets. Logged as schemaNo 0. Rebuilds attribution after a restore;
+      the `users` projection (with secrets) is NEVER cleared/overwritten by replay.
    id           int     PK  autoincrement
    username     string  UNIQUE, UPPER-cased
    role         'admin'|'user'  ('user' = all except Print Layout + Users + Users)
@@ -188,8 +203,11 @@ DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirecto
 # LOG FORMAT (schemaNo-tagged, delimiter '|', timestamps epoch-seconds)
  Head block (one per schema, typed columns):
    #head|schema|schemaNo|columns
-   #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch|revAt:epoch?
-   #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch|revAt:epoch?
+   #head|user|0|id:int|v:int|username:str|role:str|disabled:int|createdAt:epoch|revAt:epoch?
+   #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch|revAt:epoch?|userId:int?|userV:int?
+   #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch|revAt:epoch?|userId:int?|userV:int?
+ userId/userV = acting user + its revision at that write (audit; nullable for pre-auth rows).
+ Users are logged WITHOUT secrets (no salt/hash/iter/sessionToken) as schemaNo 0, append-only [id+v].
  Data line = `schemaNo|value1|value2|...` in the declared column order.
  Only revision tables are logged. peopleProj/visitsProj/meta are NEVER in the log.
  Restore = replay revisions (insert [rootId+v], idempotent), then rebuildProj().
@@ -218,7 +236,8 @@ db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisit
   exportAll, exportAllStream, listByDate, listByDateRange, listByDateRangePage, countByDateRange, totalsByDateRange, listAll, listPeople, searchPeopleByPrefix/Name/Mob,
   visitCountsForPeople, visitsForPerson, revisionsOf(entity,rootId), findVisitByDateToken,
   lastPaidVisitDaysFor, nextTokenForDate, getPerson, findPersonByNameMob,
-  setJournal, refundAmountFor, localDay, raw (-> Dexie),
+  setJournal, setActor(fn), appendUserRevision(user,{log}), userRevisions(id),
+  refundAmountFor, localDay, raw (-> Dexie),
   deleteVisitsByDate, deletePerson, deletePeopleByNameMob, setDbName, deleteDb (DEV/TEST)
   addVisit input keys: name, mob, age?, gender?, personId?, date, token, weight, followup,
     payment, fee, refundTier, preserve?  (preserve carries { rootId, v, personId, personV,
@@ -281,6 +300,9 @@ hasFsAccess is a NAMED export of backup.js; backup.hasFsAccess is undefined.
 restore calls resetPendingForRestore() so stale journal lines can't re-append.
 Identity collision on (name, mob) throws DuplicateIdentityError (register) or ConstraintError (Dexie).
 Roles are 'admin' | 'user' (normalizeRole).
+Every people/visits revision is stamped with the acting user: userId + userV (int pair, mirrors personId+personV). db.setActor(fn) is wired once in app.js from currentUserSync(). Null for pre-auth rows.
+User writes (create/disable/enable/reset) append a userRevs revision + emit a 'user' journal op. Secrets (salt/hash/iter/sessionToken) are NEVER in userRevs or the CSV.
+replayLog replays 'user' ops into userRevs only; the `users` projection (secrets) is NOT cleared — a restored user keeps its local password, or gets a secret-less stub an admin must reset.
 Auth is client-only, local-only: users live in the `users` store; passwords are PBKDF2-SHA256 (WebCrypto) — never stored in plaintext.
 First run (users count = 0) ALWAYS shows Create-Admin regardless of hash/URL; creating it auto-logs in as admin.
 app.js boots the shell ONLY after requireAuth() returns authed; the auth gate is not a router page and cannot be bypassed by hash.
