@@ -6,12 +6,14 @@
 //
 //   * Values are positional, matching the #head column order for that schemaNo.
 //   * Types are declared in the #head line: str, int, num, epoch, bool.
-//     `null` as a suffix (e.g. `age:int|null`) means the field is nullable.
+//     A `?` suffix (e.g. `age:int?`) marks a nullable field.
 //   * Delimiter is `|`. Never changes.
 //   * Timestamps are epoch-SECONDS at the file boundary (DB keeps ISO).
 //   * Projections (peopleProj/visitsProj) and meta are NOT written to the log.
 //     They are rebuilt on restore.
 //   * Unknown schemaNo → line skipped (forward-compatible).
+
+import { normalizeRefundTier } from '../core/billing.js';
 
 export const CSV_DELIM = '|';
 
@@ -69,14 +71,8 @@ export function csvHeaderLine() {
   return lines.join('\n');
 }
 
-// ---- refTier normalization (kept here for parity with db.js callers) ----
-
-export function normalizeRefundTier(v) {
-  const s = String(v == null ? '' : v).trim();
-  if (s === '' || s === '0') return 0;
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-}
+// ---- refTier normalization: owned by core/billing.js, re-exported here ----
+export { normalizeRefundTier };
 
 // ---- epoch <-> ISO at the file boundary ----
 

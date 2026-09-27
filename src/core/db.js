@@ -20,22 +20,20 @@
 
 import Dexie from 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
 import { localDay } from './day.js';
-import { evaluateFollowup, normalizeFee } from './billing.js';
+import {
+  evaluateFollowup,
+  normalizeFee,
+  REFUND_TIER_STEP,
+  refundAmountFor,
+  normalizeRefundTier,
+} from './billing.js';
 import { csvHeaderLine, personRevToLogLine, visitRevToLogLine } from '../backup/csv.js';
 
 const DB_NAME = 'tokenbook';
 
-// Refund amount = tier * REFUND_TIER_STEP. Exported for billing/tokens pages.
-export const REFUND_TIER_STEP = 100;
-export function refundAmountFor(tier) {
-  return normalizeRefundTier(tier) * REFUND_TIER_STEP;
-}
-export function normalizeRefundTier(v) {
-  const s = String(v == null ? '' : v).trim();
-  if (s === '' || s === '0') return 0;
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-}
+// Re-export the refund helpers from billing.js (canonical home) so existing
+// callers that read them off the db module keep working.
+export { REFUND_TIER_STEP, refundAmountFor, normalizeRefundTier };
 
 class DB {
   constructor() {

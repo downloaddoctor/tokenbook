@@ -5,6 +5,19 @@
 export const FOLLOWUP_WINDOW_DAYS = 6;
 export const DEFAULT_FEE = 300;
 
+// Refund tier N -> amount N * REFUND_TIER_STEP. 0 = no refund.
+// Single source for the form, DB write path, log codec, and Tokens page.
+export const REFUND_TIER_STEP = 100;
+export function refundAmountFor(tier) {
+  return normalizeRefundTier(tier) * REFUND_TIER_STEP;
+}
+export function normalizeRefundTier(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s === '' || s === '0') return 0;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 // A paid visit within [0, FOLLOWUP_WINDOW_DAYS] days of the target date is a
 // free follow-up. Returns false for null/negative/NaN day gaps.
 export function isWithinFollowupWindow(days) {
