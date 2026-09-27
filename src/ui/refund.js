@@ -47,8 +47,19 @@ export function openRefundDialog(visit) {
     const onHistory = () => {
       if (visit.rootId != null) openRevisions('visit', visit.rootId);
     };
+    // Esc must close the dialog even while the <select> has focus (a focused
+    // native select eats the first Escape to close its dropdown). Handle it
+    // explicitly at the dialog level.
+    const onKeydown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dlg.returnValue = '';
+        dlg.close();
+      }
+    };
     const onClose = () => {
       dlg.removeEventListener('close', onClose);
+      dlg.removeEventListener('keydown', onKeydown);
       sel.removeEventListener('change', onSelChange);
       if (histBtn) histBtn.removeEventListener('click', onHistory);
       resolve(dlg.returnValue === 'save' ? sel.value : null);
@@ -56,10 +67,13 @@ export function openRefundDialog(visit) {
 
     dlg.returnValue = '';
     dlg.addEventListener('close', onClose);
+    dlg.addEventListener('keydown', onKeydown);
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
     dlg.showModal();
-    sel.focus();
+    // Focus Save, NOT the select: a focused native <select> swallows the first
+    // Escape (it closes the dropdown), so Esc would not close the dialog.
+    (saveBtn || dlg).focus();
   });
 }
 

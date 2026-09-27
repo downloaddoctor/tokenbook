@@ -695,11 +695,14 @@ class DB {
 
   async setVisitRefund(rootId, tier) {
     const t = normalizeRefundTier(tier);
-    const nowIso = new Date().toISOString();
     const db = this._db;
     return db.transaction('rw', db.visits, db.visitsProj, db.peopleProj, async () => {
       const cur = await this._currentVisit(rootId);
       if (!cur) throw new Error('Visit not found: ' + rootId);
+      // No-op: saving the same tier must not append a revision.
+      if (normalizeRefundTier(cur.refundTier) === t) {
+        return await db.visitsProj.get(rootId);
+      }
       const rec = { ...cur, v: cur.v + 1, refundTier: t };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);
@@ -709,17 +712,27 @@ class DB {
   }
 
   async setVisitBilling(rootId, { followup, payment, fee }) {
-    const nowIso = new Date().toISOString();
     const db = this._db;
     return db.transaction('rw', db.visits, db.visitsProj, async () => {
       const cur = await this._currentVisit(rootId);
       if (!cur) throw new Error('Visit not found: ' + rootId);
+      const nextFollowup = followup != null ? (followup ? 1 : 0) : cur.followup;
+      const nextPayment = payment != null ? (payment ? 1 : 0) : cur.payment;
+      const nextFee = fee != null ? Number(fee) : cur.fee;
+      // No-op: nothing changed -> do not append a revision.
+      if (
+        nextFollowup === cur.followup &&
+        nextPayment === cur.payment &&
+        nextFee === cur.fee
+      ) {
+        return await db.visitsProj.get(rootId);
+      }
       const rec = {
         ...cur,
         v: cur.v + 1,
-        followup: followup != null ? (followup ? 1 : 0) : cur.followup,
-        payment: payment != null ? (payment ? 1 : 0) : cur.payment,
-        fee: fee != null ? Number(fee) : cur.fee,
+        followup: nextFollowup,
+        payment: nextPayment,
+        fee: nextFee,
       };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);
@@ -736,11 +749,12 @@ class DB {
   }
   async setVisitHidden(rootId, hidden) {
     const h = hidden ? 1 : 0;
-    const nowIso = new Date().toISOString();
     const db = this._db;
     return db.transaction('rw', db.visits, db.visitsProj, db.peopleProj, async () => {
       const cur = await this._currentVisit(rootId);
       if (!cur) throw new Error('Visit not found: ' + rootId);
+      // No-op: already in the requested visibility state.
+      if ((cur.hidden ? 1 : 0) === h) return await db.visitsProj.get(rootId);
       const rec = { ...cur, v: cur.v + 1, hidden: h };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);

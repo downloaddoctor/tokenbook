@@ -79,7 +79,7 @@ async function refresh() {
       r.payment ? 'UPI' : 'Cash',
       r.fee != null ? r.fee : '',
       refundLabel(r.refundTier),
-      new Date(r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      new Date(r.updatedAt || r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     ]) {
       const td = document.createElement('td');
       td.textContent = String(c);
