@@ -93,7 +93,7 @@ export function closeRevisions() {
 
 // ---- diff engine ------------------------------------------------------
 // Fields that are metadata, not content — never shown as a change.
-const META_KEYS = new Set(['v', 'createdAt', 'rootId', 'personV']);
+const META_KEYS = new Set(['v', 'createdAt', 'revAt', 'rootId', 'personV']);
 
 // Human labels. Falls back to the raw key.
 const LABELS = {
