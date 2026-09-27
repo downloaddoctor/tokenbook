@@ -619,8 +619,19 @@ tbody tr.active:hover {
   height: var(--control-h);
   padding: 0 var(--control-pad-x);
 }
-.inline input[type='search'] {
+/* Higher specificity (0-2-1) than input[type='search'] (0-1-1) so the
+   min-width below is NOT reset to 0 by the later search-chrome reset. */
+input[type='search'].toolbar-search {
+  scroll-margin-top: calc(var(--topbar-h) + 10px);
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
   min-width: 220px;
+  max-width: 320px;
 }
 
 /* Patients table: static sort indicator on the implicit DESC column. */
