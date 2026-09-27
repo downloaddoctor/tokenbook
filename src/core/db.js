@@ -458,10 +458,15 @@ class DB {
       .toArray();
   }
 
-  async lastPaidVisitDaysFor(personId, date) {
+  // Newest PAID visit for a person, as a day-gap to `date`. `excludeRootId`
+  // skips the visit currently being written/edited — otherwise a paid visit
+  // would anchor on ITSELF and flip to a free follow-up on any edit.
+  async lastPaidVisitDaysFor(personId, date, excludeRootId) {
     if (!personId) return null;
     const rows = await this._db.visitsProj.where('personId').equals(personId).toArray();
-    const vis = rows.filter((v) => !v.hidden).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const vis = rows
+      .filter((v) => !v.hidden && v.rootId !== excludeRootId)
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     for (const v of vis) {
       if (!v.followup) return { visit: v, days: this._daysBetween(v.date, date) };
     }
@@ -482,12 +487,12 @@ class DB {
 
   // ---------- write path ----------
 
-  async _resolveBilling({ personId, date, followup, fee }) {
+  async _resolveBilling({ personId, date, followup, fee, excludeRootId }) {
     const baseFee = normalizeFee(fee);
     const explicit = followup === 0 || followup === 1 ? followup : null;
     let lastPaidDays = null;
     if (explicit !== 0) {
-      const last = await this.lastPaidVisitDaysFor(personId, date);
+      const last = await this.lastPaidVisitDaysFor(personId, date, excludeRootId);
       if (last && last.days != null) lastPaidDays = last.days;
     }
     const { followup: fu, fee: outFee } = evaluateFollowup({ lastPaidDays, explicit, baseFee });
@@ -629,11 +634,15 @@ class DB {
       personId = person.rootId;
       const personV = person.v;
 
-      const billing = await this._resolveBilling({ personId, date, followup, fee });
+      // Resolve the target visit root FIRST so billing can exclude it from its
+      // own follow-up anchor lookup (a paid visit must not follow up on itself).
+      const existingProj = await db.visitsProj.where('[date+token]').equals([date, token]).first();
+      const excludeRootId = existingProj ? existingProj.rootId : null;
+
+      const billing = await this._resolveBilling({ personId, date, followup, fee, excludeRootId });
       followup = billing.followup;
       fee = billing.fee;
 
-      const existingProj = await db.visitsProj.where('[date+token]').equals([date, token]).first();
       let rootId;
       let v;
       let created = false;

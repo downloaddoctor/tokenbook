@@ -336,6 +336,10 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const v1b = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('edit: age updated to 41', v1b && v1b.person && v1b.person.age, 41);
   rep.eq('edit: still same person', v1b && v1b.visit.personId, pidA);
+  // A paid visit must NOT follow up on itself when edited (billing excludes
+  // the visit being written from its own anchor lookup).
+  rep.eq('edit: still paid (followup 0)', v1b && v1b.visit.followup, 0);
+  rep.eq('edit: fee still 300', v1b && v1b.visit.fee, 300);
 
   // ---- 5. REASSIGN VISIT (token 1 -> patient B) ------------------------
   stage('5. reassign visit (token 1 -> patient B)');

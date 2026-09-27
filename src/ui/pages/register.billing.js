@@ -4,7 +4,7 @@
 import db from '../../core/db.js';
 import ps from '../../print/ps.js';
 import { evaluateFollowup, followupDaysLeft, DEFAULT_FEE } from '../../core/billing.js';
-import { getB } from './register.ctx.js';
+import { getB, getFlags } from './register.ctx.js';
 
 export function fieldValues() {
   const b = getB();
@@ -68,9 +68,13 @@ export async function applyFollowupRule(personId) {
     setFollowupNote('');
     return;
   }
+  // Exclude the loaded visit from its own follow-up anchor lookup — a paid
+  // visit must not follow up on itself when edited.
+  const flags = getFlags();
+  const excludeRootId = flags.loadedVisitId != null ? flags.loadedVisitId : null;
   let last = null;
   try {
-    last = await db.lastPaidVisitDaysFor(personId, day);
+    last = await db.lastPaidVisitDaysFor(personId, day, excludeRootId);
   } catch (_) {
     last = null;
   }
