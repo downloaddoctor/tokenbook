@@ -1,378 +1,340 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>TokenBook</title>
-    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-    <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#2563eb" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE=' https://unpkg.com https://downloaddoctor.github.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://unpkg.com; frame-src https://downloaddoctor.github.io; worker-src 'self'; base-uri 'self'; form-action 'self'"
-    />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
-    />
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <header class="topbar">
-      <nav class="tabs">
-        <button type="button" class="nav-tab" data-route="register">
-          Register<kbd class="kbd">Ctrl+1</kbd>
-        </button>
-        <button type="button" class="nav-tab" data-route="tokens">
-          Tokens<kbd class="kbd">Ctrl+2</kbd>
-        </button>
-        <button type="button" class="nav-tab" data-route="patients">
-          Patients<kbd class="kbd">Ctrl+3</kbd>
-        </button>
-        <button type="button" class="nav-tab" data-route="printLayout">
-          Print Layout<kbd class="kbd">Ctrl+4</kbd>
-        </button>
-      </nav>
-    </header>
 
-    <main id="main">
-      <section class="page" id="page-register" hidden>
-        <div class="split">
-          <div class="split-left">
-            <form id="patient-form" autocomplete="off">
-              <label class="span-3up"
-                >Date
-                <input id="f-date" name="date" type="date" required />
-              </label>
-              <label class="span-3up"
-                >Token
-                <input id="f-token" name="token" type="number" required min="1" />
-              </label>
-              <label class="span-3up"
-                >Patient ID
-                <input
-                  id="f-patient-id"
-                  name="patient-id"
-                  type="number"
-                  min="1"
-                  placeholder="Auto"
-                  autocomplete="off"
-                />
-              </label>
-              <label class="autofill-field span-4"
-                >Name
-                <input
-                  id="f-name"
-                  name="name"
-                  type="text"
-                  required
-                  maxlength="80"
-                  autocomplete="off"
-                />
-                <ul id="name-suggest" class="suggest-list" hidden></ul>
-              </label>
-              <label class="autofill-field span-4"
-                >Mobile
-                <input
-                  id="f-mob"
-                  name="mob"
-                  type="tel"
-                  required
-                  inputmode="numeric"
-                  pattern="[0-9+\- ]{6,15}"
-                  maxlength="15"
-                  autocomplete="off"
-                  />
-              </label>
-              <label class="span-3up"
-                >Age
-                <input id="f-age" name="age" type="number" required min="0" max="150" />
-              </label>
-              <label class="span-3up"
-                >Gender
-                <select id="f-gender" name="gender">
-                  <option value="M">Male</option>
-                  <option value="F">Female</option>
-                  <option value="O">Other</option>
-                </select>
-              </label>
-              <label class="span-3up"
-                >Weight (kg)
-                <input id="f-weight" name="weight" type="number" required min="0" max="400" step="0.1" />
-              </label>
-              <label class="span-3up"
-                >Follow up
-                <select id="f-followup" name="followup" required>
-                  <option value="0">No — paid visit</option>
-                  <option value="1">Yes — free</option>
-                </select>
-              </label>
-              <label class="span-3up"
-                >Payment
-                <select id="f-payment" name="payment" required>
-                  <option value="0">Offline / Cash</option>
-                  <option value="1">UPI / Online</option>
-                </select>
-              </label>
-              <label class="span-3up"
-                >Fee
-                <input id="f-fee" name="fee" type="number" required min="0" step="1" value="300" />
-              </label>
-              <p id="followup-note" class="hint span-4" hidden></p>
-              <div class="form-row">
-                <button id="btn-save-print" type="submit" class="primary">
-                  Save &amp; Print<kbd class="kbd">Alt+S</kbd>
-                </button>
-                <button id="btn-new-bill" type="button" title="Clear fields for the next patient">
-                  New Visit<kbd class="kbd">Alt+N</kbd>
-                </button>
-              </div>
-            </form>
-            <div class="register-hints">
-              <span class="kbd-hint" id="hint-history">History<kbd class="kbd">Alt+H</kbd></span>
-              <span class="kbd-hint" id="hint-refund">Refund<kbd class="kbd">Alt+R</kbd></span>
-            </div>
-          </div>
-          <div class="split-right">
-            <div id="register-ps-host" class="ps-host"></div>
-          </div>
-        </div>
-      </section>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TokenBook</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE=' https://unpkg.com https://downloaddoctor.github.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://unpkg.com; frame-src https://downloaddoctor.github.io; worker-src 'self'; base-uri 'self'; form-action 'self'" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
 
-      <section class="page" id="page-tokens" hidden>
-        <div class="toolbar">
-          <div class="seg" id="tokens-mode" role="tablist">
-            <button type="button" class="seg-btn active" data-mode="day">Day</button>
-            <button type="button" class="seg-btn" data-mode="month">Month</button>
-            <button type="button" class="seg-btn" data-mode="range">Range</button>
-          </div>
-          <input id="tokens-date" type="date" aria-label="Day" />
-          <input id="tokens-month" type="month" aria-label="Month" hidden />
-          <input id="tokens-from" type="date" aria-label="From" hidden />
-          <span id="tokens-range-sep" class="range-sep" hidden>→</span>
-          <input id="tokens-to" type="date" aria-label="To" hidden />
-          <button id="tokens-today" type="button">Today</button>
-        </div>
-        <p id="tokens-summary" class="summary"></p>
-        <table id="tokens-table">
-          <thead>
-            <tr>
-              <th id="tokens-th-date" hidden>Date</th>
-              <th>Token</th>
-              <th>Name</th>
-              <th>Mobile</th>
-              <th>Age</th>
-              <th>Gender</th>
-              <th>Wt</th>
-              <th>Follow up</th>
-              <th>Payment</th>
-              <th>Fee</th>
-              <th>Refund</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <p id="tokens-empty" class="empty">No tokens for this date.</p>
-        <div class="pager" id="tokens-pager" hidden>
-          <button id="tokens-pg-prev" type="button">Prev</button>
-          <span id="tokens-pg-info" class="hint"></span>
-          <button id="tokens-pg-next" type="button">Next</button>
-        </div>
-        <p class="hint">Click a row to set or change the refund.</p>
-      </section>
+<body>
+  <header class="topbar">
+    <nav class="tabs">
+      <button type="button" class="nav-tab" data-route="register">
+        Register<kbd class="kbd">Ctrl+1</kbd>
+      </button>
+      <button type="button" class="nav-tab" data-route="tokens">
+        Tokens<kbd class="kbd">Ctrl+2</kbd>
+      </button>
+      <button type="button" class="nav-tab" data-route="patients">
+        Patients<kbd class="kbd">Ctrl+3</kbd>
+      </button>
+      <button type="button" class="nav-tab" data-route="printLayout">
+        Print Layout<kbd class="kbd">Ctrl+4</kbd>
+      </button>
+    </nav>
+  </header>
 
-      <section class="page" id="page-patients" hidden>
-        <div class="toolbar">
-          <input
-            id="patients-search"
-            type="search"
-            placeholder="Search name or mobile…"
-            aria-label="Search patients"
-            class="toolbar-search"
-          />
-          <span id="patients-count" class="hint"></span>
-        </div>
-        <table id="patients-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Mobile</th>
-              <th>Age</th>
-              <th>Wt</th>
-              <th>Visits</th>
-              <th class="sorted-desc" title="Newest first">Last visit <span class="caret" aria-hidden="true">▼</span></th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <p id="patients-empty" class="empty">No patients.</p>
-        <div class="pager" id="patients-pager" hidden>
-          <button id="pg-prev" type="button">Prev</button>
-          <span id="pg-info" class="hint"></span>
-          <button id="pg-next" type="button">Next</button>
-        </div>
-      </section>
-
-      <dialog id="refund-dialog" class="modal-dialog">
-        <form method="dialog" class="modal-card">
-          <header class="modal-head">
-            <div>
-              <h2>Refund</h2>
-              <p class="hint" id="refund-sub"></p>
-            </div>
-          </header>
-          <div class="modal-body">
-            <label>Refund tier
-              <select id="refund-tier">
-                <option value="0">None</option>
-                <option value="1">R1 — ₹100</option>
-                <option value="2">R2 — ₹200</option>
-                <option value="3">R — ₹300 (full)</option>
+  <main id="main">
+    <section class="page" id="page-register" hidden>
+      <div class="split">
+        <div class="split-left">
+          <form id="patient-form" autocomplete="off">
+            <label class="span-3up">Date
+              <input id="f-date" name="date" type="date" required />
+            </label>
+            <label class="span-3up">Token
+              <input id="f-token" name="token" type="number" required min="1" />
+            </label>
+            <label class="span-3up">Patient ID
+              <input id="f-patient-id" name="patient-id" type="number" min="1" placeholder="Auto" autocomplete="off" />
+            </label>
+            <label class="autofill-field span-4">Name
+              <input id="f-name" name="name" type="text" required maxlength="80" autocomplete="off" />
+              <ul id="name-suggest" class="suggest-list" hidden></ul>
+            </label>
+            <label class="autofill-field span-4">Mobile
+              <input id="f-mob" name="mob" type="tel" required inputmode="numeric" pattern="[0-9+\- ]{6,15}"
+                maxlength="15" autocomplete="off" />
+            </label>
+            <label class="span-3up">Age
+              <input id="f-age" name="age" type="number" required min="0" max="150" />
+            </label>
+            <label class="span-3up">Gender
+              <select id="f-gender" name="gender">
+                <option value="M">Male</option>
+                <option value="F">Female</option>
+                <option value="O">Other</option>
               </select>
             </label>
-            <p class="hint" id="refund-preview"></p>
+            <label class="span-3up">Weight (kg)
+              <input id="f-weight" name="weight" type="number" required min="0" max="400" step="0.1" />
+            </label>
+            <label class="span-3up">Follow up
+              <select id="f-followup" name="followup" required>
+                <option value="0">No — paid visit</option>
+                <option value="1">Yes — free</option>
+              </select>
+            </label>
+            <label class="span-3up">Payment
+              <select id="f-payment" name="payment" required>
+                <option value="0">Offline / Cash</option>
+                <option value="1">UPI / Online</option>
+              </select>
+            </label>
+            <label class="span-3up">Fee
+              <input id="f-fee" name="fee" type="number" required min="0" step="1" value="300" />
+            </label>
+            <p id="followup-note" class="hint span-4" hidden></p>
+            <div class="form-row">
+              <button id="btn-save-print" type="submit" class="primary">
+                Save &amp; Print<kbd class="kbd">Alt+S</kbd>
+              </button>
+              <button id="btn-new-bill" type="button" title="Clear fields for the next patient">
+                New Visit<kbd class="kbd">Alt+N</kbd>
+              </button>
+            </div>
+          </form>
+          <div class="register-hints">
+            <span class="kbd-hint" id="hint-history">History<kbd class="kbd">Alt+H</kbd></span>
+            <span class="kbd-hint" id="hint-refund">Refund<kbd class="kbd">Alt+R</kbd></span>
           </div>
-          <footer class="modal-actions">
-            <button type="button" class="ghost-btn" id="refund-history">History</button>
-            <span class="spacer"></span>
-            <button value="cancel" type="submit">Cancel</button>
-            <button value="save" type="submit" class="primary" id="refund-save">Save</button>
-          </footer>
-        </form>
-      </dialog>
-
-      <dialog id="pat-id-confirm" class="modal-dialog">
-        <form method="dialog" class="modal-card">
-          <header class="modal-head">
-            <div>
-              <h2 id="pat-id-confirm-title">Update patient?</h2>
-              <p class="hint" id="pat-id-confirm-sub"></p>
-            </div>
-          </header>
-          <div class="modal-body" id="pat-id-confirm-body"></div>
-          <footer class="modal-actions" id="pat-id-confirm-actions">
-            <button value="cancel" type="submit">Cancel</button>
-            <button value="new" type="submit">Use as new patient</button>
-            <button value="update" type="submit" class="primary">Update patient</button>
-          </footer>
-        </form>
-      </dialog>
-
-      <div id="history-modal" class="modal" hidden>
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="history-name">
-          <header class="modal-head">
-            <div>
-              <h2 id="history-name">Patient</h2>
-              <p id="history-meta" class="hint"></p>
-            </div>
-            <div class="modal-head-actions">
-              <button id="history-revs" type="button" class="ghost-btn">Identity revisions</button>
-              <button id="history-close" type="button" class="modal-close" aria-label="Close">×</button>
-            </div>
-          </header>
-          <div class="modal-scroll">
-            <div id="history-list" class="hx-list"></div>
-          </div>
+        </div>
+        <div class="split-right">
+          <div id="register-ps-host" class="ps-host"></div>
         </div>
       </div>
+    </section>
 
-      <dialog id="revisions-modal" class="modal-dialog">
-        <div class="modal-card" aria-labelledby="revisions-title">
-          <header class="modal-head">
-            <div>
-              <h2 id="revisions-title">Revisions</h2>
-              <p id="revisions-meta" class="hint"></p>
-            </div>
-            <button id="revisions-close" type="button" class="modal-close" aria-label="Close">×</button>
-          </header>
-          <div class="modal-scroll">
-            <div id="revisions-list" class="hx-list"></div>
-          </div>
+    <section class="page" id="page-tokens" hidden>
+      <div class="toolbar">
+        <div class="seg" id="tokens-mode" role="tablist">
+          <button type="button" class="seg-btn active" data-mode="day">Day</button>
+          <button type="button" class="seg-btn" data-mode="month">Month</button>
+          <button type="button" class="seg-btn" data-mode="range">Range</button>
         </div>
-      </dialog>
-
-      <section class="page" id="page-print-layout" hidden>
-        <div id="print-layout-ps-host" class="ps-host ps-host-full"></div>
-      </section>
-    </main>
-
-    <dialog id="restore-confirm" class="modal-dialog">
-      <form method="dialog" class="modal-card">
-        <header class="modal-head">
-          <div>
-            <h2>Restore from folder?</h2>
-            <p class="hint" id="restore-confirm-sub"></p>
-          </div>
-        </header>
-        <div class="modal-body">
-          <p>This <strong>replaces all current data</strong> with the contents of the backup folder. This cannot be undone.</p>
-          <p class="hint" id="restore-confirm-info"></p>
-        </div>
-        <footer class="modal-actions">
-          <button value="cancel" type="submit">Cancel</button>
-          <button value="restore" type="submit" class="primary">Restore</button>
-        </footer>
-      </form>
-    </dialog>
-
-    <footer id="statusbar" role="contentinfo">
-      <div class="statusbar-left">
-        <span id="ps-status" class="status">paperstamp: idle</span>
-        <span id="backup-status" class="status">backup: idle</span>
+        <input id="tokens-date" type="date" aria-label="Day" />
+        <input id="tokens-month" type="month" aria-label="Month" hidden />
+        <input id="tokens-from" type="date" aria-label="From" hidden />
+        <span id="tokens-range-sep" class="range-sep" hidden>→</span>
+        <input id="tokens-to" type="date" aria-label="To" hidden />
+        <button id="tokens-today" type="button">Today</button>
       </div>
-      <div class="statusbar-right">
-        <input id="file-restore" type="file" accept=".csv,text/csv" hidden />
-        <button id="btn-backup" type="button" title="Backup patients to a folder">Backup</button>
-        <button id="btn-restore" type="button" title="Restore patients from folder or file">
-          Restore
-        </button>
-        <button id="btn-log" type="button" title="Show the append-only backup log">Log</button>
-        <button id="btn-test" type="button" title="Self-test: add / update / edit / refund + log">Test</button>
+      <p id="tokens-summary" class="summary"></p>
+      <table id="tokens-table">
+        <thead>
+          <tr>
+            <th id="tokens-th-date" hidden>Date</th>
+            <th>Token</th>
+            <th>Name</th>
+            <th>Mobile</th>
+            <th>Age</th>
+            <th>Gender</th>
+            <th>Wt</th>
+            <th>Follow up</th>
+            <th>Payment</th>
+            <th>Fee</th>
+            <th>Refund</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="tokens-empty" class="empty">No tokens for this date.</p>
+      <div class="pager" id="tokens-pager" hidden>
+        <button id="tokens-pg-prev" type="button">Prev</button>
+        <span id="tokens-pg-info" class="hint"></span>
+        <button id="tokens-pg-next" type="button">Next</button>
       </div>
-    </footer>
+      <p class="hint">Click a row to set or change the refund.</p>
+    </section>
 
-    <dialog id="log-dialog" class="modal-dialog">
-      <form method="dialog" class="modal-card">
-        <header class="modal-head">
-          <div>
-            <h2>Backup log</h2>
-            <p class="hint" id="log-sub"></p>
-          </div>
-        </header>
-        <div class="modal-body">
-          <pre id="log-body" class="log-view"></pre>
+    <section class="page" id="page-patients" hidden>
+      <div class="toolbar">
+        <input id="patients-search" type="search" placeholder="Search name or mobile…" aria-label="Search patients"
+          class="toolbar-search" />
+        <span id="patients-count" class="hint"></span>
+      </div>
+      <table id="patients-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Mobile</th>
+            <th>Age</th>
+            <th>Wt</th>
+            <th>Visits</th>
+            <th class="sorted-desc" title="Newest first">Last visit <span class="caret" aria-hidden="true">▼</span></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="patients-empty" class="empty">No patients.</p>
+      <div class="pager" id="patients-pager" hidden>
+        <button id="pg-prev" type="button">Prev</button>
+        <span id="pg-info" class="hint"></span>
+        <button id="pg-next" type="button">Next</button>
+      </div>
+    </section>
+
+    <section class="page" id="page-print-layout" hidden>
+      <div id="print-layout-ps-host" class="ps-host ps-host-full"></div>
+    </section>
+  </main>
+
+
+  <dialog id="refund-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Refund</h2>
+          <p class="hint" id="refund-sub"></p>
         </div>
-        <footer class="modal-actions">
-          <button value="close" type="submit">Close</button>
-        </footer>
-      </form>
-    </dialog>
+      </header>
+      <div class="modal-body">
+        <label>Refund tier
+          <select id="refund-tier">
+            <option value="0">None</option>
+            <option value="1">R1 — ₹100</option>
+            <option value="2">R2 — ₹200</option>
+            <option value="3">R — ₹300 (full)</option>
+          </select>
+        </label>
+        <p class="hint" id="refund-preview"></p>
+      </div>
+      <footer class="modal-actions">
+        <button type="button" class="ghost-btn" id="refund-history">History</button>
+        <span class="spacer"></span>
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="save" type="submit" class="primary" id="refund-save">Save</button>
+      </footer>
+    </form>
+  </dialog>
 
-    <dialog id="test-dialog" class="modal-dialog">
-      <form method="dialog" class="modal-card">
-        <header class="modal-head">
-          <div>
-            <h2>Self-test</h2>
-            <p class="hint" id="test-sub">idle</p>
-          </div>
-        </header>
-        <div class="modal-body">
-          <pre id="test-body" class="log-view"></pre>
+  <dialog id="pat-id-confirm" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2 id="pat-id-confirm-title">Update patient?</h2>
+          <p class="hint" id="pat-id-confirm-sub"></p>
         </div>
-        <footer class="modal-actions">
-          <button value="close" type="submit">Close</button>
-        </footer>
-      </form>
-    </dialog>
+      </header>
+      <div class="modal-body" id="pat-id-confirm-body"></div>
+      <footer class="modal-actions" id="pat-id-confirm-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="new" type="submit">Use as new patient</button>
+        <button value="update" type="submit" class="primary">Update patient</button>
+      </footer>
+    </form>
+  </dialog>
 
-    <div id="toast-host" aria-live="polite" aria-atomic="true"></div>
+  <div id="history-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="history-name">
+      <header class="modal-head">
+        <div>
+          <h2 id="history-name">Patient</h2>
+          <p id="history-meta" class="hint"></p>
+        </div>
+        <div class="modal-head-actions">
+          <button id="history-revs" type="button" class="ghost-btn">Identity revisions</button>
+          <button id="history-close" type="button" class="modal-close" aria-label="Close">×</button>
+        </div>
+      </header>
+      <div class="modal-scroll">
+        <div id="history-list" class="hx-list"></div>
+      </div>
+    </div>
+  </div>
 
-    <script src="https://downloaddoctor.github.io/paperstamp/sdk.js"></script>
-    <script src="pw.js"></script>
-    <script type="module" src="src/ui/app.js"></script>
-  </body>
+  <dialog id="revisions-modal" class="modal-dialog">
+    <div class="modal-card" aria-labelledby="revisions-title">
+      <header class="modal-head">
+        <div>
+          <h2 id="revisions-title">Revisions</h2>
+          <p id="revisions-meta" class="hint"></p>
+        </div>
+        <button id="revisions-close" type="button" class="modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="modal-scroll">
+        <div id="revisions-list" class="hx-list"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="restore-confirm" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Restore from folder?</h2>
+          <p class="hint" id="restore-confirm-sub"></p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <p>This <strong>replaces all current data</strong> with the contents of the backup folder. This cannot be
+          undone.</p>
+        <p class="hint" id="restore-confirm-info"></p>
+      </div>
+      <footer class="modal-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="restore" type="submit" class="primary">Restore</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <footer id="statusbar" role="contentinfo">
+    <div class="statusbar-left">
+      <span id="ps-status" class="status">paperstamp: idle</span>
+      <span id="backup-status" class="status">backup: idle</span>
+    </div>
+    <div class="statusbar-right">
+      <input id="file-restore" type="file" accept=".csv,text/csv" hidden />
+      <button id="btn-backup" type="button" title="Backup patients to a folder">Backup</button>
+      <button id="btn-restore" type="button" title="Restore patients from folder or file">
+        Restore
+      </button>
+      <button id="btn-log" type="button" title="Show the append-only backup log">Log</button>
+      <button id="btn-test" type="button" title="Self-test: add / update / edit / refund + log">Test</button>
+    </div>
+  </footer>
+
+  <dialog id="log-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Backup log</h2>
+          <p class="hint" id="log-sub"></p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <pre id="log-body" class="log-view"></pre>
+      </div>
+      <footer class="modal-actions">
+        <button value="close" type="submit">Close</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="test-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Self-test</h2>
+          <p class="hint" id="test-sub">idle</p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <pre id="test-body" class="log-view"></pre>
+      </div>
+      <footer class="modal-actions">
+        <button value="close" type="submit">Close</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toast-host" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="https://downloaddoctor.github.io/paperstamp/sdk.js"></script>
+  <script src="pw.js"></script>
+  <script type="module" src="src/ui/app.js"></script>
+</body>
+
 </html>
