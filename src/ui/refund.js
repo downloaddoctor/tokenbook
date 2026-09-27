@@ -71,9 +71,10 @@ export function openRefundDialog(visit) {
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
     dlg.showModal();
-    // Focus Save, NOT the select: a focused native <select> swallows the first
-    // Escape (it closes the dropdown), so Esc would not close the dialog.
-    (saveBtn || dlg).focus();
+    // Focus the tier select — it is the dialog's primary control. Esc still
+    // closes the dialog via the keydown handler above (and natively when the
+    // select's dropdown is not open).
+    sel.focus();
   });
 }
 
