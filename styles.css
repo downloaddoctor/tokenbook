@@ -900,3 +900,8 @@ tbody tr:last-child td {
 .rev-change { display: flex; gap: 8px; font-size: 12px; }
 .rev-label { min-width: 84px; color: var(--muted); }
 .rev-val { color: inherit; }
+
+
+.hx-badge.badge-current { background: var(--accent-soft); color: var(--accent); }
+.hx-badge.badge-superseded { opacity: 0.7; }
+.hx-badge.badge-hidden { background: rgba(200, 60, 60, 0.12); color: #c0392b; }

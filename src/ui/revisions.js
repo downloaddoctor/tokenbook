@@ -164,9 +164,24 @@ function renderStep(rev, prev, index, total) {
   const when = rev.createdAt ? new Date(rev.createdAt) : null;
   const abs = when ? when.toLocaleString() : '';
   const rel = rev.createdAt ? timeAgo(rev.createdAt) : '';
+  // Badge meaning: the newest v is "current"; older v's are "superseded".
+  // `hidden` is a separate axis (soft delete) and overrides the label.
+  const isCurrent = index === 0;
+  let badge;
+  let badgeCls = 'hx-badge';
+  if (rev.hidden) {
+    badge = 'hidden';
+    badgeCls += ' badge-hidden';
+  } else if (isCurrent) {
+    badge = 'current';
+    badgeCls += ' badge-current';
+  } else {
+    badge = 'superseded';
+    badgeCls += ' badge-superseded';
+  }
   head.append(
-    span('hx-date', 'v' + rev.v + (index === 0 ? ' · current' : '')),
-    span('hx-badge', rev.hidden ? 'hidden' : 'active'),
+    span('hx-date', 'v' + rev.v),
+    span(badgeCls, badge),
     span('hx-time', rel ? rel + (abs ? ' · ' + abs : '') : abs)
   );
   if (rev.hidden) item.classList.add('hidden-rev');
