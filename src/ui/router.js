@@ -1,9 +1,14 @@
 // Router: tab activation, hash sync, keyboard shortcuts.
 // Owns nav-tab clicks, hashchange, and keydown. Calls pages[name].mount/unmount.
 
-export const ROUTES = ['register', 'tokens', 'patients', 'printLayout'];
+export const ROUTES = ['register', 'tokens', 'patients', 'printLayout', 'users'];
 
-// Primary input focused on Alt+1..4. Missing / printLayout -> no focus change.
+// Routes only an admin may activate. Workers are bounced to 'register' by
+// activateTab, so a typed hash or stale link cannot reach them. The matching
+// nav tabs are hidden in app.js (applySessionToShell).
+export const ADMIN_ONLY = new Set(['printLayout', 'users']);
+
+// Primary input focused on Alt+1..N. Missing / printLayout -> no focus change.
 const FOCUS_ON_ACTIVATE = {
   register: 'f-name',
   patients: 'patients-search',
@@ -25,6 +30,7 @@ const PAGE_ID = {
   tokens: 'page-tokens',
   patients: 'page-patients',
   printLayout: 'page-print-layout',
+  users: 'page-users',
 };
 
 function pageEl(name) {
@@ -42,12 +48,25 @@ export function routeFromHash() {
   return ROUTES.includes(h) ? h : 'register';
 }
 
-export function createRouter({ pages, onNewBill } = {}) {
+export function createRouter({ pages, onNewBill, canAccess } = {}) {
   let currentTab = null;
+
+  // Default: everything allowed. app.js passes a predicate that knows whether
+  // the current user is an admin.
+  const allowed = typeof canAccess === 'function' ? canAccess : () => true;
 
   function activateTab(name, force = false, syncHash = true) {
     if (!ROUTES.includes(name)) name = 'register';
-    if (currentTab === name && !force) return;
+    // Guard: an admin-only route requested by a non-admin falls back to
+    // register. Force a hash resync so a typed #/printLayout is rewritten.
+    if (ADMIN_ONLY.has(name) && !allowed(name)) {
+      name = 'register';
+      syncHash = true;
+    }
+    if (currentTab === name && !force) {
+      if (syncHash) location.hash = '#/' + name;
+      return;
+    }
 
     if (currentTab && pages[currentTab] && pages[currentTab].unmount) pages[currentTab].unmount();
     for (const r of ROUTES) {

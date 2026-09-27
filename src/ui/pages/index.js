@@ -5,5 +5,6 @@ import * as register from './register.js';
 import * as tokens from './tokens.js';
 import * as patients from './patients.js';
 import * as printLayout from './printLayout.js';
+import * as users from './users.js';
 
-export const Pages = { register, tokens, patients, printLayout };
+export const Pages = { register, tokens, patients, printLayout, users };

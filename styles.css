@@ -1015,3 +1015,50 @@ tbody tr:last-child td {
 .hx-badge.badge-current { background: var(--accent-soft); color: var(--accent); }
 .hx-badge.badge-superseded { opacity: 0.7; }
 .hx-badge.badge-hidden { background: rgba(200, 60, 60, 0.12); color: #c0392b; }
+
+/* ---------- auth gate ---------- */
+body.auth-locked { overflow: hidden; }
+#auth-root { position: fixed; inset: 0; z-index: 50; }
+.auth-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+  background: var(--bg);
+}
+.auth-card {
+  width: min(92vw, 380px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: var(--shadow-bar);
+}
+.auth-title { margin: 0; font-size: 20px; }
+.auth-sub { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+.auth-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.auth-label { color: var(--muted); }
+.auth-field input,
+.auth-field select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--bg);
+  color: var(--ink);
+}
+.auth-submit { margin-top: 4px; }
+.auth-error { margin: 0; color: var(--danger, #c0392b); font-size: 13px; }
+
+/* ---------- topbar right / whoami ---------- */
+.topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.whoami { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+/* ---------- users page ---------- */
+.users-actions { display: flex; gap: 6px; }
+.users-actions button { padding: 4px 10px; font-size: 12px; }
+tr.disabled-row td { opacity: 0.55; }

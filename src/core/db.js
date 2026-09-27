@@ -64,6 +64,11 @@ class DB {
       visitsProj: 'rootId, [date+token], date, personId, hidden',
       meta: 'key',
     });
+    // v2: users (auth). Idempotent add — Dexie upgrades in place, existing
+    // stores are untouched. `username` is unique and stored UPPER-cased.
+    instance.version(2).stores({
+      users: '++id, &username, role, disabled',
+    });
   }
 
   raw() {

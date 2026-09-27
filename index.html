@@ -17,7 +17,7 @@
 </head>
 
 <body>
-  <header class="topbar">
+  <header class="topbar" id="app-topbar" hidden>
     <nav class="tabs">
       <button type="button" class="nav-tab" data-route="register">
         Register<kbd class="kbd">Ctrl+1</kbd>
@@ -28,13 +28,22 @@
       <button type="button" class="nav-tab" data-route="patients">
         Patients<kbd class="kbd">Ctrl+3</kbd>
       </button>
-      <button type="button" class="nav-tab" data-route="printLayout">
+      <button type="button" class="nav-tab" data-route="printLayout" id="nav-printLayout">
         Print Layout<kbd class="kbd">Ctrl+4</kbd>
       </button>
+      <button type="button" class="nav-tab" data-route="users" id="nav-users" hidden>
+        Users<kbd class="kbd">Ctrl+5</kbd>
+      </button>
     </nav>
+    <div class="topbar-right">
+      <span id="whoami" class="whoami"></span>
+      <button type="button" id="btn-logout" class="ghost-btn">Logout</button>
+    </div>
   </header>
 
-  <main id="main">
+  <div id="auth-root" hidden></div>
+
+  <main id="main" hidden>
     <section class="page" id="page-register" hidden>
       <div class="split">
         <div class="split-left">
@@ -179,6 +188,27 @@
     <section class="page" id="page-print-layout" hidden>
       <div id="print-layout-ps-host" class="ps-host ps-host-full"></div>
     </section>
+
+    <section class="page" id="page-users" hidden>
+      <div class="toolbar">
+        <button type="button" id="users-new" class="primary">New user</button>
+        <span class="hint">Admin-only. Workers have full app access.</span>
+      </div>
+      <table id="users-table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Last login</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="users-empty" class="empty">No users.</p>
+    </section>
   </main>
 
 
@@ -280,7 +310,40 @@
     </form>
   </dialog>
 
-  <footer id="statusbar" role="contentinfo">
+  <dialog id="user-new-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card" id="user-new-form">
+      <header class="modal-head">
+        <div>
+          <h2>New user</h2>
+          <p class="hint">Create a worker or admin account.</p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <label class="auth-field">Username
+          <input id="user-new-name" type="text" maxlength="40" autocomplete="off" required />
+        </label>
+        <label class="auth-field">Role
+          <select id="user-new-role">
+            <option value="worker">Worker (full app access)</option>
+            <option value="admin">Admin (can manage users)</option>
+          </select>
+        </label>
+        <label class="auth-field">Password
+          <input id="user-new-pass" type="password" minlength="4" autocomplete="off" required />
+        </label>
+        <label class="auth-field">Confirm password
+          <input id="user-new-pass2" type="password" minlength="4" autocomplete="off" required />
+        </label>
+        <p id="user-new-err" class="auth-error" hidden></p>
+      </div>
+      <footer class="modal-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="create" type="submit" class="primary">Create</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <footer id="statusbar" role="contentinfo" hidden>
     <div class="statusbar-left">
       <span id="ps-status" class="status">paperstamp: idle</span>
       <span id="backup-status" class="status">backup: idle</span>

@@ -11,8 +11,8 @@ Save invariant: token + patient ID are corrected at SAVE, not on change.
   A patient ID matching no person is discarded -> new patient (matched by name+mob).
 
 # DIRECTORY
-src/core/       persistence + domain logic (db, day, time, billing)
-src/ui/         boot, router, DOM helpers, toast, reusable modals (history, refund)
+src/core/       persistence + domain logic (db, day, time, billing, auth)
+src/ui/         boot, auth gate, router, DOM helpers, toast, reusable modals (history, refund)
 src/ui/pages/   one module per route (register, tokens, patients, printLayout)
 src/backup/     FSA folder backup, CSV log codec, folder-handle meta store
 src/print/      paperstamp lifecycle + default layout
@@ -28,7 +28,11 @@ version.txt     deploy sentinel (NOT precached)
 index.html -> pw.js              PWA bootstrap (registers sw.js)
 pw.js -> sw.js                   precache + sentinel update check
 sw.js sentinel = ./version.txt   HEAD validator diff decides which assets refetch
-index.html -> src/ui/app.js      boot: open DB, init backup, wire router, tab hotkeys
+index.html -> src/ui/app.js      boot: open DB -> auth gate -> bootAuthed(router)
+bootAuthed(router)               ONLY runs with a session: hideGate, applySessionToShell (Users tab + whoami + Logout),
+                                 backup init, storage.persist, router.activateTab, ?dev=1 tools. Re-runnable across logout/login.
+auth gate (app.js)               requireAuth() -> create-admin (0 users) | login | authed -> bootAuthed
+Logout (topbar)                  core/auth.logout() then showAuthGate -> bootAuthed
 Alt+H (app.js)                   history modal for current form patient (dynamic import ui/history.js)
 Alt+L (app.js)                   Log dialog (clicks btn-log)
 Alt+B (app.js)                   Backup (clicks btn-backup)
@@ -36,7 +40,7 @@ Alt+R (register)                 refund dialog for loaded visit (paid only) via 
 Alt+V (register)                 revision history for loaded visit via ui/revisions.js (needs a saved visit)
 Alt+N                            new visit (via router onNewBill)
 Alt+S (register)                 submit form (Alt+S while Register mounted)
-Ctrl+1..4                        switch tabs; Alt+1..4 switch + focus primary input
+Ctrl+1..5                        switch tabs; Alt+1..5 switch + focus primary input (Users tab only for admins)
 ?dev=1                           shows Seed/Clear buttons (dynamic import src/dev/seed.js)
 Test button                      runs dev self-test (dynamic import src/dev/selftest.js)
 
@@ -52,13 +56,13 @@ core/billing.js  follow-up window + default fee; single source for form + DB + s
                  evaluateFollowup({lastPaidDays, explicit, baseFee}) -> {followup, fee, auto}
                  isWithinFollowupWindow(days), followupDaysLeft(days), normalizeFee(fee)
 ui/app.js        boot + global buttons (backup/restore/log/test); topbar wiring; Alt+H/L/B handler; boot() wrapped in .catch (fatal toast)
-ui/router.js     ROUTES, hash sync, keyboard shortcuts; getRouter()/setRouter() module holder so pages can switch tabs
+ui/router.js     ROUTES=['register','tokens','patients','printLayout','users'], hash sync, Alt/Ctrl+1..N shortcuts; getRouter()/setRouter() module holder so pages can switch tabs. ADMIN_ONLY set + createRouter({canAccess}) gate admin-only routes: a non-admin request is rewritten to 'register' and the hash resynced (typed hash cannot bypass). app.js supplies canAccess from a cached sessionIsAdmin flag.
 ui/dom.js        el/on/bindOff/setText/setClass helpers; re-exports timeAgo
 ui/toast.js      class Toast; default export = singleton; named toast/clearToast = bound methods
 ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity). "Identity revisions" button -> openRevisions('person', id).
 ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); shows rev.revAt (write time), not createdAt. Opened from ui/refund.js (visit) and ui/history.js (person), and Alt+V on Register.
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
-ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
+ui/pages/index.js       Pages registry {register, tokens, patients, printLayout, users}
 ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest
 ui/pages/register.ctx.js      shared DOM bag (getB/setB) + flags (getFlags) + cross-module hook registry (setHook/call)
 ui/pages/register.billing.js  fieldValues, refreshPreview, applyFollowupRule, setFollowupNote, lockFee/unlockFee, onFollowupChange
@@ -67,6 +71,12 @@ ui/pages/register.dialogs.js  identity-change / reassign prompts (pure DOM, no s
 ui/pages/tokens.js      Day/Month/Range list + per-row refund dialog (db.listByDate / listByDateRange)
 ui/pages/patients.js    patient registry + drill-in history modal
 ui/pages/printLayout.js paperstamp full designer
+ui/pages/users.js       admin-only user management: list/create/disable/reset; hides own Disable; reset self -> re-gate. Reached only via the admin-only 'users' route.
+core/auth.js            PBKDF2-SHA256 (150k iter, 16B salt, 32B key) + session. Only writer of the `users` store.
+                        requireAuth() -> {state:'create-admin'|'login'|'authed', user}. currentUser() verifies localStorage
+                        session token against users.sessionToken (rotation invalidates other tabs). logout() clears both.
+ui/auth.js              full-screen auth gate rendered into #auth-root (not a router page). showAuthGate({onAuthed}),
+                        hideGate(); shell (#app-topbar/#main/#statusbar) hidden while locked. Create-admin vs Login by needsFirstAdmin().
 print/ps.js             class Paperstamp; default export = singleton; host moves between pages (never destroyed until reset)
 print/defaultLayout.js  seed layout pushed when plugin has none
 backup/backup.js        class Backup; default export = instance; append-only journal -> CSV; named export hasFsAccess
@@ -89,7 +99,7 @@ restore button -> (folder set?) restoreFromFolder : file picker -> csvToLog -> d
 Test button -> runSelfTest -> register (form driver) -> tokens refund dialog -> DB/log/replay checks -> cleanup -> drop isolated DB
 
 # SCHEMA
-DB tokenbook (Dexie v1) — revisioned, append-only entities + projections.
+DB tokenbook (Dexie v1 + v2 users) — revisioned, append-only entities + projections.
 (No prior version shipped; a leftover pre-revision DB is dumped to JSON then
 recreated on first open.)
 Dexie `.stores()` declares ONLY the primary key + indexed fields. IndexedDB is
@@ -161,6 +171,18 @@ schemaless — columns are whatever the code writes. Full column lists below.
    lastDay    'YYYY-MM-DD'|null  daily-snapshot idempotency
    -- app-only. Never written to the CSV log.
 
+ users  ('++id, &username, role, disabled')   [Dexie v2, added for auth]
+   id           int     PK  autoincrement
+   username     string  UNIQUE, UPPER-cased
+   role         'admin'|'worker'
+   salt, hash   string  base64 (PBKDF2-SHA256, 150k iter)
+   iter         int     PBKDF2 iteration count (per-row, forward-compatible)
+   disabled     0|1
+   sessionToken string  rotated on login/reset; '' = no live session
+   createdAt, updatedAt, lastLoginAt  iso
+   -- NOT revisioned, NOT in the CSV log, NOT backed up. Auth is local-only;
+      a restore wipes people/visits but leaves users intact.
+
 DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirectoryHandle }
 
 # LOG FORMAT (schemaNo-tagged, delimiter '|', timestamps epoch-seconds)
@@ -182,7 +204,7 @@ Folder backup requires File System Access API (Chrome/Edge).
 Fallback when unsupported: CSV download via db.exportAll.
 `?dev=1` → pw.js unregisters the SW and deletes tokenbook-* caches, then skips
   registration. Dev sessions always see fresh files (no cache-first shell).
-localStorage keys: tokenBook.selectedLayoutId (paperstamp), tokenbook-reload-guard (pw.js).
+localStorage keys: tokenBook.selectedLayoutId (paperstamp), tokenbook-reload-guard (pw.js), tokenbook-session (auth).
 
 # DEPENDENCIES
 Dexie 4.0.11 (ESM from unpkg; cached cross-origin by sw.js)
@@ -258,6 +280,12 @@ init() probes persisted handle (validateHandle) and clears it if stale (isStaleH
 hasFsAccess is a NAMED export of backup.js; backup.hasFsAccess is undefined.
 restore calls resetPendingForRestore() so stale journal lines can't re-append.
 Identity collision on (name, mob) throws DuplicateIdentityError (register) or ConstraintError (Dexie).
+Auth is client-only, local-only: users live in the `users` store; passwords are PBKDF2-SHA256 (WebCrypto) — never stored in plaintext.
+First run (users count = 0) ALWAYS shows Create-Admin regardless of hash/URL; creating it auto-logs in as admin.
+app.js boots the shell ONLY after requireAuth() returns authed; the auth gate is not a router page and cannot be bypassed by hash.
+Session = localStorage 'tokenbook-session' {userId, token, exp}; currentUser() re-reads the user row and compares tokens — login/reset/disable on ANY tab invalidates other tabs on their next check.
+Admin-only routes = {printLayout, users} (router.ADMIN_ONLY). Workers: Users AND Print Layout tabs are hidden, and both routes bounce to Register (via router canAccess + applySessionToShell bounce). Workers keep Register/Tokens/Patients + Backup/Restore/Log/Test/Seed. Print Layout is admin-only because it exposes the paperstamp designer.
+users store is NOT revisioned, NOT journaled, NOT in the CSV backup, and is untouched by restore.
 seed.js bypasses addVisit by design (bulk) and MUST write all four stores (people, peopleProj, visits, visitsProj); uses `date` and `rootId` like the live path. It emits ONE revision (v=1) per entity. If addVisit's projection logic changes, update seed to match.
 Key names uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API.
 Self-test isolation: db.setDbName('tokenbook-devtest') + backup.setLogFileName('tokenbook-latest-devtest.csv'); DB dropped + name/log restored after. Runs on the current local day.
