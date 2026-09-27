@@ -56,7 +56,7 @@ ui/router.js     ROUTES, hash sync, keyboard shortcuts; getRouter()/setRouter() 
 ui/dom.js        el/on/bindOff/setText/setClass helpers; re-exports timeAgo
 ui/toast.js      class Toast; default export = singleton; named toast/clearToast = bound methods
 ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity). "Identity revisions" button -> openRevisions('person', id).
-ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); own DOM + keyboard nav. Opened from ui/refund.js (visit) and ui/history.js (person).
+ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); shows rev.revAt (write time), not createdAt. Opened from ui/refund.js (visit) and ui/history.js (person), and Alt+V on Register.
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
 ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest
@@ -134,7 +134,8 @@ schemaless — columns are whatever the code writes. Full column lists below.
    fee        num
    refundTier int          0..N; amount = N*100
    hidden     0|1
-   createdAt  iso
+   createdAt  iso          when the VISIT was first created (immutable)
+   revAt      iso          when THIS revision was written
    -- append-only. NO name/mob/age/gender — identity lives on people.
 
  visitsProj  ('rootId, [date+token], date, personId, hidden')
@@ -165,8 +166,8 @@ DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirecto
 # LOG FORMAT (schemaNo-tagged, delimiter '|', timestamps epoch-seconds)
  Head block (one per schema, typed columns):
    #head|schema|schemaNo|columns
-   #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch
-   #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch
+   #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch|revAt:epoch?
+   #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch|revAt:epoch?
  Data line = `schemaNo|value1|value2|...` in the declared column order.
  Only revision tables are logged. peopleProj/visitsProj/meta are NEVER in the log.
  Restore = replay revisions (insert [rootId+v], idempotent), then rebuildProj().

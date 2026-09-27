@@ -33,6 +33,7 @@ export const SCHEMA_PEOPLE = {
     'weight:num?',
     'hidden:int',
     'createdAt:epoch',
+    'revAt:epoch?',
   ],
 };
 
@@ -54,6 +55,7 @@ export const SCHEMA_VISITS = {
     'refundTier:int',
     'hidden:int',
     'createdAt:epoch',
+    'revAt:epoch?',
   ],
 };
 

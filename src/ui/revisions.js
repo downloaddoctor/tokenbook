@@ -161,9 +161,12 @@ function renderStep(rev, prev, index, total) {
 
   const head = document.createElement('div');
   head.className = 'hx-head';
-  const when = rev.createdAt ? new Date(rev.createdAt) : null;
+  // `revAt` = when THIS revision was written; fall back to createdAt for
+  // legacy rows written before revAt existed.
+  const stamp = rev.revAt || rev.createdAt;
+  const when = stamp ? new Date(stamp) : null;
   const abs = when ? when.toLocaleString() : '';
-  const rel = rev.createdAt ? timeAgo(rev.createdAt) : '';
+  const rel = stamp ? timeAgo(stamp) : '';
   // Badge meaning: the newest v is "current"; older v's are "superseded".
   // `hidden` is a separate axis (soft delete) and overrides the label.
   const isCurrent = index === 0;

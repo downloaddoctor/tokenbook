@@ -189,6 +189,7 @@ export async function seed({
     refundTier: v.refundTier,
     hidden: 0,
     createdAt: v.createdAt,
+    revAt: v.createdAt,
   }));
 
   // 6a. people revision rows. v3: one revision per person (v=1). Identity lives
@@ -203,6 +204,7 @@ export async function seed({
     weight: p.weight,
     hidden: 0,
     createdAt: visits.find((v) => v.personId === p.id)?.createdAt || new Date().toISOString(),
+    revAt: visits.find((v) => v.personId === p.id)?.createdAt || new Date().toISOString(),
   }));
 
   // 6b. people projection: one row per rootId with visit count + lastVisitAt.

@@ -195,12 +195,17 @@ class DB {
 
   // ---------- revision helpers ----------
 
+  // Append a person revision. `revAt` = when THIS revision was written; if the
+  // caller did not set it (restore does, to preserve the original), stamp now.
   async _appendPersonRev(rec) {
+    if (!rec.revAt) rec.revAt = new Date().toISOString();
     await this._db.people.add(rec);
     return { rootId: rec.rootId, v: rec.v };
   }
 
+  // Append a visit revision. Same `revAt` rule as _appendPersonRev.
   async _appendVisitRev(rec) {
+    if (!rec.revAt) rec.revAt = new Date().toISOString();
     await this._db.visits.add(rec);
     return { rootId: rec.rootId, v: rec.v };
   }
@@ -617,6 +622,7 @@ class DB {
               weight,
               hidden: preserve.personHidden ? 1 : 0,
               createdAt: preserve.createdAt || nowIso,
+              revAt: preserve.createdAt || nowIso,
             };
             await this._appendPersonRev(prec);
             await this._putPersonProj(pid);
@@ -630,6 +636,7 @@ class DB {
           refundTier,
           hidden: preserve.hidden ? 1 : 0,
           createdAt: preserve.createdAt || nowIso,
+          revAt: preserve.createdAt || nowIso,
         };
         const exists = await db.visits.get([rootId, v]);
         if (!exists) await this._appendVisitRev(rec);
@@ -703,7 +710,7 @@ class DB {
       if (normalizeRefundTier(cur.refundTier) === t) {
         return await db.visitsProj.get(rootId);
       }
-      const rec = { ...cur, v: cur.v + 1, refundTier: t };
+      const rec = { ...cur, v: cur.v + 1, refundTier: t, revAt: undefined };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);
       this._emitJournalVisit(rec);
@@ -733,6 +740,7 @@ class DB {
         followup: nextFollowup,
         payment: nextPayment,
         fee: nextFee,
+        revAt: undefined,
       };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);
@@ -755,7 +763,7 @@ class DB {
       if (!cur) throw new Error('Visit not found: ' + rootId);
       // No-op: already in the requested visibility state.
       if ((cur.hidden ? 1 : 0) === h) return await db.visitsProj.get(rootId);
-      const rec = { ...cur, v: cur.v + 1, hidden: h };
+      const rec = { ...cur, v: cur.v + 1, hidden: h, revAt: undefined };
       await this._appendVisitRev(rec);
       const proj = await this._putVisitProj(rootId);
       await this._putPersonProj(cur.personId);
@@ -866,6 +874,7 @@ class DB {
         weight: op.weight != null ? op.weight : null,
         hidden: op.hidden ? 1 : 0,
         createdAt: op.createdAt || new Date().toISOString(),
+        revAt: op.revAt || op.createdAt || new Date().toISOString(),
       });
     }
     await this._putPersonProj(op.rootId);
@@ -891,6 +900,7 @@ class DB {
         refundTier: normalizeRefundTier(op.refundTier),
         hidden: op.hidden ? 1 : 0,
         createdAt: op.createdAt || new Date().toISOString(),
+        revAt: op.revAt || op.createdAt || new Date().toISOString(),
       });
     }
     await this._putVisitProj(op.rootId);
