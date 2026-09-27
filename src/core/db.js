@@ -433,6 +433,79 @@ class DB {
     return live.map((r) => this._joinIdentity(r, byId.get(r.personId)));
   }
 
+  // Visits between two days (inclusive, 'YYYY-MM-DD'), issue order.
+  // Same identity join + hidden filter as listByDate. O(rows in range).
+  async listByDateRange(from, to) {
+    const rows = await this._db.visitsProj
+      .where('[date+token]')
+      .between([from, Dexie.minKey], [to, Dexie.maxKey])
+      .toArray();
+    const live = rows.filter((r) => !r.hidden);
+    const ids = Array.from(new Set(live.map((r) => r.personId).filter((x) => x != null)));
+    const people = await this._db.peopleProj.bulkGet(ids);
+    const byId = new Map();
+    ids.forEach((id, i) => byId.set(id, people[i] || null));
+    live.sort((a, b) => a.date.localeCompare(b.date) || a.token - b.token);
+    return live.map((r) => this._joinIdentity(r, byId.get(r.personId)));
+  }
+
+  // Count of live visits in [from, to] (inclusive) — for pager math.
+  async countByDateRange(from, to) {
+    const rows = await this._db.visitsProj
+      .where('[date+token]')
+      .between([from, Dexie.minKey], [to, Dexie.maxKey])
+      .toArray();
+    return rows.reduce((n, r) => n + (r.hidden ? 0 : 1), 0);
+  }
+
+  // Aggregate money/visit totals for [from, to] without materializing identity
+  // (used by the Tokens summary so paging doesn't shrink the totals).
+  async totalsByDateRange(from, to) {
+    const rows = await this._db.visitsProj
+      .where('[date+token]')
+      .between([from, Dexie.minKey], [to, Dexie.maxKey])
+      .toArray();
+    const live = rows.filter((r) => !r.hidden);
+    let collected = 0;
+    let refunded = 0;
+    let paidCount = 0;
+    let freeCount = 0;
+    let cashTotal = 0;
+    let upiTotal = 0;
+    for (const r of live) {
+      const fee = Number(r.fee) || 0;
+      const refund = refundAmountFor(r.refundTier);
+      const net = fee - refund;
+      if (r.followup) freeCount++;
+      else {
+        paidCount++;
+        collected += net;
+        refunded += refund;
+        if (r.payment) upiTotal += net;
+        else cashTotal += net;
+      }
+    }
+    return { total: live.length, collected, refunded, paidCount, freeCount, cashTotal, upiTotal };
+  }
+
+  // Paged range read in issue order, identity-joined. For long ranges (a
+  // month can be hundreds of rows) so the Tokens table stays responsive.
+  async listByDateRangePage(from, to, { offset = 0, limit = 50 } = {}) {
+    const rows = await this._db.visitsProj
+      .where('[date+token]')
+      .between([from, Dexie.minKey], [to, Dexie.maxKey])
+      .toArray();
+    const live = rows
+      .filter((r) => !r.hidden)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.token - b.token)
+      .slice(offset, offset + limit);
+    const ids = Array.from(new Set(live.map((r) => r.personId).filter((x) => x != null)));
+    const people = await this._db.peopleProj.bulkGet(ids);
+    const byId = new Map();
+    ids.forEach((id, i) => byId.set(id, people[i] || null));
+    return live.map((r) => this._joinIdentity(r, byId.get(r.personId)));
+  }
+
   async listAll({ offset = 0, limit = 50 } = {}) {
     const rows = await this._db.visitsProj.toArray();
     rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));

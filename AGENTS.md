@@ -64,7 +64,11 @@ ui/pages/register.ctx.js      shared DOM bag (getB/setB) + flags (getFlags) + cr
 ui/pages/register.billing.js  fieldValues, refreshPreview, applyFollowupRule, setFollowupNote, lockFee/unlockFee, onFollowupChange
 ui/pages/register.autofill.js name/mob suggest list, pickPerson, identity revalidation, token/date handlers; exports hideSuggests, refreshNextToken, bindAutofill
 ui/pages/register.dialogs.js  identity-change / reassign prompts (pure DOM, no shared state)
-ui/pages/tokens.js      day list + per-row refund dialog
+ui/pages/tokens.js      Day/Month/Range filter; day unpaged, month/range paged (PAGE=50); per-row refund dialog¦
+
+MHI(replace): UPDATED: d:\Project\hsm\tokenbook\AGENTS.md
+
+<｜｜DSML｜｜ parameter name="new">⟦cmd¦run=cd /d d:\Project\hsm\tokenbook && git add -A && git commit -m "✨ feat(tokens): Day/Month/Range filter with paging + scrollbar-gutter fix"¦till=60
 ui/pages/patients.js    patient registry + drill-in history modal
 ui/pages/printLayout.js paperstamp full designer
 print/ps.js             class Paperstamp; default export = singleton; host moves between pages (never destroyed until reset)
@@ -193,7 +197,7 @@ No npm runtime deps; package-lock.json is dev tooling only.
 # PUBLIC-API
 db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisitBilling(rootId,{...}),
   hideVisit/unhideVisit/setVisitHidden(rootId,0|1), rebuildProj, replayLog,
-  exportAll, exportAllStream, listByDate, listAll, listPeople, searchPeopleByPrefix/Name/Mob,
+  exportAll, exportAllStream, listByDate, listByDateRange, listByDateRangePage, countByDateRange, totalsByDateRange, listAll, listPeople, searchPeopleByPrefix/Name/Mob,
   visitCountsForPeople, visitsForPerson, revisionsOf(entity,rootId), findVisitByDateToken,
   lastPaidVisitDaysFor, nextTokenForDate, getPerson, findPersonByNameMob,
   setJournal, refundAmountFor, localDay, raw (-> Dexie),

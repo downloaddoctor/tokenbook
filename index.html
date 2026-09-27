@@ -143,16 +143,23 @@
 
       <section class="page" id="page-tokens" hidden>
         <div class="toolbar">
-          <label class="inline"
-            >Date
-            <input id="tokens-date" type="date" />
-          </label>
+          <div class="seg" id="tokens-mode" role="tablist">
+            <button type="button" class="seg-btn active" data-mode="day">Day</button>
+            <button type="button" class="seg-btn" data-mode="month">Month</button>
+            <button type="button" class="seg-btn" data-mode="range">Range</button>
+          </div>
+          <input id="tokens-date" type="date" aria-label="Day" />
+          <input id="tokens-month" type="month" aria-label="Month" hidden />
+          <input id="tokens-from" type="date" aria-label="From" hidden />
+          <span id="tokens-range-sep" class="range-sep" hidden>→</span>
+          <input id="tokens-to" type="date" aria-label="To" hidden />
           <button id="tokens-today" type="button">Today</button>
         </div>
         <p id="tokens-summary" class="summary"></p>
         <table id="tokens-table">
           <thead>
             <tr>
+              <th id="tokens-th-date" hidden>Date</th>
               <th>Token</th>
               <th>Name</th>
               <th>Mobile</th>
@@ -169,6 +176,11 @@
           <tbody></tbody>
         </table>
         <p id="tokens-empty" class="empty">No tokens for this date.</p>
+        <div class="pager" id="tokens-pager" hidden>
+          <button id="tokens-pg-prev" type="button">Prev</button>
+          <span id="tokens-pg-info" class="hint"></span>
+          <button id="tokens-pg-next" type="button">Next</button>
+        </div>
         <p class="hint">Click a row to set or change the refund.</p>
       </section>
 
