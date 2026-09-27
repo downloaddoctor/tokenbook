@@ -104,7 +104,7 @@ async function applySessionToShell(router) {
   const whoami = document.getElementById('whoami');
   const btnLogout = document.getElementById('btn-logout');
   if (whoami) {
-    whoami.textContent = me ? me.username + (admin ? ' · admin' : ' · us') : '';
+    whoami.textContent = me ? me.username + (admin ? ' · admin' : ' · user') : '';
   }
   if (navUsers) navUsers.hidden = !admin;
   if (navPrintLayout) navPrintLayout.hidden = !admin;

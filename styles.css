@@ -97,9 +97,13 @@ a:hover {
 .tabs {
   display: flex;
   gap: 6px;
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tabs .nav-tab {
   padding: 8px 14px;
   border-radius: 6px;
@@ -1056,7 +1060,15 @@ body.auth-locked { overflow: hidden; }
 
 /* ---------- topbar right / whoami ---------- */
 .topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.whoami { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.whoami {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---------- users page ---------- */
 .users-actions { display: flex; gap: 6px; }
