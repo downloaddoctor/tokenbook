@@ -4,6 +4,7 @@
 // ('0'..'3' on Save, null on cancel/dismiss).
 
 import db from '../core/db.js';
+import { openRevisions } from './revisions.js';
 
 function el(id) {
   return document.getElementById(id);
@@ -36,20 +37,27 @@ export function openRefundDialog(visit) {
     paintPreview();
 
     const saveBtn = dlg.querySelector('#refund-save');
+    const histBtn = dlg.querySelector('#refund-history');
     // After picking a tier, jump focus to Save (Tab/Shift+Tab then reaches Cancel).
     const onSelChange = () => {
       paintPreview();
       if (saveBtn) saveBtn.focus();
     };
+    // "History" opens the revision timeline for this visit's root.
+    const onHistory = () => {
+      if (visit.rootId != null) openRevisions('visit', visit.rootId);
+    };
     const onClose = () => {
       dlg.removeEventListener('close', onClose);
       sel.removeEventListener('change', onSelChange);
+      if (histBtn) histBtn.removeEventListener('click', onHistory);
       resolve(dlg.returnValue === 'save' ? sel.value : null);
     };
 
     dlg.returnValue = '';
     dlg.addEventListener('close', onClose);
     sel.addEventListener('change', onSelChange);
+    if (histBtn) histBtn.addEventListener('click', onHistory);
     dlg.showModal();
     sel.focus();
   });

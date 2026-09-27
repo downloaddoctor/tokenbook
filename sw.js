@@ -52,6 +52,7 @@ const SHELL_ASSETS = [
   './src/ui/pages/register.js',
   './src/ui/pages/tokens.js',
   './src/ui/refund.js',
+  './src/ui/revisions.js',
   './src/ui/router.js',
   './src/ui/toast.js',
 ];

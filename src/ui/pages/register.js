@@ -8,6 +8,7 @@ import ps from '../../print/ps.js';
 import { bindOff } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
+import { openRevisions } from '../revisions.js';
 import { askIdentityChange, askReassign } from './register.dialogs.js';
 import { setB, getFlags, setHook } from './register.ctx.js';
 import {
@@ -381,6 +382,18 @@ export function mount() {
     if (document.querySelector('dialog[open]')) return;
     e.preventDefault();
     refundCurrentVisit();
+  });
+  // Alt+V: revision history of the visit currently loaded in the form.
+  off.on(document, 'keydown', (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== 'v' && e.key !== 'V') return;
+    if (document.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    if (flags.loadedVisitId == null) {
+      toast('No saved visit loaded — nothing to show.', 'err');
+      return;
+    }
+    openRevisions('visit', flags.loadedVisitId);
   });
   if (b.fFollowup) off.on(b.fFollowup, 'change', onFollowupChange);
   if (b.fFee)

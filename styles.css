@@ -879,3 +879,24 @@ tbody tr:last-child td {
   #patient-form .span-3up { grid-column: span 2; }
   #patient-form .span-4 { grid-column: 1 / -1; }
 }
+
+
+/* --- revision modal + history action button --- */
+.modal-head-actions { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.ghost-btn {
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.ghost-btn:hover { color: inherit; border-color: var(--accent); }
+.rev-item.hidden-rev .hx-body { opacity: 0.72; }
+.rev-changes { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.rev-change { display: flex; gap: 8px; font-size: 12px; }
+.rev-label { min-width: 84px; color: var(--muted); }
+.rev-val { color: inherit; }

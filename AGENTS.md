@@ -33,6 +33,7 @@ Alt+H (app.js)                   history modal for current form patient (dynamic
 Alt+L (app.js)                   Log dialog (clicks btn-log)
 Alt+B (app.js)                   Backup (clicks btn-backup)
 Alt+R (register)                 refund dialog for loaded visit (paid only) via ui/refund.js
+Alt+V (register)                 revision history for loaded visit via ui/revisions.js (needs a saved visit)
 Alt+N                            new visit (via router onNewBill)
 Alt+S (register)                 submit form (Alt+S while Register mounted)
 Ctrl+1..4                        switch tabs; Alt+1..4 switch + focus primary input
@@ -54,7 +55,8 @@ ui/app.js        boot + global buttons (backup/restore/log/test); topbar wiring;
 ui/router.js     ROUTES, hash sync, keyboard shortcuts; getRouter()/setRouter() module holder so pages can switch tabs
 ui/dom.js        el/on/bindOff/setText/setClass helpers; re-exports timeAgo
 ui/toast.js      class Toast; default export = singleton; named toast/clearToast = bound methods
-ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity).
+ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity). "Identity revisions" button -> openRevisions('person', id).
+ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); own DOM + keyboard nav. Opened from ui/refund.js (visit) and ui/history.js (person).
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout}
 ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest

@@ -6,10 +6,12 @@
 import db from '../core/db.js';
 import { getRouter } from './router.js';
 import { editVisit } from './pages/register.js';
+import { openRevisions } from './revisions.js';
 
 let active = -1;            // index of the keyboard-highlighted item
 let visitCache = new Map(); // visitId -> visit row (currently rendered)
 let wired = false;
+let currentPersonId = null; // for the "Identity revisions" button
 
 function el(id) {
   return document.getElementById(id);
@@ -49,7 +51,12 @@ function wireOnce() {
   wired = true;
   const modal = el('history-modal');
   const close = el('history-close');
+  const revs = el('history-revs');
   if (close) close.addEventListener('click', closeHistory);
+  if (revs)
+    revs.addEventListener('click', () => {
+      if (currentPersonId != null) openRevisions('person', currentPersonId);
+    });
   if (modal)
     modal.addEventListener('click', (e) => {
       if (e.target === modal) closeHistory();
@@ -145,6 +152,7 @@ function renderItem(v) {
 export async function openHistory(personId) {
   if (!personId) return;
   wireOnce();
+  currentPersonId = personId;
   const modal = el('history-modal');
   const nameEl = el('history-name');
   const metaEl = el('history-meta');

@@ -222,6 +222,8 @@
             <p class="hint" id="refund-preview"></p>
           </div>
           <footer class="modal-actions">
+            <button type="button" class="ghost-btn" id="refund-history">History</button>
+            <span class="spacer"></span>
             <button value="cancel" type="submit">Cancel</button>
             <button value="save" type="submit" class="primary" id="refund-save">Save</button>
           </footer>
@@ -252,13 +254,31 @@
               <h2 id="history-name">Patient</h2>
               <p id="history-meta" class="hint"></p>
             </div>
-            <button id="history-close" type="button" class="modal-close" aria-label="Close">×</button>
+            <div class="modal-head-actions">
+              <button id="history-revs" type="button" class="ghost-btn">Identity revisions</button>
+              <button id="history-close" type="button" class="modal-close" aria-label="Close">×</button>
+            </div>
           </header>
           <div class="modal-scroll">
             <div id="history-list" class="hx-list"></div>
           </div>
         </div>
       </div>
+
+      <dialog id="revisions-modal" class="modal-dialog">
+        <div class="modal-card" aria-labelledby="revisions-title">
+          <header class="modal-head">
+            <div>
+              <h2 id="revisions-title">Revisions</h2>
+              <p id="revisions-meta" class="hint"></p>
+            </div>
+            <button id="revisions-close" type="button" class="modal-close" aria-label="Close">×</button>
+          </header>
+          <div class="modal-scroll">
+            <div id="revisions-list" class="hx-list"></div>
+          </div>
+        </div>
+      </dialog>
 
       <section class="page" id="page-print-layout" hidden>
         <div id="print-layout-ps-host" class="ps-host ps-host-full"></div>
