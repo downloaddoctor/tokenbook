@@ -43,6 +43,13 @@ class DB {
     this._openPromise = null;
     this._journal = null;
     this._journalBuffers = new Map();
+    // Optional hook: fired after a pre-revision DB is dumped + recreated, with
+    // { filename, stores }. app.js wires this to a toast so the backup is seen.
+    this._migrationNotice = null;
+  }
+
+  setMigrationNotice(fn) {
+    this._migrationNotice = typeof fn === 'function' ? fn : null;
   }
 
   // No prod data yet — schema resets freely. This IS version 1 of the
@@ -78,11 +85,15 @@ class DB {
             // otherwise the later delete is blocked by our own open handle.
             try { this._db.close(); } catch (_) {}
             await new Promise((r) => setTimeout(r, 50));
+            let dumpInfo = null;
             try {
-              await this._dumpRawDbToFile(this._dbName);
+              dumpInfo = await this._dumpRawDbToFile(this._dbName);
             } catch (dumpErr) {
               console.error('[tokenbook] pre-migration backup failed', dumpErr);
               throw dumpErr; // never delete without a backup
+            }
+            if (dumpInfo && this._migrationNotice) {
+              try { this._migrationNotice(dumpInfo); } catch (_) {}
             }
             // Delete can still be blocked by another tab. Retry a few times.
             for (let i = 0; i < 5; i++) {
@@ -140,12 +151,14 @@ class DB {
             dump.stores[sn] = all.result;
             if (--remaining === 0) {
               try { idb.close(); } catch (_) {}
+              const filename =
+                name + '-pre-v3-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
               try {
                 const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = name + '-pre-v3-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -153,7 +166,7 @@ class DB {
               } catch (e) {
                 return reject(e);
               }
-              resolve(dump);
+              resolve({ filename, stores: storeNames.length });
             }
           };
           all.onerror = () => { try { idb.close(); } catch (_) {} reject(all.error); };

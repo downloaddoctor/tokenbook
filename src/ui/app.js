@@ -339,6 +339,16 @@ function restoreConfirm(folderName, summary) {
     });
   }
 
+  // If a pre-revision DB is found, db dumps it to a JSON file and recreates.
+  // Surface the download so the operator knows a backup exists.
+  db.setMigrationNotice(({ filename, stores }) => {
+    toast(
+      'Old database backed up (' + stores + ' store(s)) → ' + filename + '. Starting fresh.',
+      'warn'
+    );
+    console.info('[tokenbook] pre-migration backup saved:', filename);
+  });
+
   try {
     await db.openDb();
   } catch (err) {
