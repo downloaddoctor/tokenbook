@@ -125,7 +125,8 @@ export async function getUserById(id) {
   return (await db.raw().users.get(Number(id))) || null;
 }
 
-export async function createUser({ username, password, role = 'worker' }) {
+// Roles: 'admin' (full) | 'user' (everything except Print Layout + Users).
+export async function createUser({ username, password, role = 'user' }) {
   const u = normName(username);
   if (!u) {
     const e = new Error('Username is required.');
@@ -142,7 +143,7 @@ export async function createUser({ username, password, role = 'worker' }) {
   const now = new Date().toISOString();
   const row = {
     username: u,
-    role: role === 'admin' ? 'admin' : 'worker',
+    role: role === 'admin' ? 'admin' : 'user',
     salt,
     hash,
     iter,

@@ -192,7 +192,7 @@
     <section class="page" id="page-users" hidden>
       <div class="toolbar">
         <button type="button" id="users-new" class="primary">New user</button>
-        <span class="hint">Admin-only. Workers have full app access.</span>
+        <span class="hint">Admin-only. Users have access to everything except Print Layout.</span>
       </div>
       <table id="users-table">
         <thead>
@@ -315,7 +315,7 @@
       <header class="modal-head">
         <div>
           <h2>New user</h2>
-          <p class="hint">Create a worker or admin account.</p>
+          <p class="hint">Create a user or admin account.</p>
         </div>
       </header>
       <div class="modal-body">
@@ -324,8 +324,8 @@
         </label>
         <label class="auth-field">Role
           <select id="user-new-role">
-            <option value="worker">Worker (full app access)</option>
-            <option value="admin">Admin (can manage users)</option>
+            <option value="user">User (no Print Layout / Users)</option>
+            <option value="admin">Admin (full access + manage users)</option>
           </select>
         </label>
         <label class="auth-field">Password

@@ -104,11 +104,24 @@ async function applySessionToShell(router) {
   const whoami = document.getElementById('whoami');
   const btnLogout = document.getElementById('btn-logout');
   if (whoami) {
-    whoami.textContent = me ? me.username + (admin ? ' · admin' : ' · worker') : '';
+    whoami.textContent = me ? me.username + (admin ? ' · admin' : ' · us') : '';
   }
   if (navUsers) navUsers.hidden = !admin;
   if (navPrintLayout) navPrintLayout.hidden = !admin;
-  // A worker left on an admin-only route is bounced to Register.
+  // Non-admins keep ONLY Backup in the statusbar: no Restore / Log / Test, and
+  // no dev Seed/Clear even with ?dev=1. #file-restore is a programmatic-only
+  // picker (always hidden in markup) — never toggle it or it renders as a
+  // native "Choose File" control.
+  for (const id of ['btn-restore', 'btn-log', 'btn-test']) {
+    const n = document.getElementById(id);
+    if (n) n.hidden = !admin;
+  }
+  // Dev Seed/Clear buttons (appended by the ?dev=1 block) are admin-only too.
+  const devBar = document.getElementById('statusbar');
+  if (devBar) {
+    for (const b of devBar.querySelectorAll('.dev-only')) b.hidden = !admin;
+  }
+  // A non-admin left on an admin-only route is bounced to Register.
   if (!admin && ADMIN_ONLY.has(router.currentTab)) router.activateTab('register');
   if (btnLogout && !btnLogout._wired) {
     btnLogout._wired = true;
@@ -156,8 +169,13 @@ async function bootAuthed(router) {
   if (!location.hash) location.hash = '#/register';
   router.activateTab(routeFromHash(), false, false);
 
-  // Dev tools: ?dev=1. Wired once.
-  if (!bootAuthed._devWired && new URLSearchParams(location.search).get('dev') === '1') {
+  // Dev tools: ?dev=1, ADMIN ONLY. Non-admins never get Seed/Clear, even with
+  // the dev flag. Wired once.
+  if (
+    !bootAuthed._devWired &&
+    sessionIsAdmin &&
+    new URLSearchParams(location.search).get('dev') === '1'
+  ) {
     bootAuthed._devWired = true;
     const { seed, clearAll, promptSeedConfig, SEED_CONFIG } = await import('../dev/seed.js');
     const bar = document.getElementById('statusbar');
@@ -165,6 +183,7 @@ async function bootAuthed(router) {
     if (right) {
       const bSeed = document.createElement('button');
       bSeed.type = 'button';
+      bSeed.className = 'dev-only';
       bSeed.textContent = 'Seed';
       bSeed.title = 'Click: seed defaults (10k visits/500 patients/200 days). Double-click: configure.';
       const runSeed = async (cfg) => {
@@ -208,6 +227,7 @@ async function bootAuthed(router) {
       });
       const bClear = document.createElement('button');
       bClear.type = 'button';
+      bClear.className = 'dev-only';
       bClear.textContent = 'Clear';
       bClear.title = 'Delete all people + visits';
       bClear.addEventListener('click', async () => {
@@ -238,8 +258,8 @@ async function bootAuthed(router) {
 
   const router = createRouter({
     pages: Pages,
-    // Admin-only routes (printLayout, users) refuse to mount for workers, even
-    // via a typed hash. Predicate MUST be synchronous: activateTab is sync.
+    // Admin-only routes (printLayout, users) refuse to mount for non-admins,
+    // even via a typed hash. Predicate MUST be synchronous: activateTab is sync.
     // The flag is refreshed by applySessionToShell before any activation.
     canAccess: (name) => sessionIsAdmin || !ADMIN_ONLY.has(name),
     onNewBill: () => {
@@ -249,13 +269,14 @@ async function bootAuthed(router) {
   setRouter(router);
   router.wire();
 
-  // Global Alt shortcuts: H history, L log, B backup (work from any tab).
+  // Global Alt shortcuts: H history, L log (admin), B backup (any tab).
   window.addEventListener('keydown', async (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const k = e.key && e.key.toLowerCase();
     if (k !== 'h' && k !== 'l' && k !== 'b') return;
     e.preventDefault();
     if (k === 'l') {
+      if (!sessionIsAdmin) return; // Log is admin-only
       if (btnLog) btnLog.click();
       return;
     }

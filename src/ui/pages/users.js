@@ -1,5 +1,5 @@
-// Users page (admin only): list/create/disable/reset worker + admin accounts.
-// Registered in Pages + ROUTES; the topbar tab is hidden for workers by app.js.
+// Users page (admin only): list/create/disable/reset user + admin accounts.
+// Registered in Pages + ROUTES; the topbar tab is hidden for non-admins by app.js.
 
 import { bindOff } from '../dom.js';
 import { toast } from '../toast.js';
@@ -122,7 +122,7 @@ function openNewUserDialog() {
   document.getElementById('user-new-name').value = '';
   document.getElementById('user-new-pass').value = '';
   document.getElementById('user-new-pass2').value = '';
-  document.getElementById('user-new-role').value = 'worker';
+  document.getElementById('user-new-role').value = 'user';
   const err = document.getElementById('user-new-err');
   err.hidden = true;
   err.textContent = '';

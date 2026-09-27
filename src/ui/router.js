@@ -3,7 +3,7 @@
 
 export const ROUTES = ['register', 'tokens', 'patients', 'printLayout', 'users'];
 
-// Routes only an admin may activate. Workers are bounced to 'register' by
+// Routes only an admin may activate. Non-admins are bounced to 'register' by
 // activateTab, so a typed hash or stale link cannot reach them. The matching
 // nav tabs are hidden in app.js (applySessionToShell).
 export const ADMIN_ONLY = new Set(['printLayout', 'users']);

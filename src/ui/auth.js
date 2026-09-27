@@ -73,7 +73,7 @@ function renderCreateAdmin() {
 
   const form = el('form', { class: 'auth-card', autocomplete: 'off' }, [
     el('h1', { class: 'auth-title', text: 'Welcome to TokenBook' }),
-    el('p', { class: 'auth-sub', text: 'No users yet. Create the first (admin) account. This account can add worker accounts later.' }),
+    el('p', { class: 'auth-sub', text: 'No users yet. Create the first (admin) account. This account can add user accounts later.' }),
     u.label, p.label, p2.label, err, btn,
   ]);
 

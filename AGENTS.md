@@ -34,7 +34,7 @@ bootAuthed(router)               ONLY runs with a session: hideGate, applySessio
 auth gate (app.js)               requireAuth() -> create-admin (0 users) | login | authed -> bootAuthed
 Logout (topbar)                  core/auth.logout() then showAuthGate -> bootAuthed
 Alt+H (app.js)                   history modal for current form patient (dynamic import ui/history.js)
-Alt+L (app.js)                   Log dialog (clicks btn-log)
+Alt+L (app.js)                   Log dialog (clicks btn-log) — admin only (no-op for non-admins)
 Alt+B (app.js)                   Backup (clicks btn-backup)
 Alt+R (register)                 refund dialog for loaded visit (paid only) via ui/refund.js
 Alt+V (register)                 revision history for loaded visit via ui/revisions.js (needs a saved visit)
@@ -174,7 +174,7 @@ schemaless — columns are whatever the code writes. Full column lists below.
  users  ('++id, &username, role, disabled')   [Dexie v2, added for auth]
    id           int     PK  autoincrement
    username     string  UNIQUE, UPPER-cased
-   role         'admin'|'worker'
+   role         'admin'|'user'  ('user' = all except Print Layout + Users + Users)
    salt, hash   string  base64 (PBKDF2-SHA256, 150k iter)
    iter         int     PBKDF2 iteration count (per-row, forward-compatible)
    disabled     0|1
@@ -280,11 +280,13 @@ init() probes persisted handle (validateHandle) and clears it if stale (isStaleH
 hasFsAccess is a NAMED export of backup.js; backup.hasFsAccess is undefined.
 restore calls resetPendingForRestore() so stale journal lines can't re-append.
 Identity collision on (name, mob) throws DuplicateIdentityError (register) or ConstraintError (Dexie).
+Roles are 'admin' | 'user' (normalizeRole).
 Auth is client-only, local-only: users live in the `users` store; passwords are PBKDF2-SHA256 (WebCrypto) — never stored in plaintext.
 First run (users count = 0) ALWAYS shows Create-Admin regardless of hash/URL; creating it auto-logs in as admin.
 app.js boots the shell ONLY after requireAuth() returns authed; the auth gate is not a router page and cannot be bypassed by hash.
 Session = localStorage 'tokenbook-session' {userId, token, exp}; currentUser() re-reads the user row and compares tokens — login/reset/disable on ANY tab invalidates other tabs on their next check.
-Admin-only routes = {printLayout, users} (router.ADMIN_ONLY). Workers: Users AND Print Layout tabs are hidden, and both routes bounce to Register (via router canAccess + applySessionToShell bounce). Workers keep Register/Tokens/Patients + Backup/Restore/Log/Test/Seed. Print Layout is admin-only because it exposes the paperstamp designer.
+Admin-only routes = {printLayout, users} (router.ADMIN_ONLY). Users (role='user'): Users AND Print Layout tabs are hidden, and both routes bounce to Register (via router canAccess + applySessionToShell bounce).
+Statusbar roles: 'user' sees ONLY Backup. Restore/Log/Test (#btn-restore/#btn-log/#btn-test) are hidden by applySessionToShell; dev Seed/Clear are (a) only created for admins even with ?dev=1, and (b) tagged .dev-only so a role change hides them. Alt+L (Log) is a no-op for non-admins; Alt+B (Backup) works for all. #file-restore is a programmatic-only picker, ALWAYS hidden — never toggle it (else it renders as a native Choose File). Print Layout is admin-only because it exposes the paperstamp designer.
 users store is NOT revisioned, NOT journaled, NOT in the CSV backup, and is untouched by restore.
 seed.js bypasses addVisit by design (bulk) and MUST write all four stores (people, peopleProj, visits, visitsProj); uses `date` and `rootId` like the live path. It emits ONE revision (v=1) per entity. If addVisit's projection logic changes, update seed to match.
 Key names uniform: `date` (not day), `personId` (not patId) across DB, journal, log, API.
