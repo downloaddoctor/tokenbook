@@ -2,7 +2,7 @@
 // modal. Visits live in the Tokens tab; this page is the registry.
 
 import db from '../../core/db.js';
-import { bindOff, highlightRow, clearHighlight } from '../dom.js';
+import { bindOff, highlightRow, clearHighlight, onKeys } from '../dom.js';
 import { openHistory } from '../history.js';
 
 const PAGE = 50;
@@ -141,45 +141,42 @@ export function mount() {
         t.isContentEditable)
     )
       return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const rows = rowEls();
-      if (activeRow >= rows.length - 1) {
-        // Bottom of the list -> hand focus to the pager's Next button.
-        clearActiveRow();
-        if (st.nextBtn && !st.nextBtn.disabled && !st.pager.hidden) {
-          st.nextBtn.focus();
+    onKeys(e, {
+      ArrowDown: () => {
+        const rows = rowEls();
+        if (activeRow >= rows.length - 1) {
+          // Bottom of the list -> hand focus to the pager's Next button.
+          clearActiveRow();
+          if (st.nextBtn && !st.nextBtn.disabled && !st.pager.hidden) {
+            st.nextBtn.focus();
+            return;
+          }
           return;
         }
-        return;
-      }
-      setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      // Coming back from the Next button -> reselect the last row.
-      if (st.nextBtn && t === st.nextBtn) {
-        setActiveRow(rowEls().length - 1);
-        return;
-      }
-      if (activeRow <= 0) {
-        // Top of the list -> hand focus to the search input.
-        clearActiveRow();
-        if (st.searchEl) st.searchEl.focus();
-        return;
-      }
-      setActiveRow(activeRow - 1);
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      setActiveRow(0);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      setActiveRow(rowEls().length - 1);
-    } else if (e.key === 'Enter') {
-      const rows = rowEls();
-      if (activeRow < 0 || activeRow >= rows.length) return;
-      e.preventDefault();
-      openHistory(Number(rows[activeRow].dataset.id));
-    }
+        setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
+      },
+      ArrowUp: () => {
+        // Coming back from the Next button -> reselect the last row.
+        if (st.nextBtn && t === st.nextBtn) {
+          setActiveRow(rowEls().length - 1);
+          return;
+        }
+        if (activeRow <= 0) {
+          // Top of the list -> hand focus to the search input.
+          clearActiveRow();
+          if (st.searchEl) st.searchEl.focus();
+          return;
+        }
+        setActiveRow(activeRow - 1);
+      },
+      Home: () => setActiveRow(0),
+      End: () => setActiveRow(rowEls().length - 1),
+      Enter: () => {
+        const rows = rowEls();
+        if (activeRow < 0 || activeRow >= rows.length) return false;
+        openHistory(Number(rows[activeRow].dataset.id));
+      },
+    });
   });
 
   st.off = off;

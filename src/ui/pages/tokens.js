@@ -1,7 +1,7 @@
 // Tokens page: pick a day, list its visits in issue order.
 
 import db from '../../core/db.js';
-import { bindOff, highlightRow, clearHighlight } from '../dom.js';
+import { bindOff, highlightRow, clearHighlight, onKeys } from '../dom.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 
@@ -258,38 +258,36 @@ export function mount() {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     const dlgOpen = document.querySelector('dialog[open]');
     if (dlgOpen) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const rows = rowEls();
-      if (activeRow >= rows.length - 1) {
-        clearActiveRow();
-        if (s.nextBtn && !s.nextBtn.disabled && !s.pager.hidden) s.nextBtn.focus();
-        return;
-      }
-      setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (s.prevBtn && t === s.nextBtn) {
-        setActiveRow(rowEls().length - 1);
-        return;
-      }
-      setActiveRow(activeRow < 0 ? rowEls().length - 1 : activeRow - 1);
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      setActiveRow(0);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      setActiveRow(rowEls().length - 1);
-    } else if (e.key === 'Enter' && activeRow >= 0) {
-      const tr = rowEls()[activeRow];
-      if (tr && tr.dataset.id) {
-        e.preventDefault();
+    onKeys(e, {
+      ArrowDown: () => {
+        const rows = rowEls();
+        if (activeRow >= rows.length - 1) {
+          clearActiveRow();
+          if (s.nextBtn && !s.nextBtn.disabled && !s.pager.hidden) s.nextBtn.focus();
+          return;
+        }
+        setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
+      },
+      ArrowUp: () => {
+        if (s.prevBtn && t === s.nextBtn) {
+          setActiveRow(rowEls().length - 1);
+          return;
+        }
+        setActiveRow(activeRow < 0 ? rowEls().length - 1 : activeRow - 1);
+      },
+      Home: () => setActiveRow(0),
+      End: () => setActiveRow(rowEls().length - 1),
+      Enter: () => {
+        if (activeRow < 0) return false;
+        const tr = rowEls()[activeRow];
+        if (!tr || !tr.dataset.id) return false;
         activateRow(Number(tr.dataset.id));
-      }
-    } else if (e.key === 'Escape' && activeRow >= 0) {
-      e.preventDefault();
-      clearActiveRow();
-    }
+      },
+      Escape: () => {
+        if (activeRow < 0) return false;
+        clearActiveRow();
+      },
+    });
   });
   s.off = off;
   refresh();

@@ -4,7 +4,7 @@
 // Element ids live in index.html.
 
 import db from '../core/db.js';
-import { el, highlightRow, clearHighlight } from './dom.js';
+import { el, highlightRow, clearHighlight, onKeys } from './dom.js';
 import { getRouter } from './router.js';
 import { editVisit } from './pages/register.js';
 import { openRevisions } from './revisions.js';
@@ -56,30 +56,21 @@ function wireOnce() {
 function onKeydown(e) {
   const modal = el('history-modal');
   if (!modal || modal.hidden) return;
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    closeHistory();
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    setActive(active < 0 ? 0 : active + 1);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    setActive(active < 0 ? items().length - 1 : active - 1);
-  } else if (e.key === 'Home') {
-    e.preventDefault();
-    setActive(0);
-  } else if (e.key === 'End') {
-    e.preventDefault();
-    setActive(items().length - 1);
-  } else if (e.key === 'Enter') {
-    const list = items();
-    if (active < 0 || active >= list.length) return;
-    e.preventDefault();
-    const id = list[active].dataset.id;
-    if (!id) return;
-    closeHistory();
-    openInRegister(Number(id));
-  }
+  onKeys(e, {
+    Escape: () => closeHistory(),
+    ArrowDown: () => setActive(active < 0 ? 0 : active + 1),
+    ArrowUp: () => setActive(active < 0 ? items().length - 1 : active - 1),
+    Home: () => setActive(0),
+    End: () => setActive(items().length - 1),
+    Enter: () => {
+      const list = items();
+      if (active < 0 || active >= list.length) return false;
+      const id = list[active].dataset.id;
+      if (!id) return false;
+      closeHistory();
+      openInRegister(Number(id));
+    },
+  });
 }
 
 export function closeHistory() {

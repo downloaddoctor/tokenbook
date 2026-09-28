@@ -35,5 +35,16 @@ export function clearHighlight(rows, cls = 'active') {
   for (const r of rows) r.classList.remove(cls);
 }
 
+// Keyboard dispatch: run the action bound to e.key, if any. The action returns
+// false to DECLINE the key (no preventDefault, event propagates); any other
+// return means handled -> e.preventDefault() is called. Removes the
+// repeated if/else-if key ladder across pages.
+export function onKeys(e, bindings) {
+  const fn = bindings[e.key];
+  if (!fn) return;
+  if (fn(e) === false) return;
+  e.preventDefault();
+}
+
 // Re-export; canonical location is core/time.js.
 export { timeAgo } from '../core/time.js';

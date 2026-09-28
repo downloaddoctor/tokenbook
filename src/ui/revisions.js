@@ -6,7 +6,7 @@
 // Element ids live in index.html (#revisions-modal, -title, -meta, -list).
 
 import db from '../core/db.js';
-import { el, highlightRow, clearHighlight } from './dom.js';
+import { el, highlightRow, clearHighlight, onKeys } from './dom.js';
 import { timeAgo } from '../core/time.js';
 
 let active = -1;       // keyboard-highlighted item index
@@ -52,24 +52,15 @@ function wireOnce() {
 function onKeydown(e) {
   const modal = el('revisions-modal');
   if (!modal || !modal.open) return;
-  if (e.key === 'Escape') {
-    // Native <dialog> also closes on Esc; prevent default and route through us
-    // so state resets deterministically.
-    e.preventDefault();
-    closeRevisions();
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    setActive(active < 0 ? 0 : active + 1);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    setActive(active < 0 ? items().length - 1 : active - 1);
-  } else if (e.key === 'Home') {
-    e.preventDefault();
-    setActive(0);
-  } else if (e.key === 'End') {
-    e.preventDefault();
-    setActive(items().length - 1);
-  }
+  onKeys(e, {
+    // Native <dialog> also closes on Esc; route through us so state resets
+    // deterministically.
+    Escape: () => closeRevisions(),
+    ArrowDown: () => setActive(active < 0 ? 0 : active + 1),
+    ArrowUp: () => setActive(active < 0 ? items().length - 1 : active - 1),
+    Home: () => setActive(0),
+    End: () => setActive(items().length - 1),
+  });
 }
 
 export function closeRevisions() {
