@@ -6,13 +6,14 @@
 // Element ids live in index.html (#revisions-modal, -title, -meta, -list).
 
 import db from '../core/db.js';
-import { el, highlightRow, clearHighlight, onKeys } from './dom.js';
+import { el } from './dom.js';
+import { createListNav } from './listNav.js';
 import { timeAgo } from '../core/time.js';
 
-let active = -1;       // keyboard-highlighted item index
 let wired = false;
 let currentEntity = null;
 let currentRootId = null;
+let nav; // keyboard list navigation (timeline)
 
 function items() {
   const list = el('revisions-list');
@@ -26,15 +27,6 @@ function span(cls, text) {
   return s;
 }
 
-function setActive(i) {
-  active = highlightRow(items(), i, 'hx-active');
-}
-
-function clearActive() {
-  clearHighlight(items(), 'hx-active');
-  active = -1;
-}
-
 function wireOnce() {
   if (wired) return;
   wired = true;
@@ -46,25 +38,23 @@ function wireOnce() {
       // Backdrop click (the dialog itself, not the inner card).
       if (e.target === modal) closeRevisions();
     });
-  document.addEventListener('keydown', onKeydown);
-}
-
-function onKeydown(e) {
-  const modal = el('revisions-modal');
-  if (!modal || !modal.open) return;
-  onKeys(e, {
+  nav = createListNav({
+    getRows: items,
+    getBody: () => el('revisions-list'),
+    activeClass: 'hx-active',
+    isOpen: () => {
+      const m = el('revisions-modal');
+      return !!(m && m.open);
+    },
     // Native <dialog> also closes on Esc; route through us so state resets
     // deterministically.
-    Escape: () => closeRevisions(),
-    ArrowDown: () => setActive(active < 0 ? 0 : active + 1),
-    ArrowUp: () => setActive(active < 0 ? items().length - 1 : active - 1),
-    Home: () => setActive(0),
-    End: () => setActive(items().length - 1),
+    onEscape: () => closeRevisions(),
   });
+  document.addEventListener('keydown', (e) => nav.keydown(e));
 }
 
 export function closeRevisions() {
-  clearActive();
+  if (nav) nav.clear();
   const modal = el('revisions-modal');
   if (modal && modal.open) modal.close();
   currentEntity = null;
@@ -236,7 +226,7 @@ export async function openRevisions(entity, rootId) {
   if (metaEl) metaEl.textContent = sub;
 
   listEl.replaceChildren();
-  active = -1;
+  if (nav) nav.clear();
   // Newest first for display.
   for (let i = revs.length - 1; i >= 0; i--) {
     const prev = i > 0 ? revs[i - 1] : null;
@@ -370,6 +360,7 @@ export async function openUserActivity(userId, username) {
   if (titleEl) titleEl.textContent = (username || 'User #' + userId) + ' — activity';
   if (metaEl) metaEl.textContent = 'loading…';
   listEl.replaceChildren();
+  if (nav) nav.clear();
 
   activityState = { userId: Number(userId), offset: 0, total: 0, loading: false, done: false };
   const scrollBox = listEl.parentElement;

@@ -330,8 +330,8 @@ async function submitBill() {
   }
   setMsg(
     (created ? 'Saved. Token ' : 'Updated. Token ') +
-      rec.token +
-      (rec.followup ? ' (free follow-up)' : ' — ₹' + (rec.fee != null ? rec.fee : '')),
+    rec.token +
+    (rec.followup ? ' (free follow-up)' : ' — ₹' + (rec.fee != null ? rec.fee : '')),
     'ok'
   );
 }

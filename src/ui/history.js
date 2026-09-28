@@ -4,15 +4,16 @@
 // Element ids live in index.html.
 
 import db from '../core/db.js';
-import { el, highlightRow, clearHighlight, onKeys } from './dom.js';
+import { el } from './dom.js';
+import { createListNav } from './listNav.js';
 import { getRouter } from './router.js';
 import { editVisit } from './pages/register.js';
 import { openRevisions } from './revisions.js';
 
-let active = -1;            // index of the keyboard-highlighted item
 let visitCache = new Map(); // visitId -> visit row (currently rendered)
 let wired = false;
 let currentPersonId = null; // for the "Identity revisions" button
+let nav;                    // keyboard list navigation
 
 function items() {
   const list = el('history-list');
@@ -24,15 +25,6 @@ function span(cls, text) {
   s.className = cls;
   s.textContent = text == null ? '' : String(text);
   return s;
-}
-
-function setActive(i) {
-  active = highlightRow(items(), i, 'hx-active');
-}
-
-function clearActive() {
-  clearHighlight(items(), 'hx-active');
-  active = -1;
 }
 
 function wireOnce() {
@@ -50,31 +42,27 @@ function wireOnce() {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) closeHistory();
     });
-  document.addEventListener('keydown', onKeydown);
-}
-
-function onKeydown(e) {
-  const modal = el('history-modal');
-  if (!modal || modal.hidden) return;
-  onKeys(e, {
-    Escape: () => closeHistory(),
-    ArrowDown: () => setActive(active < 0 ? 0 : active + 1),
-    ArrowUp: () => setActive(active < 0 ? items().length - 1 : active - 1),
-    Home: () => setActive(0),
-    End: () => setActive(items().length - 1),
-    Enter: () => {
-      const list = items();
-      if (active < 0 || active >= list.length) return false;
-      const id = list[active].dataset.id;
+  nav = createListNav({
+    getRows: items,
+    getBody: () => el('history-list'),
+    activeClass: 'hx-active',
+    isOpen: () => {
+      const m = el('history-modal');
+      return !!(m && !m.hidden);
+    },
+    onEscape: () => closeHistory(),
+    onEnter: (item) => {
+      const id = item && item.dataset.id;
       if (!id) return false;
       closeHistory();
       openInRegister(Number(id));
     },
   });
+  document.addEventListener('keydown', (e) => nav.keydown(e));
 }
 
 export function closeHistory() {
-  clearActive();
+  if (nav) nav.clear();
   const modal = el('history-modal');
   if (modal) modal.hidden = true;
 }

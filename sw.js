@@ -44,6 +44,7 @@ const SHELL_ASSETS = [
   './src/ui/auth.js',
   './src/ui/dom.js',
   './src/ui/history.js',
+  './src/ui/listNav.js',
   './src/ui/pages/index.js',
   './src/ui/pages/patients.js',
   './src/ui/pages/printLayout.js',

@@ -1,14 +1,8 @@
 // Tokens page: pick a day, list its visits in issue order.
 
 import db from '../../core/db.js';
-import {
-  bindOff,
-  highlightRow,
-  clearHighlight,
-  onKeys,
-  isTypingTarget,
-  isDialogOpen,
-} from '../dom.js';
+import { bindOff, isTypingTarget, isDialogOpen } from '../dom.js';
+import { createListNav } from '../listNav.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 
@@ -16,20 +10,7 @@ const PAGE = 50;
 
 let s;
 let rowCache = new Map(); // visitId -> visit row (rendered page)
-let activeRow = -1;       // index of the keyboard-highlighted row
-
-function rowEls() {
-  return s && s.tbody ? Array.from(s.tbody.children) : [];
-}
-
-function setActiveRow(i) {
-  activeRow = highlightRow(rowEls(), i, 'active');
-}
-
-function clearActiveRow() {
-  clearHighlight(rowEls(), 'active');
-  activeRow = -1;
-}
+let nav;                  // keyboard row navigation
 
 const ymd = (d) => db.localDay(d);
 
@@ -127,7 +108,7 @@ async function refresh() {
 
   s.tbody.replaceChildren();
   rowCache = new Map();
-  activeRow = -1;
+  if (nav) nav.clear();
   for (const r of rows) {
     rowCache.set(r.rootId, r);
     const tr = document.createElement('tr');
@@ -257,44 +238,24 @@ export function mount() {
     refresh();
   });
   off.on(s.tbody, 'click', onRowClick);
-  // Arrow keys navigate; Enter opens the highlighted visit for editing in
-  // Register. Ignored when focus is in an input/select/dialog.
-  off.on(document, 'keydown', (e) => {
-    if (!s.tbody || !rowEls().length) return;
-    const t = e.target;
-    if (isTypingTarget(t)) return;
-    if (isDialogOpen()) return;
-    onKeys(e, {
-      ArrowDown: () => {
-        const rows = rowEls();
-        if (activeRow >= rows.length - 1) {
-          clearActiveRow();
-          if (s.nextBtn && !s.nextBtn.disabled && !s.pager.hidden) s.nextBtn.focus();
-          return;
-        }
-        setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
-      },
-      ArrowUp: () => {
-        if (s.prevBtn && t === s.nextBtn) {
-          setActiveRow(rowEls().length - 1);
-          return;
-        }
-        setActiveRow(activeRow < 0 ? rowEls().length - 1 : activeRow - 1);
-      },
-      Home: () => setActiveRow(0),
-      End: () => setActiveRow(rowEls().length - 1),
-      Enter: () => {
-        if (activeRow < 0) return false;
-        const tr = rowEls()[activeRow];
-        if (!tr || !tr.dataset.id) return false;
-        activateRow(Number(tr.dataset.id));
-      },
-      Escape: () => {
-        if (activeRow < 0) return false;
-        clearActiveRow();
-      },
-    });
+  // Arrow keys navigate; Enter opens the highlighted visit. Header/footer
+  // handoff is off here (no search box; pager is the footer).
+  nav = createListNav({
+    getRows: () => (s && s.tbody ? Array.from(s.tbody.children) : []),
+    getBody: () => s.tbody,
+    isOpen: () => !!s.tbody,
+    canNav: (e) => !isTypingTarget(e.target) && !isDialogOpen(),
+    pagerPrev: () => s.prevBtn,
+    pagerNext: () => (s.pager && !s.pager.hidden ? s.nextBtn : null),
+    onEnter: (tr) => {
+      if (tr && tr.dataset.id) activateRow(Number(tr.dataset.id));
+    },
+    onEscape: (rows, active) => {
+      if (active < 0) return false;
+      nav.clear();
+    },
   });
+  off.on(document, 'keydown', (e) => nav.keydown(e));
   s.off = off;
   refresh();
 }

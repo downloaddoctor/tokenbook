@@ -2,29 +2,19 @@
 // modal. Visits live in the Tokens tab; this page is the registry.
 
 import db from '../../core/db.js';
-import { bindOff, highlightRow, clearHighlight, onKeys, isTypingTarget } from '../dom.js';
+import { bindOff, isTypingTarget } from '../dom.js';
+import { createListNav } from '../listNav.js';
 import { openHistory } from '../history.js';
 
 const PAGE = 50;
 let st;
-let activeRow = -1; // index of the keyboard-highlighted row
+let nav; // keyboard row navigation
 
-function rowEls() {
-  return st && st.tbody ? Array.from(st.tbody.children) : [];
-}
-
-function setActiveRow(i) {
-  activeRow = highlightRow(rowEls(), i, 'active');
-}
-
-function clearActiveRow() {
-  clearHighlight(rowEls(), 'active');
-  activeRow = -1;
-}
+const rowEls = () => (st && st.tbody ? Array.from(st.tbody.children) : []);
 
 async function render() {
   st.tbody.replaceChildren();
-  activeRow = -1;
+  if (nav) nav.clear();
 
   const q = st.searchEl.value.trim();
   let rows;
@@ -99,16 +89,6 @@ export function mount() {
       render();
     }, 150);
   });
-  // ArrowDown from the search box jumps into the first row. Blur the input so
-  // the document-level handler (which ignores INPUT) takes over for later arrows.
-  off.on(st.searchEl, 'keydown', (e) => {
-    if (e.key !== 'ArrowDown') return;
-    if (!rowEls().length) return;
-    e.preventDefault();
-    st.searchEl.blur();
-    setActiveRow(0);
-  });
-
   off.on(st.prevBtn, 'click', () => {
     st.offset = Math.max(0, st.offset - PAGE);
     render();
@@ -122,55 +102,31 @@ export function mount() {
   off.on(st.tbody, 'click', (e) => {
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
-    setActiveRow(rowEls().indexOf(tr));
+    nav.setActive(rowEls().indexOf(tr));
     openHistory(Number(tr.dataset.id));
   });
 
-
-  off.on(document, 'keydown', (e) => {
+  // Keyboard row navigation. Header = search box, footer = pager; ArrowUp on
+  // the first row returns to search, ArrowDown past the last row focuses Next.
+  nav = createListNav({
+    getRows: rowEls,
+    getBody: () => st.tbody,
+    search: () => st.searchEl,
+    pagerPrev: () => st.prevBtn,
+    pagerNext: () => (st.pager && !st.pager.hidden ? st.nextBtn : null),
     // History modal owns the keyboard while open.
-    const modal = document.getElementById('history-modal');
-    if (modal && !modal.hidden) return;
-    if (!st.tbody || !rowEls().length) return;
-    const t = e.target;
-    if (isTypingTarget(t)) return;
-    onKeys(e, {
-      ArrowDown: () => {
-        const rows = rowEls();
-        if (activeRow >= rows.length - 1) {
-          // Bottom of the list -> hand focus to the pager's Next button.
-          clearActiveRow();
-          if (st.nextBtn && !st.nextBtn.disabled && !st.pager.hidden) {
-            st.nextBtn.focus();
-            return;
-          }
-          return;
-        }
-        setActiveRow(activeRow < 0 ? 0 : activeRow + 1);
-      },
-      ArrowUp: () => {
-        // Coming back from the Next button -> reselect the last row.
-        if (st.nextBtn && t === st.nextBtn) {
-          setActiveRow(rowEls().length - 1);
-          return;
-        }
-        if (activeRow <= 0) {
-          // Top of the list -> hand focus to the search input.
-          clearActiveRow();
-          if (st.searchEl) st.searchEl.focus();
-          return;
-        }
-        setActiveRow(activeRow - 1);
-      },
-      Home: () => setActiveRow(0),
-      End: () => setActiveRow(rowEls().length - 1),
-      Enter: () => {
-        const rows = rowEls();
-        if (activeRow < 0 || activeRow >= rows.length) return false;
-        openHistory(Number(rows[activeRow].dataset.id));
-      },
-    });
+    isOpen: () => {
+      const modal = document.getElementById('history-modal');
+      return !(modal && !modal.hidden);
+    },
+    // Allow the search box to start navigation (ArrowDown enters the list);
+    // block other text fields.
+    canNav: (e) => e.target === st.searchEl || !isTypingTarget(e.target),
+    onEnter: (tr) => {
+      if (tr && tr.dataset.id) openHistory(Number(tr.dataset.id));
+    },
   });
+  off.on(document, 'keydown', (e) => nav.keydown(e));
 
   st.off = off;
   render();

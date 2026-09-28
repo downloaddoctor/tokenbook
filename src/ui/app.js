@@ -45,7 +45,7 @@ function mkProgressToast() {
 async function reloadBillingConfig() {
   try {
     setConfig(await db.getSettings());
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function reportRestore(r, tail) {
@@ -593,5 +593,5 @@ async function bootAuthed(router) {
   console.error('boot failed', err);
   try {
     toast('Startup failed: ' + (err && err.message ? err.message : String(err)), 'err');
-  } catch (_) {}
+  } catch (_) { }
 });
