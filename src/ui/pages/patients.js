@@ -2,7 +2,7 @@
 // modal. Visits live in the Tokens tab; this page is the registry.
 
 import db from '../../core/db.js';
-import { bindOff, isTypingTarget } from '../dom.js';
+import { bindOff, isInteractiveTarget } from '../dom.js';
 import { createListNav } from '../listNav.js';
 import { openHistory } from '../history.js';
 
@@ -62,6 +62,7 @@ async function render() {
   }
 
   st.empty.hidden = rows.length > 0;
+  if (nav) nav.refresh();
   st.countEl.textContent = total + ' patient' + (total === 1 ? '' : 's');
 }
 
@@ -120,8 +121,8 @@ export function mount() {
       return !(modal && !modal.hidden);
     },
     // Allow the search box to start navigation (ArrowDown enters the list);
-    // block other text fields.
-    canNav: (e) => e.target === st.searchEl || !isTypingTarget(e.target),
+    // yield to every other interactive control.
+    canNav: (e) => e.target === st.searchEl || !isInteractiveTarget(e.target),
     onEnter: (tr) => {
       if (tr && tr.dataset.id) openHistory(Number(tr.dataset.id));
     },

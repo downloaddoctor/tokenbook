@@ -1,7 +1,7 @@
 // Tokens page: pick a day, list its visits in issue order.
 
 import db from '../../core/db.js';
-import { bindOff, isTypingTarget, isDialogOpen } from '../dom.js';
+import { bindOff, isInteractiveTarget, isDialogOpen } from '../dom.js';
 import { createListNav } from '../listNav.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
@@ -137,6 +137,7 @@ async function refresh() {
     s.tbody.appendChild(tr);
   }
   s.empty.hidden = summaryTotal > 0;
+  if (nav) nav.refresh();
   if (s.dateHead) s.dateHead.hidden = s.mode === 'day';
 
   if (s.summary) {
@@ -244,7 +245,11 @@ export function mount() {
     getRows: () => (s && s.tbody ? Array.from(s.tbody.children) : []),
     getBody: () => s.tbody,
     isOpen: () => !!s.tbody,
-    canNav: (e) => !isTypingTarget(e.target) && !isDialogOpen(),
+    // Yield to any interactive control (filter buttons / date inputs) so Enter
+    // does not open a row while they are focused.
+    canNav: (e) => !isInteractiveTarget(e.target) && !isDialogOpen(),
+    // Header = the currently visible filter control (ArrowUp from row 0).
+    search: () => document.querySelector('#page-tokens .toolbar input:not([hidden])'),
     pagerPrev: () => s.prevBtn,
     pagerNext: () => (s.pager && !s.pager.hidden ? s.nextBtn : null),
     onEnter: (tr) => {

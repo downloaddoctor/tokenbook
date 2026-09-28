@@ -39,11 +39,21 @@ export function createListNav(cfg) {
 
   function setActive(i) {
     active = highlightRow(rowEls(), i, activeClass);
+    syncTabIndex();
   }
 
   function clear() {
     clearHighlight(rowEls(), activeClass);
     active = -1;
+    syncTabIndex();
+  }
+
+  // Keep exactly one row in the Tab order: the active row, else row 0. Lets Tab
+  // from the header/footer land on the first row instead of skipping the table.
+  function syncTabIndex() {
+    const rows = rowEls();
+    const keep = active >= 0 ? active : 0;
+    for (let i = 0; i < rows.length; i++) rows[i].tabIndex = i === keep ? 0 : -1;
   }
 
   // Move DOM focus onto the active row (only when the key came from inside the
@@ -164,6 +174,7 @@ export function createListNav(cfg) {
     keydown,
     setActive,
     clear,
+    refresh: syncTabIndex,
     rowEls,
     getActive: () => active,
     focusRow,

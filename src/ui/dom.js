@@ -47,6 +47,18 @@ export function isTypingTarget(t) {
   );
 }
 
+// True when the target is any interactive control. List-nav handlers must yield
+// to it so Enter/Space hit the control (button, link) instead of the list.
+export function isInteractiveTarget(t) {
+  return !!(
+    t &&
+    (isTypingTarget(t) ||
+      t.tagName === 'BUTTON' ||
+      t.tagName === 'A' ||
+      (t.closest && t.closest('button, a, [role="tablist"]')))
+  );
+}
+
 // True when any modal <dialog> is open; page-level keys must yield to it.
 export function isDialogOpen() {
   return !!document.querySelector('dialog[open]');
