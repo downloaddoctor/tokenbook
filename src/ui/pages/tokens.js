@@ -132,20 +132,44 @@ async function refresh() {
 
   if (s.summary) {
     if (!summaryTotal) {
+      s.summary.replaceChildren();
       s.summary.hidden = true;
-      s.summary.textContent = '';
     } else {
-      s.summary.hidden = false;
-      const parts = [
-        `Visits: ${summaryTotal} (${paidCount} paid · ${freeCount} free)`,
-        `Collected: ₹${collected}`,
-        `Cash: ₹${cashTotal}`,
-        `UPI: ₹${upiTotal}`,
-      ];
-      if (refunded > 0) parts.push(`Refunded: ₹${refunded}`);
-      s.summary.textContent = parts.join('  ·  ');
+      const stat = (label, value, cls) => {
+        const d = document.createElement('div');
+        d.className = 'stat' + (cls ? ' ' + cls : '');
+        const l = document.createElement('span');
+        l.className = 'stat-label';
+        l.textContent = label;
+        const v = document.createElement('span');
+        v.className = 'stat-value';
+        v.textContent = value;
+        d.append(l, v);
+        return d;
+      };
+      const grossTotal = collected + refunded;
+      s.summary.replaceChildren(
+        stat('Visits', String(summaryTotal)),
+        stat('Paid', String(paidCount)),
+        stat('Free', String(freeCount)),
+        stat('Total', '₹' + grossTotal),
+        stat('Refunded', '₹' + refunded, refunded > 0 ? 'err' : ''),
+        stat('Net', '₹' + collected, 'accent'),
+        stat('Cash', '₹' + cashTotal),
+        stat('UPI', '₹' + upiTotal),
+      );
+      s.summary.hidden = s.summaryHidden === true;
     }
   }
+  if (s.summaryBtn) s.summaryBtn.disabled = summaryTotal === 0;
+}
+
+// Toggle the inline summary panel. Hidden state is per-mount.
+function toggleSummary() {
+  if (!s.summary) return;
+  s.summaryHidden = !s.summaryHidden;
+  s.summary.hidden = s.summaryHidden;
+  if (s.summaryBtn) s.summaryBtn.textContent = s.summaryHidden ? 'Show summary' : 'Hide summary';
 }
 
 async function onRowClick(e) {
@@ -181,12 +205,14 @@ export function mount() {
     toEl: document.getElementById('tokens-to'),
     rangeSep: document.getElementById('tokens-range-sep'),
     todayBtn: document.getElementById('tokens-today'),
+    summaryBtn: document.getElementById('tokens-summary-btn'),
     modeEl: document.getElementById('tokens-mode'),
     modeBtns: Array.from(document.querySelectorAll('#tokens-mode .seg-btn')),
     dateHead: document.getElementById('tokens-th-date'),
     tbody: document.querySelector('#tokens-table tbody'),
     empty: document.getElementById('tokens-empty'),
     summary: document.getElementById('tokens-summary'),
+    summaryHidden: false,
     pager: document.getElementById('tokens-pager'),
     prevBtn: document.getElementById('tokens-pg-prev'),
     nextBtn: document.getElementById('tokens-pg-next'),
@@ -220,6 +246,8 @@ export function mount() {
     s.dateEl.value = ymd(new Date());
     reload();
   });
+  off.on(s.summaryBtn, 'click', toggleSummary);
+  if (s.summaryBtn) s.summaryBtn.textContent = 'Hide summary';
   off.on(s.prevBtn, 'click', () => {
     s.offset = Math.max(0, s.offset - PAGE);
     refresh();

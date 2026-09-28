@@ -234,7 +234,7 @@ async function handleNavigation(request) {
           caches.open(SHELL_CACHE).then((cache) => cache.put(key, fresh));
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     return cached;
   }
 
