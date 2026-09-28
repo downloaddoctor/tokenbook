@@ -24,6 +24,8 @@ core/diag.js — console.warn/error ring buffer (install/recent) + diagnostics s
 core/db.js — Dexie singleton. addVisit is THE only visit write entry. Revision tables (people/visits) + projection tables (peopleProj/visitsProj). rebuildProj() recovers from revisions. Split method groups (db.restore.js, db.journal.js) attach to DB.prototype via Object.assign.
 core/db.restore.js — replayLog + _replayPerson/_replayVisit/_replayUser/_replaySettings (restoreMethods)
 core/db.journal.js — setJournal + _emitJournal* + _emitJournal + _deliverJournal (journalMethods)
+core/db.export.js — exportAll + exportAllStream + _logCounts + _appVersion (exportMethods)
+core/version.js — APP_VERSION constant (shared by db.js + db.export.js to avoid a cycle)
 core/billing.js — follow-up rule + refund tiers + live config (defaultFee, followupWindowDays) via setConfig
 core/auth.js — users in IDB; PBKDF2-SHA256 (150k iters); session token in localStorage 'tokenbook-session'
 core/day.js — localDay() 'YYYY-MM-DD'

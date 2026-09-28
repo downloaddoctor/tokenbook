@@ -37,12 +37,13 @@ import {
 } from '../backup/csv.js';
 import { restoreMethods } from './db.restore.js';
 import { journalMethods } from './db.journal.js';
+import { exportMethods } from './db.export.js';
 
 const DB_NAME = 'tokenbook';
 
-// App / data-model version written into the #details backup line. Bump this
-// whenever a new model (store) or a schema change is added.
-export const APP_VERSION = 1;
+// App / data-model version written into the #details backup line. Bump in
+// version.js (shared with db.export.js to avoid a circular import).
+export { APP_VERSION } from './version.js';
 
 // Re-export the refund helpers from billing.js (canonical home) so existing
 // callers that read them off the db module keep working.
@@ -1017,95 +1018,7 @@ class DB {
   // (methods on DB.prototype via restoreMethods, attached at the bottom)
 
   // ---------- export ----------
-
-  // Cached app version (from version.txt). Fetched once; falls back to '?'.
-  async _appVersion() {
-    return 'v' + APP_VERSION;
-  }
-
-  // Real counts for the #details line: current (non-hidden) people + visits
-  // + user accounts.
-  async _logCounts() {
-    const db = this._db;
-    const [visits, people, users] = await Promise.all([
-      db.visitsProj.where('hidden').equals(0).count(),
-      db.peopleProj.where('hidden').equals(0).count(),
-      db.users.count(),
-    ]);
-    return { visits, people, users };
-  }
-
-  async exportAllStream(onChunk, { pageSize = 2000 } = {}) {
-    const db = this._db;
-    // #details first (human-readable; ignored by the parser), then #head block.
-    const counts = await this._logCounts();
-    onChunk(detailsLine(await this._appVersion(), new Date().toISOString(), counts) + '\n');
-    onChunk(csvHeaderLine() + '\n');
-    let count = 0;
-    // Users first (schemaNo 0) so attribution resolves during a streaming read.
-    let lastUserKey = [Dexie.minKey, Dexie.minKey];
-    for (; ;) {
-      const rows = await db.userRevs.where('[id+v]').above(lastUserKey).limit(pageSize).toArray();
-      if (!rows.length) break;
-      let buf = '';
-      for (const u of rows) buf += userRevToLogLine(u) + '\n';
-      onChunk(buf);
-      count += rows.length;
-      const last = rows[rows.length - 1];
-      lastUserKey = [last.id, last.v];
-      if (rows.length < pageSize) break;
-    }
-    let lastKey = [Dexie.minKey, Dexie.minKey];
-    for (; ;) {
-      const rows = await db.people.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
-      if (!rows.length) break;
-      let buf = '';
-      for (const p of rows) buf += personRevToLogLine(p) + '\n';
-      onChunk(buf);
-      count += rows.length;
-      const last = rows[rows.length - 1];
-      lastKey = [last.rootId, last.v];
-      if (rows.length < pageSize) break;
-    }
-    lastKey = [Dexie.minKey, Dexie.minKey];
-    for (; ;) {
-      const rows = await db.visits.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
-      if (!rows.length) break;
-      let buf = '';
-      for (const v of rows) buf += visitRevToLogLine(v) + '\n';
-      onChunk(buf);
-      count += rows.length;
-      const last = rows[rows.length - 1];
-      lastKey = [last.rootId, last.v];
-      if (rows.length < pageSize) break;
-    }
-    // Settings singleton (schemaNo 3): one line, so a restore carries policy.
-    const settings = await this.getSettings();
-    onChunk(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }) + '\n');
-    count += 1;
-    return { count };
-  }
-
-  async exportAll() {
-    const db = this._db;
-    const users = (await db.userRevs.toArray()).sort((a, b) => a.id - b.id || a.v - b.v);
-    const people = (await db.people.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
-    const visits = (await db.visits.toArray()).sort((a, b) => a.rootId - b.rootId || a.v - b.v);
-    const counts = await this._logCounts();
-    const lines = [
-      detailsLine(await this._appVersion(), new Date().toISOString(), counts),
-      csvHeaderLine(),
-    ];
-    for (const u of users) lines.push(userRevToLogLine(u));
-    for (const p of people) lines.push(personRevToLogLine(p));
-    for (const v of visits) lines.push(visitRevToLogLine(v));
-    const settings = await this.getSettings();
-    lines.push(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }));
-    return {
-      text: lines.join('\n') + '\n',
-      count: users.length + people.length + visits.length + 1,
-    };
-  }
+  // (methods on DB.prototype via exportMethods, attached at the bottom)
 
   refundAmountFor(tier) {
     return refundAmountFor(tier);
@@ -1192,7 +1105,7 @@ class DB {
 // Attach split method groups (see db.restore.js / db.journal.js). Each is a
 // plain object of methods that use `this.*`; attaching to the prototype keeps
 // every internal call site (this._replayPerson, this._db, ...) unchanged.
-Object.assign(DB.prototype, restoreMethods, journalMethods);
+Object.assign(DB.prototype, restoreMethods, journalMethods, exportMethods);
 
 const clinicDb = new DB();
 
