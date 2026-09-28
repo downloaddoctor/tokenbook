@@ -81,9 +81,13 @@ export const exportMethods = {
       if (rows.length < pageSize) break;
     }
     // Settings singleton (schemaNo 3): one line, so a restore carries policy.
+    // Skip when nothing has been saved yet — an all-empty row would fail
+    // restore with "settings: no valid fields".
     const settings = await this.getSettings();
-    onChunk(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }) + '\n');
-    count += 1;
+    if (Object.keys(settings).length) {
+      onChunk(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }) + '\n');
+      count += 1;
+    }
     return { count };
   },
 
@@ -100,11 +104,16 @@ export const exportMethods = {
     for (const u of users) lines.push(userRevToLogLine(u));
     for (const p of people) lines.push(personRevToLogLine(p));
     for (const v of visits) lines.push(visitRevToLogLine(v));
+    // Skip the settings line when nothing is saved (see exportAllStream).
     const settings = await this.getSettings();
-    lines.push(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }));
+    let settingsLines = 0;
+    if (Object.keys(settings).length) {
+      lines.push(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }));
+      settingsLines = 1;
+    }
     return {
       text: lines.join('\n') + '\n',
-      count: users.length + people.length + visits.length + 1,
+      count: users.length + people.length + visits.length + settingsLines,
     };
   },
 };

@@ -38,12 +38,15 @@ const HANDLE_KEY = 'dirHandle';
 
 export const hasFsAccess = typeof window.showDirectoryPicker === 'function';
 
-// Local 'YYYY-MM-DDTHH-MM-SS' stamp for backup filenames.
+// Local 'YYYY-MM-DD_HH-MM-SS' stamp for backup filenames. Uses '_' (not 'T')
+// between date and time: 'T' is legal in a filename but Windows' save dialog
+// and some AV scanners treat it oddly, and Chrome has been seen truncating
+// the extension when the name contains 'T' + a colon-like pattern.
 function fileStamp(now = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   return (
     db.localDay(now) +
-    'T' +
+    '_' +
     pad(now.getHours()) +
     '-' +
     pad(now.getMinutes()) +
@@ -59,11 +62,21 @@ function downloadText(filename, text, type) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
   a.remove();
-  // 1s: long enough that the browser has started the download before revoke.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // DO NOT revoke here. A revoke racing the download (slow disk, save-file
+  // picker, or a hash-change navigation) produces a 0-byte / truncated /
+  // extension-less file. The URL is freed when the document unloads.
+  window.addEventListener(
+    'beforeunload',
+    () => {
+      try { URL.revokeObjectURL(url); } catch (_) { }
+    },
+    { once: true }
+  );
 }
 
 class Backup {

@@ -75,7 +75,9 @@ export const restoreMethods = {
   },
 
   // Apply a settings singleton from the log. Missing/invalid fields are
-  // ignored (keeps current settings for those keys).
+  // ignored (keeps current settings for those keys). An all-empty settings
+  // row is a NO-OP, not an error: older exports wrote an empty row when
+  // nothing had been saved, and a restore must not fail on them.
   async _replaySettings(op) {
     const patch = {};
     if (op.defaultFee != null && Number.isFinite(Number(op.defaultFee))) {
@@ -84,7 +86,7 @@ export const restoreMethods = {
     if (op.followupWindowDays != null && Number.isFinite(Number(op.followupWindowDays))) {
       patch.followupWindowDays = Number(op.followupWindowDays);
     }
-    if (!Object.keys(patch).length) throw new Error('settings: no valid fields');
+    if (!Object.keys(patch).length) return; // nothing to apply
     const cur = await this.getSettings();
     await this._db.meta.put({ key: 'settings', value: { ...cur, ...patch } });
   },

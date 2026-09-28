@@ -127,6 +127,7 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 - sw.js SHELL_ASSETS between markers is auto-generated — do not hand-edit.
 - version.txt is the deploy sentinel; must change on every deploy touching a cached asset.
 - src/dev/ is dev-only and never precached.
+- Blob downloads (downloadText in backup/backup.js) MUST NOT revoke the object URL on the calling tick — revoke only on beforeunload. An early revoke races the download and produces a 0-byte / extension-less file. Download filenames use '_' (not 'T') between date and time for Windows safety.
 - Session token lives in localStorage ('tokenbook-session'), so any XSS on the origin = full session takeover. Accepted for the offline single-origin clinic app. Do NOT add third-party scripts to index.html without revisiting this — a compromised CDN would defeat the token model.
 - users.username is normalized (trim + uppercase) and its uniqueness is enforced by _insertUser. Any new user-creation path MUST go through _insertUser, not db.raw().users.add directly.
 
