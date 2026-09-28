@@ -4,7 +4,7 @@
 
 import db from '../../core/db.js';
 import { timeAgo } from '../../core/time.js';
-import { getB, getFlags, call } from './register.ctx.js';
+import { getB, getFlags, getHooks } from './register.ctx.js';
 import {
   applyFollowupRule,
   refreshPreview,
@@ -180,21 +180,21 @@ async function onTokenChange() {
   const token = Number(b.fToken.value);
   if (!day || !Number.isInteger(token) || token < 1) return;
   const found = await db.findVisitByDateToken(day, token);
+  const hooks = getHooks();
   if (!found) {
     flags.loadedVisitId = null;
-    call('setMsg', `Token ${token} is free on ${day}.`, 'ok');
-    call('startNewBill', false, false); // keep the user's chosen day
+    hooks.setMsg(`Token ${token} is free on ${day}.`, 'ok');
+    hooks.startNewBill(false, false); // keep the user's chosen day
     return;
   }
   const { visit, person } = found;
   setFollowupNote('');
   hideSuggests();
-  call(
-    'setMsg',
+  hooks.setMsg(
     `Editing token ${token} on ${day} — ${visit.name}${person ? ' (Patient #' + person.rootId + ')' : ''}.`,
     'ok'
   );
-  call('loadVisitIntoForm', visit, person);
+  hooks.loadVisitIntoForm(visit, person);
 }
 
 async function onTokenBlur() {

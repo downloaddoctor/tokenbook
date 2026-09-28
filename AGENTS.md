@@ -127,6 +127,8 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 - sw.js SHELL_ASSETS between markers is auto-generated — do not hand-edit.
 - version.txt is the deploy sentinel; must change on every deploy touching a cached asset.
 - src/dev/ is dev-only and never precached.
+- Session token lives in localStorage ('tokenbook-session'), so any XSS on the origin = full session takeover. Accepted for the offline single-origin clinic app. Do NOT add third-party scripts to index.html without revisiting this — a compromised CDN would defeat the token model.
+- users.username is normalized (trim + uppercase) and its uniqueness is enforced by _insertUser. Any new user-creation path MUST go through _insertUser, not db.raw().users.add directly.
 
 ## EXTENSIONS
 ADRs live in docs/adr/ (0001 revisions+projections, 0002 single write path, 0003 CSV log format, 0004 single-tab guard).

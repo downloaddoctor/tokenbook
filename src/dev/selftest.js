@@ -9,7 +9,14 @@
 
 import db from '../core/db.js';
 import backup from '../backup/backup.js';
-import { parseBackup, parseCsvLine } from '../backup/csv.js';
+import {
+  parseBackup,
+  parseCsvLine,
+  csvToLog,
+  csvHeaderLine,
+  personRevToLogLine,
+  visitRevToLogLine,
+} from '../backup/csv.js';
 import { localDay } from '../core/day.js';
 
 // Runs on the CURRENT local day. Isolated DB (tokenbook-devtest) + isolated log
@@ -210,7 +217,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   // Isolate the backup LOG too. Delete any devtest log from a prior run so each
   // run starts fresh with a header (parser requires header on line 1).
   backup.setLogFileName('tokenbook-latest-devtest.csv');
-  await backup.deleteLog().catch(() => {});
+  await backup.deleteLog().catch(() => { });
 
   const register = await import('../ui/pages/register.js');
   register.__setTestHooks({ suppressPrint: true });
@@ -220,8 +227,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   const b = register.__getForm();
   if (!b || !b.form) {
     rep.check('register form mounted', false, 'could not access #patient-form');
-    await db.deleteDb().catch(() => {});
-    await db.setDbName(null).catch(() => {});
+    await db.deleteDb().catch(() => { });
+    await db.setDbName(null).catch(() => { });
     backup.setLogFileName(null);
     return finish(rep);
   }
@@ -244,6 +251,68 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   if (hasFolder) rep.check('backup folder set', true, st.folderName);
   else rep.skip('backup folder set', 'no folder — log + replay checks skipped');
 
+  // ---- 0. parser round-trip + malformed input (row 28) -----------------
+  // Cheap, no DB: encode a couple of revisions, decode them, then feed the
+  // decoder deliberately broken rows and assert the skipped-row shapes.
+  stage('0. parser round-trip + malformed input');
+  try {
+    const pRow = {
+      rootId: 42, v: 1, name: 'TEST PARSE', mob: '1234567890', age: 30,
+      gender: 'M', weight: 70.5, hidden: 0,
+      createdAt: '2026-01-01T00:00:00.000Z', revAt: '2026-01-01T00:00:00.000Z',
+      userId: 1, userV: 1,
+    };
+    const vRow = {
+      rootId: 7, v: 2, personId: 42, personV: 1, date: '2026-01-01', token: 5,
+      weight: 70.5, followup: 1, payment: 0, fee: 0, refundTier: 2, hidden: 0,
+      createdAt: '2026-01-01T00:00:00.000Z', revAt: '2026-01-02T00:00:00.000Z',
+      userId: 1, userV: 1,
+    };
+    const good =
+      csvHeaderLine() + '\n' +
+      personRevToLogLine(pRow) + '\n' +
+      visitRevToLogLine(vRow) + '\n';
+    const r1 = csvToLog(good);
+    rep.eq('parser: ops length 2', r1.ops.length, 2);
+    rep.eq('parser: skipped length 0', r1.skippedRows.length, 0);
+    rep.eq('parser: person kind', r1.ops[0].kind, 'person');
+    rep.eq('parser: person name', r1.ops[0].name, 'TEST PARSE');
+    rep.eq('parser: person age', r1.ops[0].age, 30);
+    rep.eq('parser: person weight', r1.ops[0].weight, 70.5);
+    rep.eq('parser: visit kind', r1.ops[1].kind, 'visit');
+    rep.eq('parser: visit refundTier', r1.ops[1].refundTier, 2);
+    rep.check('parser: visit epoch decoded',
+      typeof r1.ops[1].createdAt === 'string' && r1.ops[1].createdAt.startsWith('2026-01-01'),
+      'createdAt=' + r1.ops[1].createdAt);
+
+    // Malformed inputs: unknown schemaNo, short row, bad epoch, non-log text.
+    const bad =
+      csvHeaderLine() + '\n' +
+      '99|whatever|fields\n' +       // unknown schemaNo
+      '1|1|1\n' +                     // short people row (should skip)
+      personRevToLogLine(pRow) + '\n';
+    const r2 = csvToLog(bad);
+    rep.eq('parser-malformed: ops length 1', r2.ops.length, 1);
+    rep.eq('parser-malformed: skipped length 2', r2.skippedRows.length, 2);
+    rep.check('parser-malformed: skip reasons present',
+      r2.skippedRows.every((s) => s.reason && s.raw != null));
+
+    // No #head -> should throw.
+    let threw = false;
+    try { csvToLog('some random text\nanother line\n'); } catch (_) { threw = true; }
+    rep.check('parser: no-head throws', threw);
+
+    // Round-trip a #details line (ignored) + a real row still parses.
+    const withDetails =
+      '#details|TokenBook|v1|2026-01-01T00:00:00.000Z|visits=0|people=1|users=0\n' +
+      csvHeaderLine() + '\n' +
+      personRevToLogLine(pRow) + '\n';
+    const r3 = csvToLog(withDetails);
+    rep.eq('parser-details: ops length 1', r3.ops.length, 1);
+  } catch (e) {
+    rep.check('parser: stage completed', false, e && e.message ? e.message : String(e));
+  }
+
   // Fill the register form. `date` sets the day (defaults to TEST_DATE);
   // `token` sets the token (triggers edit-mode load when a visit exists);
   // `patientId` sets the hidden person id (for reassign). Identity + billing
@@ -263,7 +332,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
       setVal(b.fPatientId, String(patientId));
       await settle(400);
     }
-    
+
     if (name) {
       setVal(b.fName, name);
       await settle(350);
@@ -393,7 +462,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.check('reassign-dialog: cancel submit ok', !err5cCancel, err5cCancel || '');
   const v1e = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: cancel left personId on B', v1e && v1e.visit.personId, pidB);
-  
+
   await settle(350);
   await fill({ date: TEST_DATE, token: 1, name: NAME_A, mob: MOB_A });
   const err5c = await submitWithDialog(b.form, register, 'reassign');
@@ -401,7 +470,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.check('reassign-dialog: reassign submit ok', !err5c, err5c || '');
   const v1f = await db.findVisitByDateToken(TEST_DATE, 1);
   rep.eq('reassign-dialog: visit moved to patient A', v1f && v1f.visit.personId, pidA);
-  
+
   // Move token 1 back to patient B so downstream refund/log/read stages see
   // the state they assert. B was renamed in stage 5b to (TEST PATIENT B2, MOB_B).
   register.startNewBill();
@@ -438,7 +507,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
 
   const rowsInTable = document.querySelectorAll('#tokens-table tbody tr[data-id]').length;
   rep.check('refund-ui: token list rendered', rowsInTable > 0, 'rows=' + rowsInTable);
- 
+
   await settle(350);
   let rerr = await refundViaUI(1, 1, onProgress);
   rep.check('refund-ui: tier 1 save', !rerr, rerr || '');
@@ -608,8 +677,8 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   if (router && router.activateTab) router.activateTab(router.currentTab, true);
 
   // Drop the isolated test DB and restore the real DB name + log file.
-  await db.deleteDb().catch(() => {});
-  await db.setDbName(null).catch(() => {});
+  await db.deleteDb().catch(() => { });
+  await db.setDbName(null).catch(() => { });
   backup.setLogFileName(null);
 
   return finish(rep);

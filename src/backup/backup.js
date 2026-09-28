@@ -184,17 +184,22 @@ class Backup {
     }
   }
 
-  // Keep only the newest KEEP_ARCHIVES files in archive/.
+  // Keep only the newest KEEP_ARCHIVES files in archive/. "Newest" is the
+  // file's lastModified, NOT the name — a rename to an unpredictable scheme
+  // must not silently change what gets deleted.
   async pruneArchives(adir) {
-    const names = [];
+    const entries = [];
     for await (const [name, handle] of adir.entries()) {
-      if (handle.kind === 'file' && ARCHIVE_RE.test(name)) names.push(name);
+      if (handle.kind !== 'file' || !ARCHIVE_RE.test(name)) continue;
+      let mtime = 0;
+      try { mtime = (await handle.getFile()).lastModified || 0; } catch (_) { }
+      entries.push({ name, mtime });
     }
-    if (names.length <= KEEP_ARCHIVES) return;
-    names.sort();
-    for (const n of names.slice(0, names.length - KEEP_ARCHIVES)) {
+    if (entries.length <= KEEP_ARCHIVES) return;
+    entries.sort((a, b) => a.mtime - b.mtime); // oldest first
+    for (const e of entries.slice(0, entries.length - KEEP_ARCHIVES)) {
       try {
-        await adir.removeEntry(n);
+        await adir.removeEntry(e.name);
       } catch { }
     }
   }
@@ -219,17 +224,21 @@ class Backup {
     return name;
   }
 
-  // Keep only the newest KEEP_SNAPSHOTS files in daily/.
+  // Keep only the newest KEEP_SNAPSHOTS files in daily/. Sorted by mtime, not
+  // name, so a different naming scheme can't change retention semantics.
   async pruneDaily(ddir) {
-    const names = [];
+    const entries = [];
     for await (const [name, handle] of ddir.entries()) {
-      if (handle.kind === 'file' && DAILY_RE.test(name)) names.push(name);
+      if (handle.kind !== 'file' || !DAILY_RE.test(name)) continue;
+      let mtime = 0;
+      try { mtime = (await handle.getFile()).lastModified || 0; } catch (_) { }
+      entries.push({ name, mtime });
     }
-    if (names.length <= KEEP_SNAPSHOTS) return;
-    names.sort();
-    for (const n of names.slice(0, names.length - KEEP_SNAPSHOTS)) {
+    if (entries.length <= KEEP_SNAPSHOTS) return;
+    entries.sort((a, b) => a.mtime - b.mtime); // oldest first
+    for (const e of entries.slice(0, entries.length - KEEP_SNAPSHOTS)) {
       try {
-        await ddir.removeEntry(n);
+        await ddir.removeEntry(e.name);
       } catch { }
     }
   }
