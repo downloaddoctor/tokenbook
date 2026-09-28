@@ -73,46 +73,20 @@ class DB {
     this._migrationNotice = typeof fn === 'function' ? fn : null;
   }
 
-  // No prod data yet — schema resets freely. This IS version 1 of the
-  // revisioned model; there is no older version to upgrade from. A local DB
-  // left over from the pre-revision build cannot upgrade (its primary keys
-  // differ), so openDb() deletes-and-recreates it after a JSON dump.
+  // No prod data yet — the schema is a single version. Any DB left over from
+  // an older/different schema cannot upgrade in place (primary keys or the
+  // version number differ), so openDb() dumps it to JSON and recreates.
+  // NOTE: once real data ships, this MUST go back to append-only version(N+1)
+  // bumps — never renumber a released schema.
   _declareSchema(instance) {
     instance.version(1).stores({
-      people: '[rootId+v], rootId, [name+mob], v',
+      people: '[rootId+v], rootId, [name+mob], v, userId',
       peopleProj: 'rootId, [name+mob], lastVisitAt, hidden',
-      visits: '[rootId+v], rootId, [date+token], personId, v',
+      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
       visitsProj: 'rootId, [date+token], date, personId, hidden',
       meta: 'key',
-    });
-    // v2: users (auth). Idempotent add — Dexie upgrades in place, existing
-    // stores are untouched. `username` is unique and stored UPPER-cased.
-    instance.version(2).stores({
       users: '++id, &username, role, disabled',
-    });
-    // v3: userRevs — append-only user history, [id+v] keyed (mirrors people).
-    // `users` stays the current-state projection (PK id) so auth reads are
-    // unchanged. Every user write appends here + puts `users`.
-    instance.version(3).stores({
       userRevs: '[id+v], id, v',
-    });
-    // v4: index userId on the revision tables so per-user activity is a range
-    // scan, not a full table walk.
-    instance.version(4).stores({
-      people: '[rootId+v], rootId, [name+mob], v, userId',
-      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
-    });
-    // v5: reserved (no schema change) — a DB that briefly declared a compound
-    // [userId+revAt] index here still opens.
-    instance.version(5).stores({
-      people: '[rootId+v], rootId, [name+mob], v, userId',
-      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
-    });
-    // v6: bump so Dexie reconciles + DROPS the compound index on existing DBs.
-    // Same shape as v4 (plain userId only).
-    instance.version(6).stores({
-      people: '[rootId+v], rootId, [name+mob], v, userId',
-      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
     });
   }
 
@@ -125,11 +99,12 @@ class DB {
       this._openPromise = this._db
         .open()
         .catch(async (err) => {
-          // A leftover DB from the pre-revision build has different primary
-          // keys (++id vs [rootId+v]); Dexie cannot upgrade in place and throws
-          // UpgradeError. Never drop silently: dump the old DB to a JSON file
-          // (browser download), then recreate.
-          if (err && err.name === 'UpgradeError') {
+          // Two incompatible-DB cases are both recoverable by dump+recreate:
+          //   UpgradeError — different primary keys (pre-revision build);
+          //   VersionError — the stored DB is a HIGHER version than the code
+          //     declares (e.g. after collapsing the schema version ladder).
+          // Never drop silently: dump the old DB to a JSON file, then recreate.
+          if (err && (err.name === 'UpgradeError' || err.name === 'VersionError')) {
             console.warn('[tokenbook] incompatible schema — backing up then recreating');
             // Close the failed Dexie connection FIRST and let IDB release it,
             // otherwise the later delete is blocked by our own open handle.
@@ -219,24 +194,34 @@ class DB {
         const tx = idb.transaction(storeNames, 'readonly');
         let remaining = storeNames.length;
         tx.onerror = () => { try { idb.close(); } catch (_) { } reject(tx.error); };
+        tx.onabort = () => { try { idb.close(); } catch (_) { } reject(tx.error || new Error('dump tx aborted')); };
         for (const sn of storeNames) {
           const all = tx.objectStore(sn).getAll();
           all.onsuccess = () => {
+            // Store rows as-is; JSON.stringify handles nested objects. BigInt is
+            // not used anywhere in the schema, so default stringify is safe.
             dump.stores[sn] = all.result;
             if (--remaining === 0) {
               try { idb.close(); } catch (_) { }
               const filename =
-                name + '-pre-v3-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+                name + '-pre-recreate-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
               try {
-                const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+                const text = JSON.stringify(dump, null, 2);
+                const blob = new Blob([text], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = filename;
+                a.style.display = 'none';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                // Do NOT revoke synchronously: the download is async and an
+                // early revoke truncates it to a 0-byte/garbage file. Keep the
+                // URL alive for the session (the page reloads right after).
+                window.addEventListener('beforeunload', () => {
+                  try { URL.revokeObjectURL(url); } catch (_) { }
+                });
               } catch (e) {
                 return reject(e);
               }
