@@ -20,6 +20,7 @@ sw.js — service worker; SHELL_ASSETS auto-generated between markers
 
 ## MODULES
 core/tabLock.js — single-tab guard via Web Locks API (acquireTabLock); first tab wins, later tabs blocked
+core/diag.js — console.warn/error ring buffer (install/recent) + diagnostics snapshot for the Log dialog's Copy button
 core/db.js — Dexie singleton. addVisit is THE only visit write entry. Revision tables (people/visits) + projection tables (peopleProj/visitsProj). rebuildProj() recovers from revisions.
 core/billing.js — follow-up rule + refund tiers + live config (defaultFee, followupWindowDays) via setConfig
 core/auth.js — users in IDB; PBKDF2-SHA256 (150k iters); session token in localStorage 'tokenbook-session'
@@ -124,6 +125,7 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 - src/dev/ is dev-only and never precached.
 
 ## EXTENSIONS
+ADRs live in docs/adr/ (0001 revisions+projections, 0002 single write path, 0003 CSV log format, 0004 single-tab guard).
 New entity → add SCHEMA_* in backup/csv.js + KIND_BY_SCHEMA entry + replay handler in db.js + revision/projection stores.
 New route → ROUTES + PAGE_ID in ui/router.js + page section in index.html + Pages entry.
 New shell asset → tracked file matching CACHED regex in .githooks/pre-commit (hook regenerates sw.js).

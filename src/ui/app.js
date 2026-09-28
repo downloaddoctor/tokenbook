@@ -16,6 +16,7 @@ import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../c
 import { setConfig, getConfig } from '../core/billing.js';
 import { showAuthGate, hideGate } from './auth.js';
 import { acquireTabLock } from '../core/tabLock.js';
+import { install as installDiag, snapshot as diagSnapshot } from '../core/diag.js';
 
 // ---------- restore helpers ----------
 
@@ -499,6 +500,9 @@ function showTabBlockedScreen(onRetry) {
   }
   // Re-probe on demand (Retry button reloads the page; no polling).
 
+  // Capture warn/error lines for the Log dialog's "Copy diagnostics" button.
+  installDiag();
+
   const btnBackup = document.getElementById('btn-backup');
   const btnRestore = document.getElementById('btn-restore');
   const btnLog = document.getElementById('btn-log');
@@ -632,6 +636,34 @@ function showTabBlockedScreen(onRetry) {
     }
   });
 
+  // Inject the "Copy diagnostics" button into the Log dialog footer once.
+  // Called from BOTH Log-dialog branches (folder set OR no folder) so the
+  // button is always available.
+  function ensureDiagButton(dlg) {
+    const footer = dlg.querySelector('.modal-actions');
+    if (!footer || footer._diagWired) return;
+    footer._diagWired = true;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Copy diagnostics';
+    btn.title = 'Copy app + backup + DB state + recent console to clipboard';
+    btn.addEventListener('click', async () => {
+      try {
+        const text = await diagSnapshot({
+          db,
+          backup,
+          appVersion: db.APP_VERSION != null ? db.APP_VERSION : undefined,
+        });
+        await navigator.clipboard.writeText(text);
+        toast('Diagnostics copied to clipboard.', 'ok');
+      } catch (e) {
+        toast('Copy failed: ' + (e && e.message ? e.message : e), 'err');
+      }
+    });
+    // Place it at the end, after the Close button (if present).
+    footer.appendChild(btn);
+  }
+
   if (btnLog) {
     btnLog.addEventListener('click', async () => {
       const dlg = document.getElementById('log-dialog');
@@ -650,6 +682,7 @@ function showTabBlockedScreen(onRetry) {
           'NOT BACKED UP (no folder)\n' +
           '─────────────────────────\n' +
           (all.text ? all.text.trimEnd() : '(no visits)');
+        ensureDiagButton(dlg);
         dlg.returnValue = '';
         dlg.showModal();
         return;
@@ -660,11 +693,17 @@ function showTabBlockedScreen(onRetry) {
         db.countAll(),
         Promise.resolve(backup.pendingLines()),
       ]);
+      // Pending-queue "why not flushed?" hint. Mirrors backup.flush()'s gates.
+      const pendingReason =
+        pendingLines.length === 0 ? 'nothing queued'
+        : !st.hasFolder ? 'no folder set'
+        : st.lastError ? 'last flush error: ' + st.lastError
+        : 'idle — debounce pending (2s)';
 
       const parts = [];
       body.textContent = '';
       parts.push(`DB · ${dbCount} visit${dbCount === 1 ? '' : 's'}`);
-      parts.push(`Pending · ${pendingLines.length}`);
+      parts.push(`Pending · ${pendingLines.length} (${pendingReason})`);
 
       let csvLineCount = 0;
       if (csv.text != null) {
@@ -686,9 +725,11 @@ function showTabBlockedScreen(onRetry) {
         body.textContent += header + (text ? text.trimEnd() : '(none)') + '\n\n';
       };
 
-      section('PENDING FLUSH', pendingLines.join('\n'));
+      section('PENDING FLUSH (' + pendingLines.length + ') — ' + pendingReason, pendingLines.join('\n'));
       if (csv.text != null) section('CSV · ' + csv.source, csv.text);
       else if (csv.source === 'error') section('CSV ERROR', csv.error || 'unknown');
+
+      ensureDiagButton(dlg);
 
       dlg.returnValue = '';
       dlg.showModal();
@@ -715,19 +756,21 @@ function showTabBlockedScreen(onRetry) {
         const r = await runSelfTest({
           router,
           onProgress: (name, ok, detail, status) => {
-            if (name === '#stage') render('--- ' + detail + ' ---');
-            else if (name === '#info') render('    · ' + detail);
-            else render((status || (ok ? 'PASS' : 'FAIL')) + ' ' + name + (detail ? '  (' + detail + ')' : ''));
+            if (name === '#stage') render('=== ' + detail + ' ===');
+            else if (name === '#info') render('· ' + detail);
+            else {
+              const mark = status === 'SKIP' ? '–' : ok ? '✓' : '✗';
+              render(`${mark} ${name}${detail ? '  —  ' + detail : ''}`);
+            }
           },
           confirmReplay: async () => true,
         });
         const tally =
-          `${r.passed} passed` +
-          (r.skipped ? `, ${r.skipped} skipped` : '') +
-          (r.failed ? `, ${r.failed} failed` : '');
+          `${r.passed} passed · ${r.failed} failed` +
+          (r.skipped ? ` · ${r.skipped} skipped` : '');
         sub.textContent = r.ok ? `all good — ${tally}` : `${r.failed} FAILED — ${tally}`;
         render('');
-        render(r.ok ? 'RESULT: ALL PASSED' : 'RESULT: FAILURES — see FAIL lines above');
+        render(r.ok ? 'RESULT: ALL PASSED' : 'RESULT: FAILURES — see ✗ lines above');
         toast(
           r.ok ? `Self-test passed (${tally}).` : `Self-test: ${r.failed} failed.`,
           r.ok ? 'ok' : 'err'
