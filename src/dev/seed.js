@@ -194,6 +194,9 @@ export async function seed({
 
   // 6a. people revision rows. v3: one revision per person (v=1). Identity lives
   // here; visits only point at it via (personId, personV).
+  // revAt = the seed write time (NEVER the visit's createdAt — that is a fixed
+  // per-visit value and would collapse activity ordering).
+  const seededAt = new Date().toISOString();
   const peopleRevs = personList.map((p) => ({
     rootId: p.id,
     v: 1,
@@ -203,8 +206,10 @@ export async function seed({
     gender: p.gender,
     weight: p.weight,
     hidden: 0,
-    createdAt: visits.find((v) => v.personId === p.id)?.createdAt || new Date().toISOString(),
-    revAt: visits.find((v) => v.personId === p.id)?.createdAt || new Date().toISOString(),
+    createdAt: visits.find((v) => v.personId === p.id)?.createdAt || seededAt,
+    revAt: seededAt,
+    userId: null,
+    userV: null,
   }));
 
   // 6b. people projection: one row per rootId with visit count + lastVisitAt.

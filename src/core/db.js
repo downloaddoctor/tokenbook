@@ -40,6 +40,18 @@ const DB_NAME = 'tokenbook';
 // callers that read them off the db module keep working.
 export { REFUND_TIER_STEP, refundAmountFor, normalizeRefundTier };
 
+// Descending activity order: latest write first. Uses revAt, falling back to
+// createdAt (seed rows may carry an unset/bogus revAt). Deterministic
+// tie-break (kind, rootId, v) so equal timestamps never scramble the list.
+function compareActivityDesc(a, b) {
+  const ta = a.rev.revAt || a.rev.createdAt || '';
+  const tb = b.rev.revAt || b.rev.createdAt || '';
+  if (ta !== tb) return tb.localeCompare(ta);
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+  if (a.rootId !== b.rootId) return b.rootId - a.rootId;
+  return (b.rev.v || 0) - (a.rev.v || 0);
+}
+
 class DB {
   constructor() {
     this._dbName = DB_NAME;
@@ -637,7 +649,7 @@ class DB {
     const merged = [
       ...people.map((r) => ({ kind: 'person', rootId: r.rootId, rev: r })),
       ...visits.map((r) => ({ kind: 'visit', rootId: r.rootId, rev: r })),
-    ].sort((a, b) => (b.rev.revAt || b.rev.createdAt || '').localeCompare(a.rev.revAt || a.rev.createdAt || ''));
+    ].sort(compareActivityDesc);
 
     const total = merged.length;
     const slice = merged.slice(off, off + lim);
@@ -741,6 +753,10 @@ class DB {
       weight: weight == null || weight === '' ? current.weight : Number(weight),
       hidden: current.hidden ? 1 : 0,
       createdAt: nowIso,
+      // A new person revision is written NOW: drop any inherited revAt so the
+      // append helper stamps the real write time (otherwise revAt freezes at
+      // the previous revision's value and the activity timeline misdates it).
+      revAt: undefined,
     };
     this._emitJournalPerson(next);
     await this._appendPersonRev(next);

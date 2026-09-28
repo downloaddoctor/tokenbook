@@ -94,7 +94,10 @@ export function closeRevisions() {
 
 // ---- diff engine ------------------------------------------------------
 // Fields that are metadata, not content — never shown as a change.
-const META_KEYS = new Set(['v', 'createdAt', 'revAt', 'rootId', 'personV']);
+// Metadata never shown as a content change. `personV` is intentionally NOT here:
+// when a visit only re-pins the patient's identity revision, that IS the change
+// and must render as "Identity N → M" rather than "no field change".
+const META_KEYS = new Set(['v', 'createdAt', 'revAt', 'rootId', 'userId', 'userV']);
 
 // Human labels. Falls back to the raw key.
 const LABELS = {
@@ -107,6 +110,7 @@ const LABELS = {
   date: 'Date',
   token: 'Token',
   personId: 'Patient',
+  personV: 'Identity',
   followup: 'Follow up',
   payment: 'Payment',
   fee: 'Fee',
@@ -120,6 +124,7 @@ function fmt(key, val, entity) {
   if (key === 'refundTier') return val ? '₹' + Number(val) * 100 : 'none';
   if (key === 'fee') return '₹' + (val == null ? 0 : val);
   if (key === 'personId') return '#' + val;
+  if (key === 'personV') return 'v' + val;
   if (key === 'weight') return val == null ? '—' : val + ' kg';
   return val == null || val === '' ? '—' : String(val);
 }
