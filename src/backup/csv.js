@@ -108,6 +108,23 @@ export function csvHeaderLine() {
   return lines.join('\n');
 }
 
+// Human-readable header line written as the FIRST line of a fresh latest.csv.
+// Format: #details|TokenBook|<ver>|<iso date>|visits=N|people=N|users=N
+// `<ver>` is the full version string (e.g. `v1`). Ignored by csvToLog.
+export function detailsLine(version, dateIso, counts) {
+  const c = counts || {};
+  const parts = [
+    '#details',
+    'TokenBook',
+    version || '?',
+    dateIso || new Date().toISOString(),
+    'visits=' + (c.visits != null ? c.visits : 0),
+    'people=' + (c.people != null ? c.people : 0),
+    'users=' + (c.users != null ? c.users : 0),
+  ];
+  return parts.join(CSV_DELIM);
+}
+
 // ---- refTier normalization: owned by core/billing.js, re-exported here ----
 export { normalizeRefundTier };
 
@@ -224,6 +241,8 @@ export function csvToLog(text) {
       heads.push({ lineNo: i + 1, fields: parseCsvLine(raw) });
       continue;
     }
+    // #details is a human-readable first line; ignore it on parse.
+    if (raw.startsWith('#details')) continue;
     body.push({ lineNo: i + 1, raw });
   }
   if (!heads.length) throw new Error('Not a tokenbook v3 log (no #head lines).');

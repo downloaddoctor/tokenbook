@@ -13,10 +13,12 @@
 import db from '../core/db.js';
 import {
   csvHeaderLine,
+  detailsLine,
   personRevToLogLine,
   visitRevToLogLine,
   csvToLog,
   parseBackup,
+  parseCsvLine,
 } from './csv.js';
 import meta from './meta.js';
 import { timeAgo } from '../core/time.js';
@@ -193,7 +195,7 @@ class Backup {
     for (const n of names.slice(0, names.length - KEEP_ARCHIVES)) {
       try {
         await adir.removeEntry(n);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -228,7 +230,7 @@ class Backup {
     for (const n of names.slice(0, names.length - KEEP_SNAPSHOTS)) {
       try {
         await ddir.removeEntry(n);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -468,7 +470,14 @@ class Backup {
         }
 
         let payload = '';
-        if (this._needsHeader) payload += csvHeaderLine() + '\n';
+        if (this._needsHeader) {
+          let counts = { visits: 0, people: 0, users: 0 };
+          try {
+            counts = await db._logCounts();
+          } catch (_) { }
+          payload += detailsLine(await db._appVersion(), new Date().toISOString(), counts) + '\n';
+          payload += csvHeaderLine() + '\n';
+        }
         for (const entry of this._pending) payload += this.formatLogEntry(entry) + '\n';
 
         // Size-before: O(1) metadata read, no full-file text load.
@@ -571,6 +580,138 @@ class Backup {
     this._needsHeader = false;
   }
 
+  // List every restorable backup in the folder, grouped by type.
+  // Returns { latest, daily:[], archive:[] } where each entry is
+  // { name, dir, path, date, size, handle }.
+  async listBackups() {
+    const out = { latest: null, daily: [], archive: [] };
+    if (!this._dir) return out;
+
+    // latest.csv (or the swap-name used by self-test).
+    try {
+      const fh = await this._dir.getFileHandle(this.LATEST);
+      const f = await fh.getFile();
+      out.latest = {
+        name: this.LATEST,
+        dir: this._dir,
+        path: this.LATEST,
+        date: f.lastModified ? new Date(f.lastModified).toISOString() : null,
+        size: f.size,
+        handle: fh,
+      };
+    } catch {
+      /* no latest.csv */
+    }
+
+    // daily/*.csv
+    try {
+      const ddir = await this._dir.getDirectoryHandle(DAILY_DIR);
+      for await (const [name, handle] of ddir.entries()) {
+        if (handle.kind !== 'file' || !DAILY_RE.test(name)) continue;
+        const f = await handle.getFile();
+        out.daily.push({
+          name,
+          dir: ddir,
+          path: DAILY_DIR + '/' + name,
+          date: f.lastModified ? new Date(f.lastModified).toISOString() : null,
+          size: f.size,
+          handle,
+        });
+      }
+    } catch {
+      /* no daily/ */
+    }
+
+    // Root-level snapshots (older layout) fold into daily.
+    try {
+      for await (const [name, handle] of this._dir.entries()) {
+        if (handle.kind !== 'file' || !SNAP_RE.test(name)) continue;
+        if (out.daily.some((d) => d.name === name)) continue;
+        const f = await handle.getFile();
+        out.daily.push({
+          name,
+          dir: this._dir,
+          path: name,
+          date: f.lastModified ? new Date(f.lastModified).toISOString() : null,
+          size: f.size,
+          handle,
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    out.daily.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    // archive/*.csv
+    try {
+      const adir = await this._dir.getDirectoryHandle(ARCHIVE_DIR);
+      for await (const [name, handle] of adir.entries()) {
+        if (handle.kind !== 'file' || !ARCHIVE_RE.test(name)) continue;
+        const f = await handle.getFile();
+        out.archive.push({
+          name,
+          dir: adir,
+          path: ARCHIVE_DIR + '/' + name,
+          date: f.lastModified ? new Date(f.lastModified).toISOString() : null,
+          size: f.size,
+          handle,
+        });
+      }
+    } catch {
+      /* no archive/ */
+    }
+    out.archive.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return out;
+  }
+
+  // Read the first #details line of a backup file (for the picker summary).
+  // Returns a map like { version, date, visits, people, users } or null.
+  async readDetails(entry) {
+    if (!entry || !entry.handle) return null;
+    try {
+      const f = await entry.handle.getFile();
+      const head = await f.slice(0, 512).text();
+      const line = head.split(/\r?\n/).find((l) => l.startsWith('#details'));
+      if (!line) return null;
+      const f2 = parseCsvLine(line);
+      // #details|TokenBook|v<ver>|<iso>|visits=N|people=N|users=N
+      const out = { version: f2[2] || '', date: f2[3] || null };
+      for (let i = 4; i < f2.length; i++) {
+        const [k, v] = String(f2[i]).split('=');
+        if (k) out[k] = Number(v);
+      }
+      return out;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Restore from a specific file entry chosen by the user.
+  async restoreFromEntry(entry, { onProgress = null } = {}) {
+    if (!entry || !entry.handle) throw new Error('No backup file selected.');
+    if (!this._dir) throw new Error('No backup folder set.');
+    const perm = await this._dir.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      const req = await this._dir.requestPermission({ mode: 'readwrite' });
+      if (req !== 'granted') throw new Error('Permission denied.');
+    }
+    const f = await entry.handle.getFile();
+    const text = await f.text();
+    const parsed = csvToLog(text);
+    this.resetPendingForRestore();
+    const r = await db.replayLog(parsed.ops, {
+      skippedRows: parsed.skippedRows,
+      onProgress,
+    });
+    return {
+      source: entry.path,
+      count: r.count,
+      skipped: r.skipped,
+      skippedRows: r.skippedRows,
+      folderName: this._dir.name || '',
+    };
+  }
+
   async restoreFromFolder({ onProgress = null } = {}) {
     if (!this._dir) throw new Error('No backup folder set.');
     const perm = await this._dir.queryPermission({ mode: 'readwrite' });
@@ -660,7 +801,7 @@ class Backup {
     lines.push('');
     const text = lines.join('\n');
     // Fire-and-forget: folder write is best-effort and must not block the UI.
-    this.writeErrorLog(text).catch(() => {});
+    this.writeErrorLog(text).catch(() => { });
     let filename = null;
     try {
       filename = this.downloadErrorLog(text);
@@ -712,7 +853,7 @@ const backup = new Backup();
 // Flush pending writes when the tab is hidden.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && backup._dirty) {
-    backup.flush().catch(() => {});
+    backup.flush().catch(() => { });
   }
 });
 

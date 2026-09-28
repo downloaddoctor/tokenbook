@@ -300,6 +300,24 @@
     </div>
   </dialog>
 
+  <dialog id="restore-picker" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Choose a backup to restore</h2>
+          <p class="hint" id="restore-picker-sub"></p>
+        </div>
+      </header>
+      <div class="modal-scroll">
+        <div id="restore-picker-list" class="hx-list"></div>
+        <p id="restore-picker-empty" class="hint" hidden>No backup files in this folder.</p>
+      </div>
+      <footer class="modal-actions">
+        <button value="cancel" type="submit">Cancel</button>
+      </footer>
+    </form>
+  </dialog>
+
   <dialog id="restore-confirm" class="modal-dialog">
     <form method="dialog" class="modal-card">
       <header class="modal-head">
@@ -380,6 +398,7 @@
     <div class="statusbar-left">
       <span id="ps-status" class="status">paperstamp: idle</span>
       <span id="backup-status" class="status">backup: idle</span>
+      <span id="work-status" class="status work" hidden></span>
     </div>
     <div class="statusbar-right">
       <input id="file-restore" type="file" accept=".csv,text/csv" hidden />

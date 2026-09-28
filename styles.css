@@ -103,7 +103,9 @@ a:hover {
   overflow-x: auto;
   scrollbar-width: none;
 }
-.tabs::-webkit-scrollbar { display: none; }
+.tabs::-webkit-scrollbar {
+  display: none;
+}
 .tabs .nav-tab {
   padding: 8px 14px;
   border-radius: 6px;
@@ -213,10 +215,31 @@ button.primary .kbd {
   background: var(--muted);
   flex: 0 0 auto;
 }
-#statusbar .status.ok::before { background: var(--ok); }
-#statusbar .status.err::before { background: var(--danger); }
-#statusbar .status.ok { color: var(--ok); }
-#statusbar .status.err { color: var(--danger); }
+#statusbar .status.ok::before {
+  background: var(--ok);
+}
+#statusbar .status.err::before {
+  background: var(--danger);
+}
+#statusbar .status.work::before {
+  background: var(--accent);
+  animation: work-pulse 1s ease-in-out infinite;
+}
+@keyframes work-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+#statusbar .status.ok {
+  color: var(--ok);
+}
+#statusbar .status.err {
+  color: var(--danger);
+}
 #statusbar button {
   height: 22px;
   padding: 0 10px;
@@ -374,7 +397,9 @@ tbody tr.active:hover {
   gap: 16px;
   align-items: stretch;
 }
-.split-left { align-self: start; } /* form keeps natural height; card next to it grows */
+.split-left {
+  align-self: start;
+} /* form keeps natural height; card next to it grows */
 .split-left,
 .split-right {
   min-width: 0;
@@ -437,7 +462,9 @@ tbody tr.active:hover {
   justify-content: center;
   z-index: 100;
 }
-.modal[hidden] { display: none !important; }
+.modal[hidden] {
+  display: none !important;
+}
 .modal-card {
   background: var(--card);
   border-radius: 10px;
@@ -456,7 +483,10 @@ tbody tr.active:hover {
   padding: 16px 20px;
   border-bottom: 1px solid var(--line);
 }
-.modal-head h2 { margin: 0 0 4px; font-size: 18px; }
+.modal-head h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
 .modal-close {
   border: none;
   background: transparent;
@@ -574,8 +604,50 @@ tbody tr.active:hover {
   background: #fafbfc;
   z-index: 1;
 }
-.row-click { cursor: pointer; }
-.row-click:hover { background: var(--accent-soft); }
+.row-click {
+  cursor: pointer;
+}
+.row-click:hover {
+  background: var(--accent-soft);
+}
+.hx-group {
+  padding: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.hx-item[role='button'] {
+  cursor: pointer;
+}
+.hx-item[role='button']:hover .hx-body,
+.hx-item.hx-active .hx-body {
+  background: var(--accent-soft);
+  border-radius: 6px;
+}
+.hx-item[role='button']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.picker-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* identity-change confirm */
 .modal-dialog {
@@ -590,15 +662,26 @@ tbody tr.active:hover {
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
-.modal-dialog .modal-card { width: min(92vw, 560px); }
+.modal-dialog .modal-card {
+  width: min(92vw, 560px);
+}
 .modal-body {
   padding: 16px 20px;
   font-size: 14px;
   line-height: 1.5;
 }
-.modal-body dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
-.modal-body dt { color: var(--muted); }
-.modal-body dd { margin: 0; }
+.modal-body dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+}
+.modal-body dt {
+  color: var(--muted);
+}
+.modal-body dd {
+  margin: 0;
+}
 .modal-actions {
   display: flex;
   gap: 8px;
@@ -606,7 +689,10 @@ tbody tr.active:hover {
   padding: 12px 20px 16px;
   border-top: 1px solid var(--line);
 }
-.modal-actions button { height: var(--control-h); padding: 0 14px; }
+.modal-actions button {
+  height: var(--control-h);
+  padding: 0 14px;
+}
 .log-view {
   margin: 0;
   max-height: min(60vh, 480px);
@@ -653,7 +739,9 @@ tbody tr.active:hover {
   color: var(--muted);
   border-radius: calc(var(--control-radius) - 2px);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
 }
 .seg .seg-btn:hover {
   color: var(--ink);
@@ -787,7 +875,9 @@ tbody tr:last-child td {
   border: 1px solid var(--line);
   border-left: 4px solid var(--muted);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.1),
+    0 1px 3px rgba(0, 0, 0, 0.05);
   padding: 10px 12px 10px 14px;
   font-size: 13px;
   line-height: 18px;
@@ -797,12 +887,23 @@ tbody tr:last-child td {
   gap: 10px;
   opacity: 0;
   transform: translateX(-8px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
-.toast.in { opacity: 1; transform: translateX(0); }
-.toast.ok { border-left-color: var(--ok); }
-.toast.err { border-left-color: var(--danger); }
-.toast.warn { border-left-color: var(--warn); }
+.toast.in {
+  opacity: 1;
+  transform: translateX(0);
+}
+.toast.ok {
+  border-left-color: var(--ok);
+}
+.toast.err {
+  border-left-color: var(--danger);
+}
+.toast.warn {
+  border-left-color: var(--warn);
+}
 .toast .t-close {
   flex: 0 0 auto;
   order: 2; /* visually last, after the text */
@@ -843,11 +944,17 @@ tbody tr:last-child td {
   gap: 10px 12px;
   align-items: start;
 }
-#patient-form .span-2 { grid-column: span 6; }
-#patient-form .span-4 { grid-column: 1 / -1; }
+#patient-form .span-2 {
+  grid-column: span 6;
+}
+#patient-form .span-4 {
+  grid-column: 1 / -1;
+}
 /* 3-up group: one third of the row each. Used by Age/Gender/Weight and
    Follow up/Payment/Fee. */
-#patient-form .span-3up { grid-column: span 4; }
+#patient-form .span-3up {
+  grid-column: span 4;
+}
 #patient-form > label {
   display: flex;
   flex-direction: column;
@@ -882,7 +989,9 @@ tbody tr:last-child td {
 
 /* Stored name is normalized to uppercase in db.js; this keeps the input
    visually consistent while typing (display-only). */
-#f-name { text-transform: uppercase; }
+#f-name {
+  text-transform: uppercase;
+}
 
 /* autofill suggestion dropdowns (name + mobile) */
 .autofill-field {
@@ -989,15 +1098,26 @@ tbody tr:last-child td {
   #patient-form {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-  #patient-form .span-2 { grid-column: span 2; }
-  #patient-form .span-3up { grid-column: span 2; }
-  #patient-form .span-4 { grid-column: 1 / -1; }
+  #patient-form .span-2 {
+    grid-column: span 2;
+  }
+  #patient-form .span-3up {
+    grid-column: span 2;
+  }
+  #patient-form .span-4 {
+    grid-column: 1 / -1;
+  }
 }
 
-
 /* --- revision modal + history action button --- */
-.modal-head-actions { display: flex; align-items: center; gap: 8px; }
-.spacer { flex: 1; }
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spacer {
+  flex: 1;
+}
 .ghost-btn {
   height: var(--control-h);
   padding: 0 12px;
@@ -1008,22 +1128,56 @@ tbody tr:last-child td {
   cursor: pointer;
   font: inherit;
 }
-.ghost-btn:hover { color: inherit; border-color: var(--accent); }
-.rev-item.hidden-rev .hx-body { opacity: 0.72; }
-.rev-changes { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-.rev-change { display: flex; gap: 8px; font-size: 12px; }
-.rev-label { min-width: 84px; color: var(--muted); }
-.rev-val { color: inherit; }
+.ghost-btn:hover {
+  color: inherit;
+  border-color: var(--accent);
+}
+.rev-item.hidden-rev .hx-body {
+  opacity: 0.72;
+}
+.rev-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.rev-change {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+.rev-label {
+  min-width: 84px;
+  color: var(--muted);
+}
+.rev-val {
+  color: inherit;
+}
 
-
-.hx-badge.badge-current { background: var(--accent-soft); color: var(--accent); }
-.hx-entity { font-weight: 500; }
-.hx-badge.badge-superseded { opacity: 0.7; }
-.hx-badge.badge-hidden { background: rgba(200, 60, 60, 0.12); color: #c0392b; }
+.hx-badge.badge-current {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.hx-entity {
+  font-weight: 500;
+}
+.hx-badge.badge-superseded {
+  opacity: 0.7;
+}
+.hx-badge.badge-hidden {
+  background: rgba(200, 60, 60, 0.12);
+  color: #c0392b;
+}
 
 /* ---------- auth gate ---------- */
-body.auth-locked { overflow: hidden; }
-#auth-root { position: fixed; inset: 0; z-index: 50; }
+body.auth-locked {
+  overflow: hidden;
+}
+#auth-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
 .auth-wrap {
   display: flex;
   align-items: center;
@@ -1043,10 +1197,24 @@ body.auth-locked { overflow: hidden; }
   padding: 24px;
   box-shadow: var(--shadow-bar);
 }
-.auth-title { margin: 0; font-size: 20px; }
-.auth-sub { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
-.auth-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.auth-label { color: var(--muted); }
+.auth-title {
+  margin: 0;
+  font-size: 20px;
+}
+.auth-sub {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.auth-label {
+  color: var(--muted);
+}
 .auth-field input,
 .auth-field select {
   padding: 8px 10px;
@@ -1056,11 +1224,22 @@ body.auth-locked { overflow: hidden; }
   background: var(--bg);
   color: var(--ink);
 }
-.auth-submit { margin-top: 4px; }
-.auth-error { margin: 0; color: var(--danger, #c0392b); font-size: 13px; }
+.auth-submit {
+  margin-top: 4px;
+}
+.auth-error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+  font-size: 13px;
+}
 
 /* ---------- topbar right / whoami ---------- */
-.topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -1079,6 +1258,14 @@ body.auth-locked { overflow: hidden; }
 }
 
 /* ---------- users page ---------- */
-.users-actions { display: flex; gap: 6px; }
-.users-actions button { padding: 4px 10px; font-size: 12px; }
-tr.disabled-row td { opacity: 0.55; }
+.users-actions {
+  display: flex;
+  gap: 6px;
+}
+.users-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+tr.disabled-row td {
+  opacity: 0.55;
+}

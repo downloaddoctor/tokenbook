@@ -274,7 +274,10 @@ export async function seed({
   await raw.people.bulkPut(keptPeopleRevs);
   await raw.peopleProj.bulkPut(peopleProj);
 
-  const CHUNK = 5000;
+  // Row-chunk sized for ~100 progress steps (≈1% each), with a floor so tiny
+  // seeds still show a few steps and huge seeds don't thrash (max 2000/chunk).
+  // A 0ms yield between chunks lets the statusbar repaint.
+  const CHUNK = Math.max(1, Math.min(2000, Math.ceil(visits.length / 100)));
   let written = 0;
   for (let i = 0; i < visits.length; i += CHUNK) {
     const slice = visits.slice(i, i + CHUNK);

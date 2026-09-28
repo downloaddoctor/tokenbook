@@ -82,7 +82,7 @@ ui/auth.js              full-screen auth gate rendered into #auth-root (not a ro
 print/ps.js             class Paperstamp; default export = singleton; host moves between pages (never destroyed until reset)
 print/defaultLayout.js  seed layout pushed when plugin has none
 backup/backup.js        class Backup; default export = instance; append-only journal -> CSV; named export hasFsAccess
-backup/csv.js           pure CSV codec; LOG_COLS is the only format
+backup/csv.js           pure CSV codec; SCHEMAS the only format. detailsLine() = #details header; csvToLog skips #details/#head-prefixed comment lines.
 backup/meta.js          class Meta; default export = instance; separate IDB for the directory handle
 dev/seed.js             bulk seed/clear (rawDb direct writes); mirrors _writeVisit projection; ?dev=1 only
 dev/selftest.js         runSelfTest({onProgress, confirmReplay, router}); isolated DB + log; drives real UI
@@ -205,6 +205,8 @@ schemaless — columns are whatever the code writes. Full column lists below.
 DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirectoryHandle }
 
 # LOG FORMAT (schemaNo-tagged, delimiter '|', timestamps epoch-seconds)
+ First line of a fresh latest.csv is a human-readable `#details` line (ignored by csvToLog):
+   #details|TokenBook|<ver>|<iso date>|visits=N|people=N|users=N   (ver = APP_VERSION, e.g. v1)
  Head block (one per schema, typed columns):
    #head|schema|schemaNo|columns
    #head|user|0|id:int|v:int|username:str|role:str|disabled:int|createdAt:epoch|revAt:epoch?
@@ -246,6 +248,8 @@ db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisit
   activityForUser(userId,{offset,limit}) -> {items,total,hasMore} (plain userId index, newest-first),
   refundAmountFor, localDay, raw (-> Dexie),
   deleteVisitsByDate, deletePerson, deletePeopleByNameMob, setDbName, deleteDb (DEV/TEST)
+  APP_VERSION (named export) = schema/data-model version → #details line; bump on new model/schema.
+  _appVersion() -> 'v'+APP_VERSION; _logCounts() -> {visits,people,users} for #details.
   addVisit input keys: name, mob, age?, gender?, personId?, date, token, weight, followup,
     payment, fee, refundTier, preserve?  (preserve carries { rootId, v, personId, personV,
     hidden, createdAt } for restore)
@@ -254,8 +258,9 @@ db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisit
     listByDate/visitsForPerson -> rows with identity joined.
   Row identity: DB rows use `rootId` (NOT `id`). `id` only appears on DOM dataset attrs.
 backup (backup/backup.js default): init, setFolder, pickOrBackup, writeFullBackup, flush, backupNow,
-  restoreFromFolder, restoreFromFileObject, readLog, pendingLines, downloadCsv, state,
-  setLogFileName, deleteLog (last two DEV/TEST)
+  listBackups, readDetails, restoreFromEntry, restoreFromFolder, restoreFromFileObject,
+  readLog, pendingLines, downloadCsv, state, setLogFileName, deleteLog (last two DEV/TEST)
+  listBackups -> {latest, daily[], archive[]} of {name,dir,path,date,size,handle}; readDetails(entry) parses the #details line.
 backup named: hasFsAccess (import it, NOT backup.hasFsAccess)
 ps (print/ps.js default): mount(host, {force, autoShow, openDesignerOnReady, seedDefaultOnReady, minimal}),
   reset, preview(fields, opts?), print(fields, onPrinted?), openDesigner(opts?), closeDesigner,

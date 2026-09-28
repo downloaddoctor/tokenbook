@@ -8,7 +8,6 @@
 
 import db from '../core/db.js';
 import backup, { hasFsAccess } from '../backup/backup.js';
-import { csvToLog } from '../backup/csv.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter, ADMIN_ONLY } from './router.js';
 import { toast } from './toast.js';
@@ -24,19 +23,32 @@ function restoreMsg(count, skipped, tail) {
   return skipped ? base + ' Skipped ' + skipped + ' bad row(s).' : base;
 }
 
-function mkProgressToast() {
-  let active = false;
+// Live progress in the statusbar (paperstamp/backup style). Toasts are for
+// start + finish only; the per-tick numbers go here.
+function setWork(label, processed, total) {
+  const el = document.getElementById('work-status');
+  if (!el) return;
+  const pct = total ? Math.floor((processed / total) * 100) : 0;
+  const counts =
+    total != null
+      ? ` ${processed.toLocaleString()}/${total.toLocaleString()} (${pct}%)`
+      : '';
+  el.textContent = label + counts;
+  el.hidden = false;
+}
+
+function clearWork() {
+  const el = document.getElementById('work-status');
+  if (!el) return;
+  el.hidden = true;
+  el.textContent = '';
+}
+
+// Progress adapter for onProgress callbacks: writes to the statusbar.
+function mkProgressStatus(label) {
   return {
-    update({ processed, total, restored, skipped }) {
-      active = true;
-      toast(
-        'Restoring ' + processed + '/' + total + ' · ok ' + restored + ' · skip ' + skipped,
-        'warn',
-      );
-    },
-    done() {
-      if (active) toast('');
-      active = false;
+    update({ processed, total }) {
+      setWork(label, processed, total);
     },
   };
 }
@@ -65,6 +77,119 @@ function reportRestore(r, tail) {
   }
   const suffix = rep && rep.filename ? ' — see ' + rep.filename : '';
   toast(restoreMsg(r.count, r.skipped, tail) + suffix, 'err');
+}
+
+// Format a byte size for the picker.
+function fmtSize(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+// Small element helper (matches the timeline modules' shape).
+function span(cls, text) {
+  const s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text == null ? '' : String(text);
+  return s;
+}
+
+// Show the backup-source picker as a timeline (same look as History/Revisions).
+// Resolves to a chosen entry or null.
+async function pickRestoreSource() {
+  const dlg = document.getElementById('restore-picker');
+  const list = document.getElementById('restore-picker-list');
+  const sub = document.getElementById('restore-picker-sub');
+  const empty = document.getElementById('restore-picker-empty');
+  if (!dlg || !list) return null;
+  const groups = await backup.listBackups();
+  const st = backup.state();
+  if (sub) sub.textContent = st.folderName ? `Folder: ${st.folderName}` : '';
+  list.innerHTML = '';
+  let total = 0;
+  const entryMap = new Map();
+
+  // Read each entry's #details line (best-effort) for the timeline meta.
+  const detailsMap = new Map();
+  const allEntries = [
+    ...(groups.latest ? [groups.latest] : []),
+    ...groups.daily,
+    ...groups.archive,
+  ];
+  await Promise.all(
+    allEntries.map(async (e) => {
+      try {
+        detailsMap.set(e, await backup.readDetails(e));
+      } catch (_) {
+        detailsMap.set(e, null);
+      }
+    }),
+  );
+
+  const addGroup = (title, entries) => {
+    if (!entries.length) return;
+    const header = document.createElement('div');
+    header.className = 'hx-group';
+    header.textContent = title;
+    list.appendChild(header);
+    for (const e of entries) {
+      total++;
+      const key = 'src-' + total;
+      entryMap.set(key, e);
+      const d = detailsMap.get(e);
+
+      const item = document.createElement('div');
+      item.className = 'hx-item';
+      item.dataset.key = key;
+      item.tabIndex = -1;
+      item.setAttribute('role', 'button');
+
+      const dot = document.createElement('div');
+      dot.className = 'hx-dot';
+
+      const body = document.createElement('div');
+      body.className = 'hx-body';
+
+      const head = document.createElement('div');
+      head.className = 'hx-head';
+      const when = d && d.date ? d.date : e.date;
+      head.append(
+        span('hx-date', e.name),
+        span('hx-badge', d && d.version ? d.version : '—'),
+        span('hx-time', when ? new Date(when).toLocaleString() : '?'),
+      );
+
+      const meta = document.createElement('div');
+      meta.className = 'hx-meta picker-models';
+      if (d) {
+        const pill = (label, n) => {
+          if (n == null) return;
+          const s = document.createElement('span');
+          s.className = 'pill';
+          s.textContent = `${n} ${label}`;
+          meta.appendChild(s);
+        };
+        pill('visits', d.visits);
+        pill('patients', d.people);
+        pill('users', d.users);
+        if (!meta.childElementCount) meta.textContent = fmtSize(e.size);
+      } else {
+        meta.textContent = fmtSize(e.size);
+      }
+
+      body.append(head, meta);
+      item.append(dot, body);
+      item.addEventListener('click', () => dlg.close(key));
+      list.appendChild(item);
+    }
+  };
+  addGroup('Latest', groups.latest ? [groups.latest] : []);
+  addGroup('Daily snapshots', groups.daily);
+  addGroup('Archived backups', groups.archive);
+  if (empty) empty.hidden = total > 0;
+  const picked = await showModal(dlg);
+  return picked && entryMap.has(picked) ? entryMap.get(picked) : null;
 }
 
 async function restoreConfirm(folderName, summary) {
@@ -263,19 +388,23 @@ async function bootAuthed(router) {
       const runSeed = async (cfg) => {
         bSeed.disabled = true;
         bClear.disabled = true;
+        toast(`Seed started: ${cfg.total.toLocaleString()} visits…`, 'warn');
+        setWork('seeding', 0, cfg.total);
         try {
           const r = await seed({
             total: cfg.total,
             days: cfg.days,
             patients: cfg.patients,
-            onProgress: (n, t) => toast(`Seeding ${n.toLocaleString()}/${t.toLocaleString()} entries…`),
+            onProgress: (n, t) => setWork('seeding', n, t),
           });
+          clearWork();
           toast(
             `Seeded ${r.people.toLocaleString()} patients, ${r.visits.toLocaleString()} visits in ${(r.ms / 1000).toFixed(1)}s.`,
             'ok'
           );
           router.activateTab(router.currentTab, true);
         } catch (e) {
+          clearWork();
           toast('Seed failed: ' + e.message, 'err');
         } finally {
           bSeed.disabled = false;
@@ -406,32 +535,33 @@ async function bootAuthed(router) {
       fileRestore.click();
       return;
     }
+    const entry = await pickRestoreSource();
+    if (!entry) return;
     let summary = null;
     try {
-      const lg = await backup.readLog();
-      if (lg.text) {
-        const parsed = csvToLog(lg.text);
-        const people = new Set();
-        for (const op of parsed.ops) if (op.personId != null) people.add(op.personId);
+      const details = await backup.readDetails(entry);
+      if (details) {
         summary = {
-          visits: parsed.ops.length,
-          people: people.size,
-          skipped: parsed.skippedRows.length,
+          visits: details.visits,
+          people: details.people,
+          skipped: 0,
         };
       }
     } catch (_) {
       summary = null;
     }
     if (!(await restoreConfirm(st.folderName, summary))) return;
-    const p = mkProgressToast();
+    const p = mkProgressStatus('restoring');
+    toast('Restore started: ' + entry.name, 'warn');
+    setWork('restoring', 0, summary && summary.visits ? summary.visits : null);
     try {
-      const r = await backup.restoreFromFolder({ onProgress: p.update });
-      p.done();
+      const r = await backup.restoreFromEntry(entry, { onProgress: p.update });
+      clearWork();
       reportRestore(r, 'from ' + r.source);
       await reloadBillingConfig();
       router.activateTab(router.currentTab, true);
     } catch (err) {
-      p.done();
+      clearWork();
       if (err && err.name === 'AbortError') return;
       toast('Restore failed: ' + err.message, 'err');
     }
@@ -441,15 +571,17 @@ async function bootAuthed(router) {
     const f = fileRestore.files && fileRestore.files[0];
     fileRestore.value = '';
     if (!f) return;
-    const p = mkProgressToast();
+    const p = mkProgressStatus('restoring');
+    toast('Restore started: ' + f.name, 'warn');
+    setWork('restoring', 0, null);
     try {
       const r = await backup.restoreFromFileObject(f, { onProgress: p.update });
-      p.done();
+      clearWork();
       reportRestore(r, 'from ' + r.filename);
       await reloadBillingConfig();
       router.activateTab(router.currentTab, true);
     } catch (err) {
-      p.done();
+      clearWork();
       toast('Restore failed: ' + err.message, 'err');
     }
   });

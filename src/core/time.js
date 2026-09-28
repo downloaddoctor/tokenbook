@@ -10,6 +10,7 @@ export function timeAgo(when, { compact = false, fallback = '' } = {}) {
   else t = NaN;
   if (!Number.isFinite(t)) return fallback;
   const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 1) return 'now';
   if (s < 60) return Math.floor(s) + 's ago';
   const m = s / 60;
   if (compact) {
