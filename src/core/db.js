@@ -83,6 +83,24 @@ class DB {
     instance.version(3).stores({
       userRevs: '[id+v], id, v',
     });
+    // v4: index userId on the revision tables so per-user activity is a range
+    // scan, not a full table walk.
+    instance.version(4).stores({
+      people: '[rootId+v], rootId, [name+mob], v, userId',
+      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
+    });
+    // v5: reserved (no schema change) — a DB that briefly declared a compound
+    // [userId+revAt] index here still opens.
+    instance.version(5).stores({
+      people: '[rootId+v], rootId, [name+mob], v, userId',
+      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
+    });
+    // v6: bump so Dexie reconciles + DROPS the compound index on existing DBs.
+    // Same shape as v4 (plain userId only).
+    instance.version(6).stores({
+      people: '[rootId+v], rootId, [name+mob], v, userId',
+      visits: '[rootId+v], rootId, [date+token], personId, v, userId',
+    });
   }
 
   raw() {
@@ -601,6 +619,33 @@ class DB {
       .where('[rootId+v]')
       .between([rootId, Dexie.minKey], [rootId, Dexie.maxKey])
       .toArray();
+  }
+
+  // One page of a user's people/visits revisions, newest first, via the plain
+  // userId index. Each item carries its previous revision so the UI can diff.
+  // Returns { items, total, hasMore }.
+  async activityForUser(userId, { offset = 0, limit = 50 } = {}) {
+    const uid = Number(userId);
+    if (!uid) return { items: [], total: 0, hasMore: false };
+    const off = Math.max(0, Number(offset) || 0);
+    const lim = Math.max(1, Number(limit) || 50);
+
+    const [people, visits] = await Promise.all([
+      this._db.people.where('userId').equals(uid).toArray(),
+      this._db.visits.where('userId').equals(uid).toArray(),
+    ]);
+    const merged = [
+      ...people.map((r) => ({ kind: 'person', rootId: r.rootId, rev: r })),
+      ...visits.map((r) => ({ kind: 'visit', rootId: r.rootId, rev: r })),
+    ].sort((a, b) => (b.rev.revAt || b.rev.createdAt || '').localeCompare(a.rev.revAt || a.rev.createdAt || ''));
+
+    const total = merged.length;
+    const slice = merged.slice(off, off + lim);
+    for (const e of slice) {
+      const table = e.kind === 'person' ? this._db.people : this._db.visits;
+      e.prev = e.rev.v > 1 ? await table.get([e.rootId, e.rev.v - 1]) : null;
+    }
+    return { items: slice, total, hasMore: off + slice.length < total };
   }
 
   // Newest PAID visit for a person, as a day-gap to `date`. `excludeRootId`

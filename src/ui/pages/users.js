@@ -11,6 +11,7 @@ import {
   currentUser,
   isAdmin,
 } from '../../core/auth.js';
+import { openUserActivity } from '../revisions.js';
 
 let s;
 let off;
@@ -37,8 +38,15 @@ async function render() {
   for (const u of cache) {
     const tr = document.createElement('tr');
     tr.dataset.id = String(u.id);
+    tr.className = 'row-click';
+    tr.title = 'Click to see this user’s activity';
     if (u.disabled) tr.classList.add('disabled-row');
     const isMe = me && me.id === u.id;
+    tr.addEventListener('click', (e) => {
+      // Clicks on action buttons must NOT open the timeline.
+      if (e.target.closest('button')) return;
+      openUserActivity(u.id, u.username);
+    });
 
     const tdName = document.createElement('td');
     tdName.textContent = u.username + (isMe ? ' (you)' : '');

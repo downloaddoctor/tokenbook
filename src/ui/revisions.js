@@ -89,6 +89,7 @@ export function closeRevisions() {
   if (modal && modal.open) modal.close();
   currentEntity = null;
   currentRootId = null;
+  activityState = null;
 }
 
 // ---- diff engine ------------------------------------------------------
@@ -148,7 +149,8 @@ export function diffRevisions(prev, cur, entity) {
 
 // ---- rendering --------------------------------------------------------
 
-function renderStep(rev, prev, index, total) {
+function renderStep(rev, prev, index, total, entity) {
+  const diffEntity = entity || currentEntity;
   const item = document.createElement('div');
   item.className = 'hx-item rev-item';
   item.dataset.v = String(rev.v);
@@ -195,7 +197,7 @@ function renderStep(rev, prev, index, total) {
   if (!prev) {
     meta.textContent = 'created';
   } else {
-    const changes = diffRevisions(prev, rev, currentEntity);
+    const changes = diffRevisions(prev, rev, diffEntity);
     if (!changes.length) {
       meta.textContent = 'no field change';
     } else {
@@ -262,4 +264,136 @@ export async function openRevisions(entity, rootId) {
     listEl.appendChild(empty);
   }
   if (!modal.open) modal.showModal();
+}
+
+// Render one activity item: a step of some entity, tagged with its kind.
+function renderActivityStep(entry, userLabel) {
+  const { kind, rev, prev } = entry;
+  const item = document.createElement('div');
+  item.className = 'hx-item rev-item';
+  item.dataset.kind = kind;
+  item.dataset.rootId = String(entry.rootId);
+
+  const dot = document.createElement('div');
+  dot.className = 'hx-dot';
+
+  const body = document.createElement('div');
+  body.className = 'hx-body';
+
+  const head = document.createElement('div');
+  head.className = 'hx-head';
+  const stamp = rev.revAt || rev.createdAt;
+  const when = stamp ? new Date(stamp) : null;
+  const abs = when ? when.toLocaleString() : '';
+  const rel = stamp ? timeAgo(stamp) : '';
+  // Kind badge: patient vs visit; plus the entity's own label (name / token).
+  const kindLabel = kind === 'person' ? 'patient' : 'visit';
+  const kindCls = 'hx-badge ' + (kind === 'person' ? 'badge-superseded' : 'badge-current');
+  let entLabel = '';
+  if (kind === 'person') entLabel = rev.name || ('Patient #' + entry.rootId);
+  else entLabel = 'Visit · token ' + rev.token + ' · ' + rev.date;
+  head.append(
+    span(kindCls, kindLabel),
+    span('hx-date', 'v' + rev.v),
+    span('hx-entity', entLabel),
+    span('hx-time', rel ? rel + (abs ? ' · ' + abs : '') : abs)
+  );
+
+  const meta = document.createElement('div');
+  meta.className = 'hx-meta rev-changes';
+  if (!prev) {
+    meta.textContent = 'created';
+  } else {
+    const changes = diffRevisions(prev, rev, kind);
+    if (!changes.length) meta.textContent = 'no field change';
+    else {
+      for (const c of changes) {
+        const row = document.createElement('div');
+        row.className = 'rev-change';
+        row.append(
+          span('rev-label', c.label),
+          span('rev-val', c.from == null ? c.to : c.from + ' → ' + c.to)
+        );
+        meta.appendChild(row);
+      }
+    }
+  }
+  body.append(head, meta);
+  item.append(dot, body);
+  return item;
+}
+
+// Open a timeline of everything ONE USER did to patients + visits, newest first.
+// Account-only changes (create/disable/reset) are intentionally NOT shown —
+// they are not clinical work. Called from the Users page row click.
+// Infinite scroll: PAGE items at a time, appended as the list nears the bottom.
+const ACTIVITY_PAGE = 15;
+let activityState = null; // { userId, offset, total, loading, done }
+
+async function loadMoreActivity() {
+  const st = activityState;
+  if (!st || st.loading || st.done) return;
+  st.loading = true;
+  const listEl = el('revisions-list');
+  const spinner = el('revisions-loading');
+  if (spinner) spinner.hidden = false;
+  try {
+    const { items, total, hasMore } = await db.activityForUser(st.userId, {
+      offset: st.offset,
+      limit: ACTIVITY_PAGE,
+    });
+    for (const e of items) listEl.appendChild(renderActivityStep(e));
+    st.offset += items.length;
+    st.total = total;
+    st.done = !hasMore || items.length === 0;
+    const metaEl = el('revisions-meta');
+    if (metaEl) {
+      metaEl.textContent =
+        st.offset + ' of ' + st.total + ' change' + (st.total === 1 ? '' : 's') +
+        ' to patients + visits';
+    }
+    if (st.done && st.offset === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'No activity by this user.';
+      listEl.appendChild(empty);
+    }
+  } finally {
+    st.loading = false;
+    if (spinner) spinner.hidden = true;
+  }
+}
+
+function onActivityScroll(e) {
+  if (!activityState) return;
+  const box = e.target;
+  if (box.scrollTop + box.clientHeight >= box.scrollHeight - 120) loadMoreActivity();
+}
+
+export async function openUserActivity(userId, username) {
+  if (userId == null) return;
+  wireOnce();
+  const modal = el('revisions-modal');
+  const titleEl = el('revisions-title');
+  const metaEl = el('revisions-meta');
+  const listEl = el('revisions-list');
+  if (!modal || !listEl) return;
+
+  currentEntity = null;
+  currentRootId = null;
+
+  if (titleEl) titleEl.textContent = (username || 'User #' + userId) + ' — activity';
+  if (metaEl) metaEl.textContent = 'loading…';
+  listEl.replaceChildren();
+
+  activityState = { userId: Number(userId), offset: 0, total: 0, loading: false, done: false };
+  const scrollBox = listEl.parentElement;
+  if (scrollBox && !scrollBox._activityWired) {
+    scrollBox._activityWired = true;
+    scrollBox.addEventListener('scroll', onActivityScroll);
+  }
+  if (scrollBox) scrollBox.scrollTop = 0;
+
+  if (!modal.open) modal.showModal();
+  await loadMoreActivity();
 }

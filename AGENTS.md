@@ -60,7 +60,7 @@ ui/router.js     ROUTES=['register','tokens','patients','printLayout','users'], 
 ui/dom.js        el/on/bindOff/setText/setClass helpers; re-exports timeAgo
 ui/toast.js      class Toast; default export = singleton; named toast/clearToast = bound methods
 ui/history.js    reusable patient-history modal; openHistory(personId), closeHistory(); own DOM + keyboard nav + Enter -> editVisit. Rows come from visitsForPerson (current revisions + joined identity). "Identity revisions" button -> openRevisions('person', id).
-ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); shows rev.revAt (write time), not createdAt. Opened from ui/refund.js (visit) and ui/history.js (person), and Alt+V on Register.
+ui/revisions.js  reusable revision-history modal; openRevisions(entity, rootId), closeRevisions(); timeline of every appended revision (newest first) + per-step diff (diffRevisions); shows rev.revAt (write time), not createdAt. Opened from ui/refund.js (visit) and ui/history.js (person), and Alt+V on Register. Also openUserActivity(userId, username): one user's patient+visit changes merged newest-first (account changes excluded); called from a Users-page row click.
 ui/refund.js     reusable refund dialog; openRefundDialog(visit)->tier|null; openRefundFor(visit) writes DB; refundLabel(tier)
 ui/pages/index.js       Pages registry {register, tokens, patients, printLayout, users}
 ui/pages/register.js    orchestrator: mount/unmount, submitBill, startNewBill, editVisit, loadVisitIntoForm; exports __setTestHooks/__getForm/__submitForTest
@@ -71,7 +71,7 @@ ui/pages/register.dialogs.js  identity-change / reassign prompts (pure DOM, no s
 ui/pages/tokens.js      Day/Month/Range list + per-row refund dialog (db.listByDate / listByDateRange)
 ui/pages/patients.js    patient registry + drill-in history modal
 ui/pages/printLayout.js paperstamp full designer
-ui/pages/users.js       admin-only user management: list/create/disable/reset; hides own Disable; reset self -> re-gate. Reached only via the admin-only 'users' route.
+ui/pages/users.js       admin-only user management: list/create/disable/reset; hides own Disable; reset self -> re-gate. Row click -> openUserActivity (that user's patient+visit changes). Reached only via the admin-only 'users' route.
 core/auth.js            PBKDF2-SHA256 (150k iter, 16B salt, 32B key) + session. Only writer of the `users` store.
                         requireAuth() -> {state:'create-admin'|'login'|'authed', user}. currentUser() verifies localStorage
                         session token against users.sessionToken (rotation invalidates other tabs). logout() clears both.
@@ -237,6 +237,7 @@ db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisit
   visitCountsForPeople, visitsForPerson, revisionsOf(entity,rootId), findVisitByDateToken,
   lastPaidVisitDaysFor, nextTokenForDate, getPerson, findPersonByNameMob,
   setJournal, setActor(fn), appendUserRevision(user,{log}), userRevisions(id),
+  activityForUser(userId,{offset,limit}) -> {items,total,hasMore} (plain userId index, newest-first),
   refundAmountFor, localDay, raw (-> Dexie),
   deleteVisitsByDate, deletePerson, deletePeopleByNameMob, setDbName, deleteDb (DEV/TEST)
   addVisit input keys: name, mob, age?, gender?, personId?, date, token, weight, followup,

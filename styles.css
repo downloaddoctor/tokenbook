@@ -1017,6 +1017,7 @@ tbody tr:last-child td {
 
 
 .hx-badge.badge-current { background: var(--accent-soft); color: var(--accent); }
+.hx-entity { font-weight: 500; }
 .hx-badge.badge-superseded { opacity: 0.7; }
 .hx-badge.badge-hidden { background: rgba(200, 60, 60, 0.12); color: #c0392b; }
 
