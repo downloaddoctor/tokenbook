@@ -751,6 +751,17 @@ tbody tr.active:hover {
   font-size: 14px;
   line-height: 1.5;
 }
+/* Stacked form fields in a dialog body need vertical rhythm — otherwise
+   adjacent `.auth-field` labels touch. */
+.modal-dialog .modal-body > label.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+.modal-dialog .modal-body > label.auth-field + label.auth-field {
+  margin-top: 14px;
+}
 .modal-body dl {
   margin: 0;
   display: grid;
