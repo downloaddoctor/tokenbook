@@ -1,7 +1,7 @@
 // Tokens page: pick a day, list its visits in issue order.
 
 import db from '../../core/db.js';
-import { bindOff } from '../dom.js';
+import { bindOff, highlightRow, clearHighlight } from '../dom.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 
@@ -16,30 +16,15 @@ function rowEls() {
 }
 
 function setActiveRow(i) {
-  const rows = rowEls();
-  if (!rows.length) {
-    activeRow = -1;
-    return;
-  }
-  i = Math.max(0, Math.min(i, rows.length - 1));
-  for (let k = 0; k < rows.length; k++) rows[k].classList.toggle('active', k === i);
-  activeRow = i;
-  rows[i].scrollIntoView({ block: 'nearest' });
+  activeRow = highlightRow(rowEls(), i, 'active');
 }
 
 function clearActiveRow() {
-  for (const tr of rowEls()) tr.classList.remove('active');
+  clearHighlight(rowEls(), 'active');
   activeRow = -1;
 }
 
-
-
-function ymd(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
+const ymd = (d) => db.localDay(d);
 
 function ym(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

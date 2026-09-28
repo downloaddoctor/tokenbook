@@ -155,11 +155,6 @@ export async function showAuthGate({ onAuthed } = {}) {
   else renderLogin();
 }
 
-// Called by app.js after logout to re-show the gate.
-export async function relock() {
-  await showAuthGate({ onAuthed: onAuthedCb });
-}
-
 export function hideGate() {
   setShellLocked(false);
   clearRoot();

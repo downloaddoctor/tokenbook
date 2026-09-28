@@ -66,4 +66,3 @@ const clearToast = toast.clear.bind(toast);
 
 export { show as toast, clearToast };
 export default toast;
-export { Toast };

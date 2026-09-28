@@ -133,7 +133,7 @@ class DB {
             console.warn('[tokenbook] incompatible schema — backing up then recreating');
             // Close the failed Dexie connection FIRST and let IDB release it,
             // otherwise the later delete is blocked by our own open handle.
-            try { this._db.close(); } catch (_) {}
+            try { this._db.close(); } catch (_) { }
             await new Promise((r) => setTimeout(r, 50));
             let dumpInfo = null;
             try {
@@ -143,7 +143,7 @@ class DB {
               throw dumpErr; // never delete without a backup
             }
             if (dumpInfo && this._migrationNotice) {
-              try { this._migrationNotice(dumpInfo); } catch (_) {}
+              try { this._migrationNotice(dumpInfo); } catch (_) { }
             }
             // Delete can still be blocked by another tab. Retry a few times.
             for (let i = 0; i < 5; i++) {
@@ -218,13 +218,13 @@ class DB {
         const dump = { db: name, version: idb.version, exportedAt: new Date().toISOString(), stores: {} };
         const tx = idb.transaction(storeNames, 'readonly');
         let remaining = storeNames.length;
-        tx.onerror = () => { try { idb.close(); } catch (_) {} reject(tx.error); };
+        tx.onerror = () => { try { idb.close(); } catch (_) { } reject(tx.error); };
         for (const sn of storeNames) {
           const all = tx.objectStore(sn).getAll();
           all.onsuccess = () => {
             dump.stores[sn] = all.result;
             if (--remaining === 0) {
-              try { idb.close(); } catch (_) {}
+              try { idb.close(); } catch (_) { }
               const filename =
                 name + '-pre-v3-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
               try {
@@ -243,7 +243,7 @@ class DB {
               resolve({ filename, stores: storeNames.length });
             }
           };
-          all.onerror = () => { try { idb.close(); } catch (_) {} reject(all.error); };
+          all.onerror = () => { try { idb.close(); } catch (_) { } reject(all.error); };
         }
       };
     });
@@ -684,10 +684,6 @@ class DB {
     return Math.round((db2 - da) / 86400000);
   }
 
-  daysBetween(a, b) {
-    return this._daysBetween(a, b);
-  }
-
   // ---------- write path ----------
 
   async _resolveBilling({ personId, date, followup, fee, excludeRootId }) {
@@ -1039,49 +1035,49 @@ class DB {
       db.users,
       db.meta,
       async () => {
-      await db.people.clear();
-      await db.peopleProj.clear();
-      await db.visits.clear();
-      await db.visitsProj.clear();
-      await db.userRevs.clear();
-      // NOTE: the `users` projection is NOT cleared — passwords live only there
-      // and must never be destroyed by a restore. User revisions are merged in
-      // (idempotent) so attribution resolves; existing credentials survive.
+        await db.people.clear();
+        await db.peopleProj.clear();
+        await db.visits.clear();
+        await db.visitsProj.clear();
+        await db.userRevs.clear();
+        // NOTE: the `users` projection is NOT cleared — passwords live only there
+        // and must never be destroyed by a restore. User revisions are merged in
+        // (idempotent) so attribution resolves; existing credentials survive.
 
-      const total = ops.length;
-      const TICK = 250;
-      let processed = 0;
-      let restored = 0;
-      let skipped = 0;
-      const skippedRows = [];
-      const tick = (force) => {
-        if (!onProgress) return;
-        if (!force && processed % TICK !== 0) return;
-        try { onProgress({ processed, total, restored, skipped }); } catch (_) {}
-      };
+        const total = ops.length;
+        const TICK = 250;
+        let processed = 0;
+        let restored = 0;
+        let skipped = 0;
+        const skippedRows = [];
+        const tick = (force) => {
+          if (!onProgress) return;
+          if (!force && processed % TICK !== 0) return;
+          try { onProgress({ processed, total, restored, skipped }); } catch (_) { }
+        };
 
-      for (const op of ops) {
-        processed++;
-        try {
-          if (op.kind === 'person') await this._replayPerson(op);
-          else if (op.kind === 'visit') await this._replayVisit(op);
-          else if (op.kind === 'user') await this._replayUser(op);
-          else if (op.kind === 'settings') await this._replaySettings(op);
-          else {
+        for (const op of ops) {
+          processed++;
+          try {
+            if (op.kind === 'person') await this._replayPerson(op);
+            else if (op.kind === 'visit') await this._replayVisit(op);
+            else if (op.kind === 'user') await this._replayUser(op);
+            else if (op.kind === 'settings') await this._replaySettings(op);
+            else {
+              skipped++;
+              skippedRows.push({ lineNo: op.lineNo, reason: 'unknown kind', raw: op.raw || '' });
+              tick(false);
+              continue;
+            }
+            restored++;
+          } catch (e) {
             skipped++;
-            skippedRows.push({ lineNo: op.lineNo, reason: 'unknown kind', raw: op.raw || '' });
-            tick(false);
-            continue;
+            skippedRows.push({ lineNo: op.lineNo, reason: e.message || String(e), raw: op.raw || '' });
           }
-          restored++;
-        } catch (e) {
-          skipped++;
-          skippedRows.push({ lineNo: op.lineNo, reason: e.message || String(e), raw: op.raw || '' });
+          tick(false);
         }
-        tick(false);
-      }
-      tick(true);
-      return { count: restored, skipped, skippedRows };
+        tick(true);
+        return { count: restored, skipped, skippedRows };
       }
     );
   }
@@ -1199,7 +1195,7 @@ class DB {
     let count = 0;
     // Users first (schemaNo 0) so attribution resolves during a streaming read.
     let lastUserKey = [Dexie.minKey, Dexie.minKey];
-    for (;;) {
+    for (; ;) {
       const rows = await db.userRevs.where('[id+v]').above(lastUserKey).limit(pageSize).toArray();
       if (!rows.length) break;
       let buf = '';
@@ -1211,7 +1207,7 @@ class DB {
       if (rows.length < pageSize) break;
     }
     let lastKey = [Dexie.minKey, Dexie.minKey];
-    for (;;) {
+    for (; ;) {
       const rows = await db.people.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
       if (!rows.length) break;
       let buf = '';
@@ -1223,7 +1219,7 @@ class DB {
       if (rows.length < pageSize) break;
     }
     lastKey = [Dexie.minKey, Dexie.minKey];
-    for (;;) {
+    for (; ;) {
       const rows = await db.visits.where('[rootId+v]').above(lastKey).limit(pageSize).toArray();
       if (!rows.length) break;
       let buf = '';
@@ -1415,4 +1411,3 @@ export function rawDb() {
 
 export default clinicDb;
 export { DB };
-   

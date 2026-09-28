@@ -4,6 +4,7 @@
 // Element ids live in index.html.
 
 import db from '../core/db.js';
+import { el, highlightRow, clearHighlight } from './dom.js';
 import { getRouter } from './router.js';
 import { editVisit } from './pages/register.js';
 import { openRevisions } from './revisions.js';
@@ -12,10 +13,6 @@ let active = -1;            // index of the keyboard-highlighted item
 let visitCache = new Map(); // visitId -> visit row (currently rendered)
 let wired = false;
 let currentPersonId = null; // for the "Identity revisions" button
-
-function el(id) {
-  return document.getElementById(id);
-}
 
 function items() {
   const list = el('history-list');
@@ -30,19 +27,11 @@ function span(cls, text) {
 }
 
 function setActive(i) {
-  const list = items();
-  if (!list.length) {
-    active = -1;
-    return;
-  }
-  i = Math.max(0, Math.min(i, list.length - 1));
-  for (let k = 0; k < list.length; k++) list[k].classList.toggle('hx-active', k === i);
-  active = i;
-  list[i].scrollIntoView({ block: 'nearest' });
+  active = highlightRow(items(), i, 'hx-active');
 }
 
 function clearActive() {
-  for (const it of items()) it.classList.remove('hx-active');
+  clearHighlight(items(), 'hx-active');
   active = -1;
 }
 

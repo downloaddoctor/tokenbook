@@ -6,16 +6,13 @@
 // Element ids live in index.html (#revisions-modal, -title, -meta, -list).
 
 import db from '../core/db.js';
-import { timeAgo } from './dom.js';
+import { el, highlightRow, clearHighlight } from './dom.js';
+import { timeAgo } from '../core/time.js';
 
 let active = -1;       // keyboard-highlighted item index
 let wired = false;
 let currentEntity = null;
 let currentRootId = null;
-
-function el(id) {
-  return document.getElementById(id);
-}
 
 function items() {
   const list = el('revisions-list');
@@ -30,19 +27,11 @@ function span(cls, text) {
 }
 
 function setActive(i) {
-  const list = items();
-  if (!list.length) {
-    active = -1;
-    return;
-  }
-  i = Math.max(0, Math.min(i, list.length - 1));
-  for (let k = 0; k < list.length; k++) list[k].classList.toggle('hx-active', k === i);
-  active = i;
-  list[i].scrollIntoView({ block: 'nearest' });
+  active = highlightRow(items(), i, 'hx-active');
 }
 
 function clearActive() {
-  for (const it of items()) it.classList.remove('hx-active');
+  clearHighlight(items(), 'hx-active');
   active = -1;
 }
 

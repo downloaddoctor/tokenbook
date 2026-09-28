@@ -36,6 +36,34 @@ const HANDLE_KEY = 'dirHandle';
 
 export const hasFsAccess = typeof window.showDirectoryPicker === 'function';
 
+// Local 'YYYY-MM-DDTHH-MM-SS' stamp for backup filenames.
+function fileStamp(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    db.localDay(now) +
+    'T' +
+    pad(now.getHours()) +
+    '-' +
+    pad(now.getMinutes()) +
+    '-' +
+    pad(now.getSeconds())
+  );
+}
+
+// Trigger a browser download of `text` as `filename`. Fire-and-forget.
+function downloadText(filename, text, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 1s: long enough that the browser has started the download before revoke.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 class Backup {
   constructor() {
     // Log file name — swappable so self-test uses tokenbook-latest-devtest.csv.
@@ -614,26 +642,8 @@ class Backup {
 
   // Always-download a fresh restore-error report. Returns the filename.
   downloadErrorLog(text) {
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const stamp =
-      db.localDay(now) +
-      'T' +
-      pad(now.getHours()) +
-      '-' +
-      pad(now.getMinutes()) +
-      '-' +
-      pad(now.getSeconds());
-    const filename = `tokenbook-restore-errors-${stamp}.log`;
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    const filename = `tokenbook-restore-errors-${fileStamp()}.log`;
+    downloadText(filename, text, 'text/plain;charset=utf-8');
     return filename;
   }
 
@@ -663,26 +673,8 @@ class Backup {
   // Fallback export: download the whole DB as a fresh log CSV.
   async downloadCsv() {
     const data = await db.exportAll();
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const stamp =
-      db.localDay(now) +
-      'T' +
-      pad(now.getHours()) +
-      '-' +
-      pad(now.getMinutes()) +
-      '-' +
-      pad(now.getSeconds());
-    const filename = `tokenbook-${stamp}.csv`;
-    const blob = new Blob([data.text], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const filename = `tokenbook-${fileStamp()}.csv`;
+    downloadText(filename, data.text, 'text/csv;charset=utf-8');
     return { filename, count: data.count || 0 };
   }
 
@@ -727,6 +719,5 @@ document.addEventListener('visibilitychange', () => {
 // Refresh the status line so "2m ago" stays current.
 setInterval(() => backup.updateStatus(), 30000);
 
-export { hasFsAccess as fsAccess };
 export default backup;
 export { Backup };

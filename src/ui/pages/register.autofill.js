@@ -3,7 +3,7 @@
 // functions through the ctx hook registry to avoid circular imports.
 
 import db from '../../core/db.js';
-import { timeAgo } from '../dom.js';
+import { timeAgo } from '../../core/time.js';
 import { getB, getFlags, call } from './register.ctx.js';
 import {
   applyFollowupRule,

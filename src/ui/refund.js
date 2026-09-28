@@ -4,11 +4,8 @@
 // ('0'..'3' on Save, null on cancel/dismiss).
 
 import db from '../core/db.js';
+import { el } from './dom.js';
 import { openRevisions } from './revisions.js';
-
-function el(id) {
-  return document.getElementById(id);
-}
 
 // Show the refund dialog. Does NOT write — callers apply the tier via
 // db.setVisitRefund (or use openRefundFor which does both).

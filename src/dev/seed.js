@@ -13,20 +13,21 @@
 
 import { rawDb } from '../core/db.js';
 import { isWithinFollowupWindow, defaultFee } from '../core/billing.js';
+import { localDay } from '../core/day.js';
 
 const FIRST = [
-  'Ramesh','Suresh','Mahesh','Rajesh','Naresh','Dinesh','Mukesh','Rakesh','Ganesh','Yogesh',
-  'Priya','Anita','Sunita','Kavita','Rekha','Meena','Geeta','Seema','Neha','Pooja',
-  'Arjun','Karan','Rohan','Rahul','Amit','Sumit','Nikhil','Vikram','Manish','Sandeep',
-  'Deepa','Rani','Nisha','Ritu','Divya','Shreya','Tanya','Sneha','Aarti','Swati',
-  'Farhan','Imran','Salman','Aamir','Zoya','Fatima','Ayesha','Sana','Rizwan','Arif',
+  'Ramesh', 'Suresh', 'Mahesh', 'Rajesh', 'Naresh', 'Dinesh', 'Mukesh', 'Rakesh', 'Ganesh', 'Yogesh',
+  'Priya', 'Anita', 'Sunita', 'Kavita', 'Rekha', 'Meena', 'Geeta', 'Seema', 'Neha', 'Pooja',
+  'Arjun', 'Karan', 'Rohan', 'Rahul', 'Amit', 'Sumit', 'Nikhil', 'Vikram', 'Manish', 'Sandeep',
+  'Deepa', 'Rani', 'Nisha', 'Ritu', 'Divya', 'Shreya', 'Tanya', 'Sneha', 'Aarti', 'Swati',
+  'Farhan', 'Imran', 'Salman', 'Aamir', 'Zoya', 'Fatima', 'Ayesha', 'Sana', 'Rizwan', 'Arif',
 ];
 const LAST = [
-  'Kumar','Sharma','Patel','Singh','Gupta','Verma','Yadav','Joshi','Nair','Reddy',
-  'Chauhan','Mehta','Shah','Desai','Iyer','Rao','Bansal','Mishra','Tiwari','Agarwal',
+  'Kumar', 'Sharma', 'Patel', 'Singh', 'Gupta', 'Verma', 'Yadav', 'Joshi', 'Nair', 'Reddy',
+  'Chauhan', 'Mehta', 'Shah', 'Desai', 'Iyer', 'Rao', 'Bansal', 'Mishra', 'Tiwari', 'Agarwal',
 ];
-const GENDERS = ['M','M','M','F','F','F','O'];
-const MOB_PREFIX = ['9','8','7','6'];
+const GENDERS = ['M', 'M', 'M', 'F', 'F', 'F', 'O'];
+const MOB_PREFIX = ['9', '8', '7', '6'];
 
 function randInt(n) {
   return Math.floor(Math.random() * n);
@@ -46,12 +47,6 @@ function addDays(base, n) {
   const d = new Date(base);
   d.setDate(d.getDate() + n);
   return d;
-}
-function localDayOf(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
 }
 // Random time within clinic hours (09:00–19:00), so createdAt has a plausible
 // order within a day.
@@ -123,7 +118,7 @@ export async function seed({
   const rawVisits = [];
   for (let off = 0; off < days && rawVisits.length < total; off++) {
     const d = addDays(today, -days + off);
-    const date = localDayOf(d);
+    const date = localDay(d);
     for (let k = 0; k < perDay && rawVisits.length < total; k++) {
       const p = personList[randInt(personList.length)];
       const when = atClinicHour(d);

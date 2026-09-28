@@ -100,10 +100,6 @@ export const KIND_BY_SCHEMA = {
   settings: 'settings',
 };
 
-export function schemaByNo(no) {
-  return SCHEMAS.find((s) => s.no === no) || null;
-}
-
 // ---- head block ----
 
 export function csvHeaderLine() {
