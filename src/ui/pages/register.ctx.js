@@ -11,8 +11,17 @@ const flags = {
   loadedVisitId: null,
 };
 
-// Cross-module function registry. Modules call register.ctx.call('name', ...).
-const hooks = new Map();
+// Cross-module function registry. Typed: each hook has a fixed name and
+// signature, so a typo at the call site is a NameError here instead of a
+// silent misroute. Modules call `hooks.setMsg(...)`, `hooks.startNewBill(...)`.
+const hooks = {
+  // Display a toast in the register form.
+  setMsg: null,
+  // Reset the form for a new bill. (nextToken?, resetDate?)
+  startNewBill: null,
+  // Fill the form from a visit + person.
+  loadVisitIntoForm: null,
+};
 
 export function setB(next) {
   b = next;
@@ -23,11 +32,19 @@ export function getB() {
 export function getFlags() {
   return flags;
 }
+// Register a hook by name. Throws if the name is not part of the typed set.
 export function setHook(name, fn) {
-  hooks.set(name, fn);
+  if (!(name in hooks)) throw new Error('register ctx: unknown hook ' + name);
+  hooks[name] = fn;
 }
+export function getHooks() {
+  return hooks;
+}
+// Direct access: `hooks.setMsg(...)`. Callers must go through getHooks() so the
+// typed shape is the only public surface.
 export function call(name, ...args) {
-  const fn = hooks.get(name);
-  if (!fn) throw new Error('register ctx: no hook registered for ' + name);
+  if (!(name in hooks)) throw new Error('register ctx: unknown hook ' + name);
+  const fn = hooks[name];
+  if (!fn) throw new Error('register ctx: hook not registered yet: ' + name);
   return fn(...args);
 }

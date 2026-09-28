@@ -10,7 +10,7 @@ import db from '../core/db.js';
 import backup, { hasFsAccess } from '../backup/backup.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter, ADMIN_ONLY } from './router.js';
-import { toast } from './toast.js';
+import { toast, toastHistory } from './toast.js';
 import { showModal } from './dom.js';
 import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../core/auth.js';
 import { setConfig, getConfig } from '../core/billing.js';
@@ -713,9 +713,9 @@ function showTabBlockedScreen(onRetry) {
       // Pending-queue "why not flushed?" hint. Mirrors backup.flush()'s gates.
       const pendingReason =
         pendingLines.length === 0 ? 'nothing queued'
-        : !st.hasFolder ? 'no folder set'
-        : st.lastError ? 'last flush error: ' + st.lastError
-        : 'idle — debounce pending (2s)';
+          : !st.hasFolder ? 'no folder set'
+            : st.lastError ? 'last flush error: ' + st.lastError
+              : 'idle — debounce pending (2s)';
 
       const parts = [];
       body.textContent = '';
@@ -745,6 +745,17 @@ function showTabBlockedScreen(onRetry) {
       section('PENDING FLUSH (' + pendingLines.length + ') — ' + pendingReason, pendingLines.join('\n'));
       if (csv.text != null) section('CSV · ' + csv.source, csv.text);
       else if (csv.source === 'error') section('CSV ERROR', csv.error || 'unknown');
+
+      // Recent toasts (Row 21): what the operator just saw, oldest first.
+      {
+        const hist = toastHistory();
+        const lines = hist.map((h) => {
+          const t = new Date(h.at).toLocaleTimeString();
+          const kind = h.kind ? '[' + h.kind + '] ' : '';
+          return t + '  ' + kind + h.text;
+        });
+        section('RECENT MESSAGES (' + hist.length + ')', lines.join('\n'));
+      }
 
       ensureDiagButton(dlg);
 

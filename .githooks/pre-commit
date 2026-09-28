@@ -11,6 +11,14 @@ CACHED='^(index\.html|styles\.css|favicon\.svg|manifest\.webmanifest|pw\.js|src/
 
 STAGED=$(git diff --cached --name-only)
 
+if echo "$STAGED" | grep -Eq '\.js$'; then
+  # 0. Syntax check every tracked JS file. Warn-only (does not block the commit)
+  #    so a WIP branch can still be committed; CI can run `sh scripts/check.sh`.
+  if ! sh scripts/check.sh; then
+    echo "pre-commit: WARNING — some JS files failed the syntax check (see above)"
+  fi
+fi
+
 if echo "$STAGED" | grep -Eq "$CACHED"; then
   # 1. Regenerate sw.js SHELL_ASSETS from the tree; stage it if it changed.
   sh scripts/gen-shell-assets.sh

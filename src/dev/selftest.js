@@ -535,6 +535,44 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
   rep.check('read: A history lost token 1', !aHistory.some((v) => v.token === 1));
   rep.check('read: A history still has token 2', aHistory.some((v) => v.token === 2));
 
+  // ---- 8c. seed at small scale + paged read (row 27) ------------------
+  // Exercises dev/seed.js (bulk writes) and the paged read path so a scale
+  // regression (query slowing down, projection not built) is caught.
+  // Runs on its own DB; cleaned up by the final deleteDb().
+  stage('8c. seed + paged read (scale)');
+  try {
+    const { seed } = await import('./seed.js');
+    const SEED_N = 200;
+    const t0 = performance.now();
+    const sres = await seed({ total: SEED_N, days: 20, patients: 20 });
+    const seedMs = performance.now() - t0;
+    rep.check('seed: wrote people', sres.people > 0, 'people=' + sres.people);
+    rep.check('seed: wrote visits', sres.visits === SEED_N, 'visits=' + sres.visits);
+    rep.info('seed: ' + SEED_N + ' visits in ' + Math.round(seedMs) + 'ms');
+
+    // Paged read over a wide range (all seeded days).
+    const from = shiftDate(TEST_DATE, 20);
+    const to = TEST_DATE;
+    const total = await db.countByDateRange(from, to);
+    rep.check('seed: countByDateRange matches', total >= SEED_N, 'total=' + total);
+
+    const t1 = performance.now();
+    const page1 = await db.listByDateRangePage(from, to, { offset: 0, limit: 50 });
+    const pageMs = performance.now() - t1;
+    rep.check('seed: listByDateRangePage returns a page', page1.length === 50, 'len=' + page1.length);
+    rep.check('seed: page read under 2s', pageMs < 2000, Math.round(pageMs) + 'ms');
+    rep.info('seed: page(50) in ' + Math.round(pageMs) + 'ms');
+
+    const t2 = performance.now();
+    const totals = await db.totalsByDateRange(from, to);
+    const totalsMs = performance.now() - t2;
+    rep.check('seed: totalsByDateRange returns totals', totals.total >= SEED_N, 'total=' + totals.total);
+    rep.check('seed: totals read under 2s', totalsMs < 2000, Math.round(totalsMs) + 'ms');
+    rep.info('seed: totals in ' + Math.round(totalsMs) + 'ms');
+  } catch (e) {
+    rep.check('seed: stage completed', false, e && e.message ? e.message : String(e));
+  }
+
   // ---- 9. cleanup ------------------------------------------------------
   stage('9. cleanup (remove test rows from DB)');
   try {

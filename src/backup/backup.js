@@ -766,13 +766,27 @@ class Backup {
   }
 
   // Append a restore-error report to error.log in the backup folder, if set.
+  // The log is capped at MAX_ERROR_LOG bytes; when appending would exceed it,
+  // the file is rotated to error.log.1 (previous .1 is dropped). Keeps the
+  // folder from filling on a pathological run without silently discarding the
+  // most recent report.
   async writeErrorLog(text) {
     if (!this._dir) return false;
+    const MAX_ERROR_LOG = 1024 * 1024; // 1 MB
     try {
       const fh = await this._dir.getFileHandle('error.log', { create: true });
       const file = await fh.getFile();
-      const w = await fh.createWritable({ keepExistingData: true });
-      await w.seek(file.size);
+      const bytes = new Blob([text]).size;
+      if (file.size + bytes > MAX_ERROR_LOG) {
+        // Rotate: remove any .1, then rename current -> .1.
+        try { await this._dir.removeEntry('error.log.1'); } catch (_) { /* none */ }
+        try { await fh.move(this._dir, 'error.log.1'); } catch (_) { /* move unsupported */ }
+        // Fall through; the next getFileHandle({create:true}) recreates it.
+      }
+      const fh2 = await this._dir.getFileHandle('error.log', { create: true });
+      const file2 = await fh2.getFile();
+      const w = await fh2.createWritable({ keepExistingData: true });
+      await w.seek(file2.size);
       await w.write(text);
       await w.close();
       return true;

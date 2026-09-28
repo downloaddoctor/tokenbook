@@ -3,10 +3,24 @@
 // Default export = singleton; named toast/clearToast are bound methods.
 
 const TOAST_MS = 5000;
+const HISTORY_MAX = 100;
 
 class Toast {
   constructor() {
     this._timer = null;
+    // Ring of recent messages. Lets the Log dialog show what the operator saw,
+    // even after toasts auto-dismiss. Not persisted (session-only).
+    this._history = [];
+  }
+
+  // Recent { at, kind, text } entries, oldest first.
+  history() {
+    return this._history.slice();
+  }
+
+  _remember(text, kind) {
+    this._history.push({ at: Date.now(), kind: kind || '', text });
+    if (this._history.length > HISTORY_MAX) this._history.shift();
   }
 
   show(text, kind) {
@@ -20,6 +34,7 @@ class Toast {
       }
       return;
     }
+    this._remember(text, kind);
     host.replaceChildren();
     const el = document.createElement('div');
     el.className = 'toast' + (kind ? ' ' + kind : '');
@@ -63,6 +78,7 @@ const toast = new Toast();
 // Bound named exports so `import { toast, clearToast }` keeps working.
 const show = toast.show.bind(toast);
 const clearToast = toast.clear.bind(toast);
+const toastHistory = toast.history.bind(toast);
 
-export { show as toast, clearToast };
+export { show as toast, clearToast, toastHistory };
 export default toast;

@@ -43,6 +43,12 @@ async function render() {
     const tr = document.createElement('tr');
     tr.className = 'row-click';
     tr.dataset.id = String(p.rootId);
+    // a11y: row is an interactive control. tabindex is managed by listNav.
+    tr.setAttribute('role', 'button');
+    tr.setAttribute(
+      'aria-label',
+      `Patient #${p.rootId}, ${p.name}, ${p.mob} — open history`
+    );
     const lastAt = p.lastVisitAt || p.updatedAt;
     const cells = [
       p.rootId,

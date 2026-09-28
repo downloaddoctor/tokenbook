@@ -55,23 +55,19 @@ async function refresh() {
   const rng = rangeForMode();
   const [from, to] = rng || [null, null];
 
-  // Pager: day mode is short (one day) and unpaged; month/range are paged.
-  let rows;
-  let total;
-  if (s.mode === 'day') {
-    rows = from ? await db.listByDate(from) : [];
-    total = rows.length;
-    s.pager.hidden = true;
-  } else {
-    total = from ? await db.countByDateRange(from, to) : 0;
-    rows = from ? await db.listByDateRangePage(from, to, { offset: s.offset, limit: PAGE }) : [];
-    const pages = Math.max(1, Math.ceil(total / PAGE));
-    const page = Math.floor(s.offset / PAGE) + 1;
-    s.infoEl.textContent = `Page ${page} / ${pages} — ${total} visits`;
-    s.prevBtn.disabled = s.offset <= 0;
-    s.nextBtn.disabled = s.offset + PAGE >= total;
-    s.pager.hidden = false;
-  }
+  // All modes are paged now — a busy day can be hundreds of rows and
+  // materializing the whole day just to render 50 is wasteful.
+  const total = from ? await db.countByDateRange(from, to) : 0;
+  const rows = from
+    ? await db.listByDateRangePage(from, to, { offset: s.offset, limit: PAGE })
+    : [];
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+  const page = Math.floor(s.offset / PAGE) + 1;
+  s.infoEl.textContent = `Page ${page} / ${pages} — ${total} visits`;
+  s.prevBtn.disabled = s.offset <= 0;
+  s.nextBtn.disabled = s.offset + PAGE >= total;
+  // Only show the pager when there is more than one page.
+  s.pager.hidden = pages <= 1;
 
   // Summary totals cover the WHOLE range, not just the rendered page.
   let collected = 0;
@@ -80,22 +76,10 @@ async function refresh() {
   let freeCount = 0;
   let cashTotal = 0;
   let upiTotal = 0;
+  // Aggregate over the WHOLE range (not just the rendered page). Every mode
+  // is paged now, so totals always come from totalsByDateRange.
   let summaryTotal = total;
-  if (s.mode === 'day') {
-    for (const r of rows) {
-      const fee = Number(r.fee) || 0;
-      const refund = db.refundAmountFor(r.refundTier);
-      const net = fee - refund;
-      if (r.followup) freeCount++;
-      else {
-        paidCount++;
-        collected += net;
-        refunded += refund;
-        if (r.payment) upiTotal += net;
-        else cashTotal += net;
-      }
-    }
-  } else if (from) {
+  if (from) {
     const t = await db.totalsByDateRange(from, to);
     collected = t.collected;
     refunded = t.refunded;
@@ -114,6 +98,12 @@ async function refresh() {
     const tr = document.createElement('tr');
     tr.className = 'row-click';
     tr.dataset.id = String(r.rootId);
+    // a11y: row is an interactive control. tabindex is managed by listNav.
+    tr.setAttribute('role', 'button');
+    tr.setAttribute(
+      'aria-label',
+      `Token ${r.token}, ${r.name}, ${r.mob} — open refund`
+    );
     const cells = [];
     if (s.mode !== 'day') cells.push(r.date);
     cells.push(

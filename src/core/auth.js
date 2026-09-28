@@ -131,9 +131,11 @@ export async function getUserById(id) {
   return (await db.raw().users.get(Number(id))) || null;
 }
 
-// Roles: 'admin' (full) | 'user' (everything except Print Layout + Users).
-export async function createUser({ username, password, role = 'user' }) {
-  const u = normName(username);
+// Normalize + enforce uniqueness for every NEW user insert. All creation
+// paths go through this so a future import/reset cannot silently insert a
+// differently-cased duplicate of an existing username.
+async function _insertUser(row) {
+  const u = normName(row.username);
   if (!u) {
     const e = new Error('Username is required.');
     e.name = 'MissingUsernameError';
@@ -145,10 +147,17 @@ export async function createUser({ username, password, role = 'user' }) {
     e.name = 'DuplicateUsernameError';
     throw e;
   }
+  const normalized = { ...row, username: u };
+  const id = await db.raw().users.add(normalized);
+  return { ...normalized, id };
+}
+
+// Roles: 'admin' (full) | 'user' (everything except Print Layout + Users).
+export async function createUser({ username, password, role = 'user' }) {
   const { salt, hash, iter } = await hashPassword(password);
   const now = new Date().toISOString();
-  const row = {
-    username: u,
+  const saved = await _insertUser({
+    username,
     role: role === 'admin' ? 'admin' : 'user',
     salt,
     hash,
@@ -158,9 +167,9 @@ export async function createUser({ username, password, role = 'user' }) {
     createdAt: now,
     updatedAt: now,
     lastLoginAt: null,
-  };
-  const id = await db.raw().users.add(row);
-  const saved = { ...row, id };
+    failedLogins: 0,
+    lockedUntil: null,
+  });
   // Append the user revision (audit trail; logged to CSV without secrets).
   await db.appendUserRevision(saved);
   return saved;
@@ -232,8 +241,14 @@ function readSession() {
 function clearSession() {
   try {
     localStorage.removeItem(SESSION_KEY);
-  } catch (_) {}
+  } catch (_) { }
 }
+
+// Login throttling: after MAX_FAILED consecutive bad passwords, lock the
+// account for LOCK_MS. State lives on the user row (failedLogins, lockedUntil)
+// so it survives a reload and is shared with every tab through IndexedDB.
+const MAX_FAILED = 5;
+const LOCK_MS = 5 * 60 * 1000;
 
 // Log in. Returns the user row on success, throws on failure.
 export async function login(username, password) {
@@ -250,14 +265,46 @@ export async function login(username, password) {
     e.name = 'DisabledAccountError';
     throw e;
   }
+  // Lockout check (before hashing — cheap rejection).
+  const now0 = Date.now();
+  if (u.lockedUntil && u.lockedUntil > now0) {
+    const secs = Math.ceil((u.lockedUntil - now0) / 1000);
+    const e = new Error(`Too many failed attempts. Try again in ${secs}s.`);
+    e.name = 'LockedOutError';
+    e.retryAfterMs = u.lockedUntil - now0;
+    throw e;
+  }
   const ok = await verifyPassword(u, password);
-  if (!ok) throw fail();
+  if (!ok) {
+    const failed = (Number(u.failedLogins) || 0) + 1;
+    const patch = { failedLogins: failed };
+    if (failed >= MAX_FAILED) {
+      patch.lockedUntil = Date.now() + LOCK_MS;
+      patch.failedLogins = 0; // reset so the next attempt after the lock starts fresh
+    }
+    try { await db.raw().users.update(u.id, patch); } catch (_) { /* best-effort */ }
+    throw fail();
+  }
+  // Success: clear any failure counter + lock.
   const token = randomB64(32);
   const now = new Date().toISOString();
   const exp = Date.now() + SESSION_DAYS * 86400000;
-  await db.raw().users.update(u.id, { sessionToken: token, lastLoginAt: now, updatedAt: now });
+  await db.raw().users.update(u.id, {
+    sessionToken: token,
+    lastLoginAt: now,
+    updatedAt: now,
+    failedLogins: 0,
+    lockedUntil: null,
+  });
   writeSession(u.id, token, exp);
-  _current = { ...u, sessionToken: token, lastLoginAt: now, v: await _latestUserV(u.id) };
+  _current = {
+    ...u,
+    sessionToken: token,
+    lastLoginAt: now,
+    failedLogins: 0,
+    lockedUntil: null,
+    v: await _latestUserV(u.id),
+  };
   return _current;
 }
 
@@ -280,7 +327,7 @@ export async function logout() {
         sessionToken: '',
         updatedAt: new Date().toISOString(),
       });
-    } catch (_) {}
+    } catch (_) { }
   }
   _current = null;
   clearSession();

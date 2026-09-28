@@ -9,7 +9,7 @@ src/
  ui/ — shell, router, pages, reusable modals
  print/ — paperstamp integration + default layout
  dev/ — dev-only seed + self-test (never precached)
-scripts/ — gen-shell-assets.sh
+scripts/ — gen-shell-assets.sh (SW shell list) + check.sh (node --check every tracked JS; run by pre-commit, warn-only)
 .githooks/ — pre-commit (asset list + version bump)
 
 ## ENTRY-POINTS
@@ -27,7 +27,7 @@ core/db.journal.js — setJournal + _emitJournal* + _emitJournal + _deliverJourn
 core/db.export.js — exportAll + exportAllStream + _logCounts + _appVersion (exportMethods)
 core/version.js — APP_VERSION constant (shared by db.js + db.export.js to avoid a cycle)
 core/billing.js — follow-up rule + refund tiers + live config (defaultFee, followupWindowDays) via setConfig
-core/auth.js — users in IDB; PBKDF2-SHA256 (150k iters); session token in localStorage 'tokenbook-session'
+core/auth.js — users in IDB; PBKDF2-SHA256 (150k iters); session token in localStorage 'tokenbook-session'; login lockout (5 fails → 5 min) via user.failedLogins/lockedUntil; iter clamped [10k, 5M] on verify; all user inserts via _insertUser (uniqueness enforced)
 core/day.js — localDay() 'YYYY-MM-DD'
 core/time.js — timeAgo()
 backup/backup.js — append-only CSV logbook to user folder (File System Access); daily snapshots + archive rotation
@@ -50,7 +50,7 @@ ui/history.js — patient visit timeline modal; Enter → edit in Register
 ui/revisions.js — revision timeline modal; diff engine; user activity timeline
 ui/refund.js — refund dialog; openRefundFor(visit) persists
 ui/listNav.js — shared keyboard list/table navigation factory
-ui/toast.js — bottom-left auto-dismiss toast
+ui/toast.js — bottom-left auto-dismiss toast; keeps a session ring of recent messages (toastHistory()) shown in the Log dialog
 ui/dom.js — tiny DOM helpers (el, bindOff, showModal, highlightRow, ...)
 print/ps.js — paperstamp lifecycle singleton; mount/print/preview/openDesigner/reset
 print/defaultLayout.js — seed layout when plugin has none
