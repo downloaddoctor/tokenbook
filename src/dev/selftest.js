@@ -673,6 +673,51 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
     rep.check('cleanup: test visits removed from DB', false, e && e.message ? e.message : String(e));
   }
 
+  // ---- 10. SW update dev flag (row 29) --------------------------------
+  // Exercises the message path: ask the SW to re-check, wait for the ready
+  // message. SKIP when the SW isn't active (dev mode / no controller).
+  stage('10. SW update path (dev flag)');
+  try {
+    // Wait up to 2s for the SW to become the controller — on a fresh
+    // registration it isn't installed yet when this stage runs.
+    let controller = navigator.serviceWorker ? navigator.serviceWorker.controller : null;
+    if (!controller && navigator.serviceWorker) {
+      controller = await new Promise((resolve) => {
+        const deadline = Date.now() + 2000;
+        const check = () => {
+          if (navigator.serviceWorker.controller) return resolve(navigator.serviceWorker.controller);
+          if (Date.now() > deadline) return resolve(null);
+          setTimeout(check, 100);
+        };
+        check();
+      });
+    }
+    if (!controller) {
+      rep.skip('sw: controller present', 'no SW controller (dev mode or first load)');
+    } else {
+      rep.check('sw: controller present', true, controller.state);
+      const got = await new Promise((resolve) => {
+        const onMsg = (ev) => {
+          if (ev.data && ev.data.type === 'tokenbook-update-ready') {
+            navigator.serviceWorker.removeEventListener('message', onMsg);
+            resolve(true);
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', onMsg);
+        try {
+          controller.postMessage({ type: 'tokenbook-force-update' });
+        } catch (_) { }
+        setTimeout(() => {
+          navigator.serviceWorker.removeEventListener('message', onMsg);
+          resolve(false);
+        }, 4000);
+      });
+      rep.check('sw: force-update round-trip', got, got ? '' : 'no update-ready within 4s');
+    }
+  } catch (e) {
+    rep.check('sw: stage completed', false, e && e.message ? e.message : String(e));
+  }
+
   register.__setTestHooks({ suppressPrint: false });
   if (router && router.activateTab) router.activateTab(router.currentTab, true);
 

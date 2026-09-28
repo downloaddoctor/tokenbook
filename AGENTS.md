@@ -15,8 +15,8 @@ scripts/ — gen-shell-assets.sh (SW shell list) + check.sh (node --check every 
 ## ENTRY-POINTS
 index.html — app shell markup; loads pw.js + src/ui/app.js as modules
 src/ui/app.js — boot: openDb → auth gate → router; wires backup/restore/log/test/settings
-pw.js — PWA registration; ?dev=1 disables SW + nukes caches
-sw.js — service worker; SHELL_ASSETS auto-generated between markers
+pw.js — PWA registration; ?dev=1 disables SW + nukes caches; ?forceUpdate=1 bypasses the reload guard + posts a force-update message to the SW (manual test of the update path)
+sw.js — service worker; SHELL_ASSETS auto-generated between markers; message handler 'tokenbook-force-update' clears the sentinel + re-checks (dev/manual test only)
 
 ## MODULES
 core/tabLock.js — single-tab guard via Web Locks API (acquireTabLock); first tab wins, later tabs blocked

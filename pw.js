@@ -8,6 +8,9 @@
   // ?dev=1 -> SW off. Unregister any existing worker and nuke its caches so a
   // dev session always sees fresh files (no cache-first shell, no update guard).
   var DEV = /[?&]dev=1(?:&|$)/.test(window.location.search);
+  // ?forceUpdate=1 -> skip the reload guard and ask the SW to re-check the
+  // deploy sentinel immediately. Dev / manual-test flag only.
+  var FORCE_UPDATE = /[?&]forceUpdate=1(?:&|$)/.test(window.location.search);
   if (DEV) {
     if (window.console && console.info) console.info('[tokenbook] dev mode: SW disabled');
     navigator.serviceWorker.getRegistrations().then(function (regs) {
@@ -24,12 +27,28 @@
   }
 
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('./sw.js').catch(function (err) {
-      // Registration failure must never break the app.
-      if (window.console && console.warn) {
-        console.warn('[tokenbook] SW registration failed:', err);
-      }
-    });
+    navigator.serviceWorker
+      .register('./sw.js')
+      .then(function () {
+        if (!FORCE_UPDATE) return;
+        // Ask the SW to re-check the sentinel right now (dev / manual test).
+        var sw = navigator.serviceWorker.controller;
+        if (sw) {
+          sw.postMessage({ type: 'tokenbook-force-update' });
+        } else {
+          // First load in this session: wait for the controller to appear.
+          navigator.serviceWorker.ready.then(function () {
+            var c = navigator.serviceWorker.controller;
+            if (c) c.postMessage({ type: 'tokenbook-force-update' });
+          });
+        }
+      })
+      .catch(function (err) {
+        // Registration failure must never break the app.
+        if (window.console && console.warn) {
+          console.warn('[tokenbook] SW registration failed:', err);
+        }
+      });
   });
 
   // The SW found a fresh deploy (version.txt sentinel changed) and refreshed the
@@ -48,7 +67,9 @@
     } catch (err) {
       /* localStorage unavailable (private mode etc) — reload once, no guard. */
     }
-    if (Date.now() - last < RELOAD_GUARD_MS) return;
+    // forceUpdate bypasses the reload guard so a dev can drive the update
+    // path deterministically without waiting out the 30s window.
+    if (!FORCE_UPDATE && Date.now() - last < RELOAD_GUARD_MS) return;
 
     try {
       localStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));

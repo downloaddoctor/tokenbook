@@ -311,6 +311,21 @@ async function handleLocal(request) {
   return fresh;
 }
 
+self.addEventListener('message', (event) => {
+  // Dev / manual-test: clear the stored sentinel + asset validators, then
+  // run an update check immediately (bypassing the 30s guard).
+  if (!event.data || event.data.type !== 'tokenbook-force-update') return;
+  event.waitUntil(
+    (async () => {
+      try {
+        await writeStoredValidator('');
+        await writeLastCheck('0');
+      } catch (_) { }
+      await checkForUpdates(event.source && event.source.id ? event.source.id : null);
+    })()
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
