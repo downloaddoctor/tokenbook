@@ -362,20 +362,48 @@ button:disabled {
   font-size: 12px;
   color: var(--muted);
 }
-/* Summary totals panel (Tokens page): a row of stat chips. */
+/* Summary totals panel (Tokens page): two grouped rows of stat chips. */
 .summary-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   margin: 0 0 12px;
+  align-items: stretch;
 }
-.summary-grid .stat {
-  flex: 1 1 0;
-  min-width: 96px;
-  padding: 8px 12px;
+.summary-grid .stat-group {
+  display: flex;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 8px;
+  overflow: hidden;
+}
+/* 3 visits / 5 money -> group widths are 3/8 and 5/8 of the row. */
+.summary-grid .stat-group:nth-child(1) {
+  flex: 3 1 0;
+}
+.summary-grid .stat-group:nth-child(2) {
+  flex: 5 1 0;
+}
+.summary-grid .stat {
+  flex: 1 1 0;
+  min-width: 72px;
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+}
+.summary-grid .stat:last-child {
+  border-right: 0;
+}
+.summary-grid .stat.accent .stat-value {
+  color: var(--accent);
+}
+.summary-grid .stat.ok .stat-value {
+  color: var(--ok);
+}
+.summary-grid .stat.warn .stat-value {
+  color: var(--warn);
+}
+.summary-grid .stat.err .stat-value {
+  color: var(--danger);
 }
 .summary-grid .stat-label {
   display: block;

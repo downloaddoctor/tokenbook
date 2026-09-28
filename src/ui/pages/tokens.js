@@ -148,15 +148,25 @@ async function refresh() {
         return d;
       };
       const grossTotal = collected + refunded;
+      const group = (...stats) => {
+        const g = document.createElement('div');
+        g.className = 'stat-group';
+        g.append(...stats);
+        return g;
+      };
       s.summary.replaceChildren(
-        stat('Visits', String(summaryTotal)),
-        stat('Paid', String(paidCount)),
-        stat('Free', String(freeCount)),
-        stat('Total', '₹' + grossTotal),
-        stat('Refunded', '₹' + refunded, refunded > 0 ? 'err' : ''),
-        stat('Net', '₹' + collected, 'accent'),
-        stat('Cash', '₹' + cashTotal),
-        stat('UPI', '₹' + upiTotal),
+        group(
+          stat('Visits', String(summaryTotal)),
+          stat('Paid', String(paidCount)),
+          stat('Free', String(freeCount)),
+        ),
+        group(
+          stat('Total', '₹' + grossTotal),
+          stat('Refunded', '₹' + refunded, refunded > 0 ? 'err' : ''),
+          stat('Net', '₹' + collected, 'accent'),
+          stat('Cash', '₹' + cashTotal, 'ok'),
+          stat('UPI', '₹' + upiTotal, 'warn'),
+        ),
       );
       s.summary.hidden = s.summaryHidden === true;
     }
