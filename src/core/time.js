@@ -1,6 +1,7 @@
 // timeAgo(when, {compact?, fallback?}) -> relative-time string.
 // when: ISO string | epoch-ms number | Date.
-// compact: '5m ago' / default: '5 min ago'. fallback returned on unparseable input.
+// compact: '5m ago' / default: '5 min ago'. Under a minute: 'Ns ago'.
+// fallback returned on unparseable input.
 export function timeAgo(when, { compact = false, fallback = '' } = {}) {
   let t;
   if (when instanceof Date) t = when.getTime();
@@ -9,7 +10,7 @@ export function timeAgo(when, { compact = false, fallback = '' } = {}) {
   else t = NaN;
   if (!Number.isFinite(t)) return fallback;
   const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 45) return 'just now';
+  if (s < 60) return Math.floor(s) + 's ago';
   const m = s / 60;
   if (compact) {
     if (m < 60) return Math.round(m) + 'm ago';
