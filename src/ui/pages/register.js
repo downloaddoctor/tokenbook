@@ -410,6 +410,23 @@ export function mount() {
     }
   });
   b.off = off;
+  // Date bounds: prevent absurd dates (typo year, far future). ±5 years from
+  // today is generous for a clinic and catches the common year-typo case.
+  {
+    const now = new Date();
+    const min = new Date(now); min.setFullYear(now.getFullYear() - 5);
+    const max = new Date(now); max.setFullYear(now.getFullYear() + 2);
+    const iso = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${dd}`;
+    };
+    if (b.fDate) {
+      b.fDate.min = iso(min);
+      b.fDate.max = iso(max);
+    }
+  }
   refreshNextToken();
   // Seed the fee from settings when the form opens empty (the field has no
   // hardcoded default in markup; startNewBill seeds it, but a plain mount

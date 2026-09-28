@@ -92,9 +92,15 @@ export async function hashPassword(password) {
 }
 
 // Constant-ish compare of a candidate password against a user row.
+// The stored `iter` is clamped to a sane range: a tampered row cannot weaken
+// verification by setting a tiny count, and cannot DoS the tab by setting a
+// huge one. Values outside the range are ignored (fall back to default).
+const MIN_ITER = 10000;
+const MAX_ITER = 5000000;
 export async function verifyPassword(user, password) {
   if (!user || !user.salt || !user.hash) return false;
-  const iter = Number(user.iter) || PBKDF2_ITER;
+  const raw = Number(user.iter);
+  const iter = Number.isFinite(raw) && raw >= MIN_ITER && raw <= MAX_ITER ? Math.floor(raw) : PBKDF2_ITER;
   const hashBytes = await deriveKey(password, b64decode(user.salt), iter);
   return b64Equal(b64encode(hashBytes), user.hash);
 }

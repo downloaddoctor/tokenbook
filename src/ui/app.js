@@ -340,14 +340,21 @@ async function bootAuthed(router) {
     wireSettings(router);
   }
 
-  if (navigator.storage && navigator.storage.persist) {
+  // Storage persistence: checked on boot AND re-checked at the start of every
+  // full backup (see btnBackup), so a later denial / quota change is surfaced.
+  async function checkPersistence() {
+    if (!navigator.storage || !navigator.storage.persist) return null;
     try {
-      const granted = await navigator.storage.persist();
-      if (!granted) {
-        toast('Storage not persistent — data may be cleared if disk fills.', 'warn');
-      }
+      return await navigator.storage.persist();
     } catch (err) {
       toast('Storage persistence check failed: ' + err.message, 'warn');
+      return null;
+    }
+  }
+  {
+    const granted = await checkPersistence();
+    if (granted === false) {
+      toast('Storage not persistent — data may be cleared if disk fills.', 'warn');
     }
   }
 
@@ -549,6 +556,16 @@ function showTabBlockedScreen(onRetry) {
   });
 
   btnBackup.addEventListener('click', async () => {
+    // Row 33: re-check persistence before every full backup so a later denial
+    // (or a fresh origin permission change) is surfaced to the operator.
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        const granted = await navigator.storage.persist();
+        if (!granted) {
+          toast('Storage not persistent — data may be cleared if disk fills.', 'warn');
+        }
+      }
+    } catch (_) { /* best-effort */ }
     if (!hasFsAccess) {
       try {
         const r = await backup.downloadCsv();

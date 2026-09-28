@@ -4,8 +4,32 @@
 // ('0'..'3' on Save, null on cancel/dismiss).
 
 import db from '../core/db.js';
+import { refundAmountFor, REFUND_TIER_STEP } from '../core/billing.js';
 import { el, showModal } from './dom.js';
 import { openRevisions } from './revisions.js';
+
+// Render the tier <option>s from billing's canonical step so the label can
+// never drift from the amount the DB actually applies. Idempotent — safe to
+// call on every dialog open.
+function ensureTierOptions(sel) {
+  const want = ['0', '1', '2', '3'];
+  const have = Array.from(sel.options).map((o) => o.value);
+  if (have.length === want.length && want.every((v, i) => have[i] === v)) {
+    // already rendered — still refresh the labels (step may have changed)
+  } else {
+    sel.replaceChildren();
+    for (const v of want) sel.appendChild(new Option('', v));
+  }
+  for (const o of sel.options) {
+    const tier = Number(o.value);
+    if (tier === 0) {
+      o.textContent = 'None';
+      continue;
+    }
+    const amt = refundAmountFor(tier);
+    o.textContent = tier === 3 ? `R — ₹${amt} (full)` : `R${tier} — ₹${amt}`;
+  }
+}
 
 // Show the refund dialog. Does NOT write — callers apply the tier via
 // db.setVisitRefund (or use openRefundFor which does both).
@@ -16,6 +40,7 @@ export function openRefundDialog(visit) {
     const sel = el('refund-tier');
     if (!dlg || !sub || !sel) return resolve(null);
 
+    ensureTierOptions(sel);
     const baseFee = visit.fee != null ? Number(visit.fee) : 0;
     sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${baseFee}`;
     sel.value = String(visit.refundTier || '0');

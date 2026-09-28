@@ -136,8 +136,12 @@ function onDocMouseDown(e) {
 let identityTimer = null;
 function revalidateIdentity() {
   const b = getB();
+  const flags = getFlags();
   clearTimeout(identityTimer);
   identityTimer = setTimeout(async () => {
+    // A submit in flight owns the form; re-running the rule mid-submit would
+    // mutate fee / follow-up while submitBill is awaiting a dialog choice.
+    if (flags.submitting) return;
     const name = b.fName.value.trim().toUpperCase();
     const mob = b.fMob.value.trim();
     const patId = Number(b.fPatientId.value.trim());
@@ -212,4 +216,9 @@ export function bindAutofill(off) {
   off.on(b.fMob, 'blur', revalidateIdentity);
   off.on(b.fName, 'change', revalidateIdentity);
   off.on(b.fMob, 'change', revalidateIdentity);
+  // Live revalidation while typing so the follow-up note appears without the
+  // user having to leave the field. revalidateIdentity debounces internally and
+  // yields to an in-flight submit.
+  off.on(b.fName, 'input', revalidateIdentity);
+  off.on(b.fMob, 'input', revalidateIdentity);
 }
