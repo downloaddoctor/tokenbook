@@ -15,6 +15,7 @@ import { showModal } from './dom.js';
 import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../core/auth.js';
 import { setConfig, getConfig } from '../core/billing.js';
 import { showAuthGate, hideGate } from './auth.js';
+import { acquireTabLock } from '../core/tabLock.js';
 
 // ---------- restore helpers ----------
 
@@ -452,7 +453,52 @@ async function bootAuthed(router) {
 
 // ---------- boot ----------
 
+// Full-screen "already open" screen. No shell, no auth, no DB touched.
+function showTabBlockedScreen(onRetry) {
+  document.body.classList.add('auth-locked');
+  for (const id of ['app-topbar', 'main', 'statusbar']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+  let root = document.getElementById('auth-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'auth-root';
+    document.body.appendChild(root);
+  }
+  root.hidden = false;
+  root.replaceChildren();
+  const wrap = document.createElement('div');
+  wrap.className = 'auth-wrap';
+  const card = document.createElement('div');
+  card.className = 'auth-card';
+  const h = document.createElement('h1');
+  h.className = 'auth-title';
+  h.textContent = 'TokenBook is already open';
+  const p = document.createElement('p');
+  p.className = 'auth-sub';
+  p.textContent = 'Only one tab can use TokenBook at a time. Close the other tab, then retry.';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'primary auth-submit';
+  btn.textContent = 'Retry';
+  btn.addEventListener('click', () => onRetry());
+  card.append(h, p, btn);
+  wrap.appendChild(card);
+  root.appendChild(wrap);
+  btn.focus();
+}
+
 (async function boot() {
+  // FIRST: single-tab guard. Must run before db.openDb() and the auth gate so
+  // a second tab never touches IndexedDB or the session.
+  let lock = await acquireTabLock();
+  if (!lock.ok) {
+    showTabBlockedScreen(() => location.reload());
+    return;
+  }
+  // Re-probe on demand (Retry button reloads the page; no polling).
+
   const btnBackup = document.getElementById('btn-backup');
   const btnRestore = document.getElementById('btn-restore');
   const btnLog = document.getElementById('btn-log');

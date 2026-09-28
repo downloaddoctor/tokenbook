@@ -37,6 +37,7 @@ const SHELL_ASSETS = [
   './src/core/billing.js',
   './src/core/day.js',
   './src/core/db.js',
+  './src/core/tabLock.js',
   './src/core/time.js',
   './src/print/defaultLayout.js',
   './src/print/ps.js',
