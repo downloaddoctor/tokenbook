@@ -137,7 +137,7 @@ export async function openHistory(personId) {
       : '';
 
   listEl.replaceChildren();
-  active = -1;
+  if (nav) nav.clear();
   visitCache = new Map();
   for (const v of visits) {
     visitCache.set(v.rootId, v);
