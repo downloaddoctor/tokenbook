@@ -46,5 +46,49 @@ export function onKeys(e, bindings) {
   e.preventDefault();
 }
 
+// True when the event target is a text-entry field. Page-level keydown handlers
+// defer to the field (arrows move the caret, Enter submits, etc.).
+export function isTypingTarget(t) {
+  return !!(
+    t &&
+    (t.tagName === 'INPUT' ||
+      t.tagName === 'SELECT' ||
+      t.tagName === 'TEXTAREA' ||
+      t.isContentEditable)
+  );
+}
+
+// True when any modal <dialog> is open; page-level keys must yield to it.
+export function isDialogOpen() {
+  return !!document.querySelector('dialog[open]');
+}
+
+// Show/hide an inline error element. showError(node, null) clears it.
+export function showError(node, msg) {
+  if (!node) return;
+  if (msg == null || msg === '') {
+    node.hidden = true;
+    node.textContent = '';
+    return;
+  }
+  node.textContent = msg;
+  node.hidden = false;
+}
+
+// Open a <dialog> and resolve with its returnValue when it closes. The value is
+// cleared first so a stale returnValue never leaks in. Callers may attach their
+// own `close` listener for extra teardown.
+export function showModal(dlg) {
+  return new Promise((resolve) => {
+    const onClose = () => {
+      dlg.removeEventListener('close', onClose);
+      resolve(dlg.returnValue);
+    };
+    dlg.returnValue = '';
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+  });
+}
+
 // Re-export; canonical location is core/time.js.
 export { timeAgo } from '../core/time.js';

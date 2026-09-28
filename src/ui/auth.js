@@ -6,6 +6,7 @@
 // and continues the normal boot sequence.
 
 import { login, createUser, needsFirstAdmin } from '../core/auth.js';
+import { showError } from './dom.js';
 
 let root = null;
 let onAuthedCb = null;
@@ -79,15 +80,13 @@ function renderCreateAdmin() {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    err.hidden = true;
+    showError(err);
     if (!u.input.value.trim()) {
-      err.textContent = 'Username is required.';
-      err.hidden = false;
+      showError(err, 'Username is required.');
       return;
     }
     if (p.input.value !== p2.input.value) {
-      err.textContent = 'Passwords do not match.';
-      err.hidden = false;
+      showError(err, 'Passwords do not match.');
       return;
     }
     btn.disabled = true;
@@ -101,8 +100,7 @@ function renderCreateAdmin() {
       await login(u.input.value, p.input.value);
       onAuthedCb && onAuthedCb();
     } catch (e2) {
-      err.textContent = e2 && e2.message ? e2.message : String(e2);
-      err.hidden = false;
+      showError(err, e2 && e2.message ? e2.message : String(e2));
       btn.disabled = false;
     }
   });
@@ -127,14 +125,13 @@ function renderLogin() {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    err.hidden = true;
+    showError(err);
     btn.disabled = true;
     try {
       await login(u.input.value, p.input.value);
       onAuthedCb && onAuthedCb();
     } catch (e2) {
-      err.textContent = e2 && e2.message ? e2.message : String(e2);
-      err.hidden = false;
+      showError(err, e2 && e2.message ? e2.message : String(e2));
       btn.disabled = false;
       p.input.value = '';
       p.input.focus();

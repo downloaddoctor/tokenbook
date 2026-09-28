@@ -2,7 +2,7 @@
 // modal. Visits live in the Tokens tab; this page is the registry.
 
 import db from '../../core/db.js';
-import { bindOff, highlightRow, clearHighlight, onKeys } from '../dom.js';
+import { bindOff, highlightRow, clearHighlight, onKeys, isTypingTarget } from '../dom.js';
 import { openHistory } from '../history.js';
 
 const PAGE = 50;
@@ -133,14 +133,7 @@ export function mount() {
     if (modal && !modal.hidden) return;
     if (!st.tbody || !rowEls().length) return;
     const t = e.target;
-    if (
-      t &&
-      (t.tagName === 'INPUT' ||
-        t.tagName === 'SELECT' ||
-        t.tagName === 'TEXTAREA' ||
-        t.isContentEditable)
-    )
-      return;
+    if (isTypingTarget(t)) return;
     onKeys(e, {
       ArrowDown: () => {
         const rows = rowEls();

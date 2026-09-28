@@ -3,6 +3,8 @@
 // askIdentityChange -> 'update' | 'new' | 'cancel'
 // askReassign       -> 'reassign' | 'cancel'
 
+import { showModal } from '../dom.js';
+
 // Ask how to proceed when the form's identity differs from the linked patient.
 export function askIdentityChange(person, current) {
   return new Promise((resolve) => {
@@ -32,16 +34,8 @@ export function askIdentityChange(person, current) {
     row('Gender', person.gender || '', current.gender || '');
     body.appendChild(dl);
 
-    const onClose = () => {
-      dlg.removeEventListener('close', onClose);
-      const v = dlg.returnValue;
-      // Empty means Esc (or close without a button) -> cancel.
-      if (v === 'update' || v === 'new') resolve(v);
-      else resolve('cancel');
-    };
-    dlg.returnValue = '';
-    dlg.addEventListener('close', onClose);
-    dlg.showModal();
+    // Empty returnValue means Esc (or close without a button) -> cancel.
+    showModal(dlg).then((v) => resolve(v === 'update' || v === 'new' ? v : 'cancel'));
   });
 }
 
@@ -101,15 +95,9 @@ export function askReassign(linked, other, current) {
       u.textContent = 'Update patient';
       actions.append(c, n, u);
     };
-    const onClose = () => {
-      dlg.removeEventListener('close', onClose);
-      const v = dlg.returnValue;
+    showModal(dlg).then((v) => {
       restore();
-      if (v === 'reassign') resolve('reassign');
-      else resolve('cancel');
-    };
-    dlg.returnValue = '';
-    dlg.addEventListener('close', onClose);
-    dlg.showModal();
+      resolve(v === 'reassign' ? 'reassign' : 'cancel');
+    });
   });
 }

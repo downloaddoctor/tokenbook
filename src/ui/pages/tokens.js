@@ -1,7 +1,14 @@
 // Tokens page: pick a day, list its visits in issue order.
 
 import db from '../../core/db.js';
-import { bindOff, highlightRow, clearHighlight, onKeys } from '../dom.js';
+import {
+  bindOff,
+  highlightRow,
+  clearHighlight,
+  onKeys,
+  isTypingTarget,
+  isDialogOpen,
+} from '../dom.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 
@@ -255,9 +262,8 @@ export function mount() {
   off.on(document, 'keydown', (e) => {
     if (!s.tbody || !rowEls().length) return;
     const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    const dlgOpen = document.querySelector('dialog[open]');
-    if (dlgOpen) return;
+    if (isTypingTarget(t)) return;
+    if (isDialogOpen()) return;
     onKeys(e, {
       ArrowDown: () => {
         const rows = rowEls();

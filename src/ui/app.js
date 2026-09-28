@@ -12,6 +12,7 @@ import { csvToLog } from '../backup/csv.js';
 import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter, ADMIN_ONLY } from './router.js';
 import { toast } from './toast.js';
+import { showModal } from './dom.js';
 import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../core/auth.js';
 import { setConfig, getConfig } from '../core/billing.js';
 import { showAuthGate, hideGate } from './auth.js';
@@ -66,32 +67,24 @@ function reportRestore(r, tail) {
   toast(restoreMsg(r.count, r.skipped, tail) + suffix, 'err');
 }
 
-function restoreConfirm(folderName, summary) {
-  return new Promise((resolve) => {
-    const dlg = document.getElementById('restore-confirm');
-    const sub = document.getElementById('restore-confirm-sub');
-    if (!dlg || !sub) return resolve(false);
-    sub.textContent = folderName ? `Folder: ${folderName}` : '';
-    const info = document.getElementById('restore-confirm-info');
-    if (info) {
-      if (summary && summary.visits != null) {
-        const ppl = summary.people != null ? summary.people : '?';
-        info.textContent =
-          `Incoming: ${summary.visits} visit${summary.visits === 1 ? '' : 's'}, ` +
-          `${ppl} patient${ppl === 1 ? '' : 's'}` +
-          `${summary.skipped ? ' (' + summary.skipped + ' bad row(s) skipped)' : ''}.`;
-      } else {
-        info.textContent = '';
-      }
+async function restoreConfirm(folderName, summary) {
+  const dlg = document.getElementById('restore-confirm');
+  const sub = document.getElementById('restore-confirm-sub');
+  if (!dlg || !sub) return false;
+  sub.textContent = folderName ? `Folder: ${folderName}` : '';
+  const info = document.getElementById('restore-confirm-info');
+  if (info) {
+    if (summary && summary.visits != null) {
+      const ppl = summary.people != null ? summary.people : '?';
+      info.textContent =
+        `Incoming: ${summary.visits} visit${summary.visits === 1 ? '' : 's'}, ` +
+        `${ppl} patient${ppl === 1 ? '' : 's'}` +
+        `${summary.skipped ? ' (' + summary.skipped + ' bad row(s) skipped)' : ''}.`;
+    } else {
+      info.textContent = '';
     }
-    const onClose = () => {
-      dlg.removeEventListener('close', onClose);
-      resolve(dlg.returnValue === 'restore');
-    };
-    dlg.returnValue = '';
-    dlg.addEventListener('close', onClose);
-    dlg.showModal();
-  });
+  }
+  return (await showModal(dlg)) === 'restore';
 }
 
 // ---------- session ----------

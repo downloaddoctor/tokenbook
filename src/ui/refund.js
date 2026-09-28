@@ -4,7 +4,7 @@
 // ('0'..'3' on Save, null on cancel/dismiss).
 
 import db from '../core/db.js';
-import { el } from './dom.js';
+import { el, showModal } from './dom.js';
 import { openRevisions } from './revisions.js';
 
 // Show the refund dialog. Does NOT write — callers apply the tier via
@@ -54,20 +54,19 @@ export function openRefundDialog(visit) {
         dlg.close();
       }
     };
+    // Teardown of this dialog's extra listeners on close; the result comes from
+    // showModal()'s resolved returnValue.
     const onClose = () => {
       dlg.removeEventListener('close', onClose);
       dlg.removeEventListener('keydown', onKeydown);
       sel.removeEventListener('change', onSelChange);
       if (histBtn) histBtn.removeEventListener('click', onHistory);
-      resolve(dlg.returnValue === 'save' ? sel.value : null);
     };
-
-    dlg.returnValue = '';
     dlg.addEventListener('close', onClose);
     dlg.addEventListener('keydown', onKeydown);
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
-    dlg.showModal();
+    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : null));
     // Focus the tier select — it is the dialog's primary control. Esc still
     // closes the dialog via the keydown handler above (and natively when the
     // select's dropdown is not open).

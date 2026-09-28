@@ -1,7 +1,7 @@
 // Users page (admin only): list/create/disable/reset user + admin accounts.
 // Registered in Pages + ROUTES; the topbar tab is hidden for non-admins by app.js.
 
-import { bindOff } from '../dom.js';
+import { bindOff, showError } from '../dom.js';
 import { toast } from '../toast.js';
 import {
   listUsers,
@@ -132,8 +132,7 @@ function openNewUserDialog() {
   document.getElementById('user-new-pass2').value = '';
   document.getElementById('user-new-role').value = 'user';
   const err = document.getElementById('user-new-err');
-  err.hidden = true;
-  err.textContent = '';
+  showError(err);
   dlg.returnValue = '';
   dlg.showModal();
   document.getElementById('user-new-name').focus();
@@ -145,24 +144,21 @@ async function onCreateSubmit(e) {
   // Prevent the native dialog close so we can validate.
   e.preventDefault();
   const err = document.getElementById('user-new-err');
-  err.hidden = true;
+  showError(err);
   const name = document.getElementById('user-new-name').value;
   const p1 = document.getElementById('user-new-pass').value;
   const p2 = document.getElementById('user-new-pass2').value;
   const role = document.getElementById('user-new-role').value;
   if (!name.trim()) {
-    err.textContent = 'Username is required.';
-    err.hidden = false;
+    showError(err, 'Username is required.');
     return;
   }
   if (p1.length < 4) {
-    err.textContent = 'Password must be at least 4 characters.';
-    err.hidden = false;
+    showError(err, 'Password must be at least 4 characters.');
     return;
   }
   if (p1 !== p2) {
-    err.textContent = 'Passwords do not match.';
-    err.hidden = false;
+    showError(err, 'Passwords do not match.');
     return;
   }
   try {
@@ -172,8 +168,7 @@ async function onCreateSubmit(e) {
     dlg.close('created');
     await render();
   } catch (e2) {
-    err.textContent = e2 && e2.message ? e2.message : String(e2);
-    err.hidden = false;
+    showError(err, e2 && e2.message ? e2.message : String(e2));
   }
 }
 

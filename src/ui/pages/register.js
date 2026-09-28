@@ -5,7 +5,7 @@
 import db from '../../core/db.js';
 import { defaultFee } from '../../core/billing.js';
 import ps from '../../print/ps.js';
-import { bindOff } from '../dom.js';
+import { bindOff, isDialogOpen } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
 import { openRefundFor, refundLabel } from '../refund.js';
 import { openRevisions } from '../revisions.js';
@@ -381,7 +381,7 @@ export function mount() {
   off.on(document, 'keydown', (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.key !== 'r' && e.key !== 'R') return;
-    if (document.querySelector('dialog[open]')) return;
+    if (isDialogOpen()) return;
     e.preventDefault();
     refundCurrentVisit();
   });
@@ -389,7 +389,7 @@ export function mount() {
   off.on(document, 'keydown', (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.key !== 'v' && e.key !== 'V') return;
-    if (document.querySelector('dialog[open]')) return;
+    if (isDialogOpen()) return;
     e.preventDefault();
     if (flags.loadedVisitId == null) {
       toast('No saved visit loaded — nothing to show.', 'err');
