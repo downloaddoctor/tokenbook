@@ -3,7 +3,7 @@
 
 import db from '../../core/db.js';
 import ps from '../../print/ps.js';
-import { evaluateFollowup, followupDaysLeft, DEFAULT_FEE } from '../../core/billing.js';
+import { evaluateFollowup, followupDaysLeft, defaultFee } from '../../core/billing.js';
 import { getB, getFlags } from './register.ctx.js';
 
 export function fieldValues() {
@@ -16,7 +16,7 @@ export function fieldValues() {
     weight: b.fWeight ? b.fWeight.value.trim() : '',
     followup: b.fFollowup ? b.fFollowup.value : '0',
     payment: b.fPayment ? b.fPayment.value : '0',
-    fee: b.fFee ? b.fFee.value.trim() : String(DEFAULT_FEE),
+    fee: b.fFee ? b.fFee.value.trim() : String(defaultFee()),
     date: b.fDate.value.trim(),
     token: b.fToken.value.trim(),
   };
@@ -53,6 +53,23 @@ export function unlockFee() {
   b.fFee.readOnly = false;
 }
 
+// Fill the fee field with the configured default when it is empty/zero.
+function seedFee() {
+  const b = getB();
+  b.fFee.value = String(defaultFee());
+}
+
+// Force the fee field to the current default, unless a saved visit is loaded
+// for editing (which must keep ITS fee). Called after a Settings save.
+export function reseedFee() {
+  const b = getB();
+  if (!b || !b.fFee || b.fFee.readOnly) return;
+  const flags = getFlags();
+  if (flags.loadedVisitId != null) return;
+  b.fFee.value = String(defaultFee());
+  refreshPreview();
+}
+
 // Auto-followup rule: if the linked patient had a PAID visit within the last 6
 // calendar days, mark this visit as a free follow-up and lock fee to 0.
 let followupBusy = 0;
@@ -64,7 +81,7 @@ export async function applyFollowupRule(personId) {
     if (my !== followupBusy) return;
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
+    seedFee();
     setFollowupNote('');
     return;
   }
@@ -91,14 +108,14 @@ export async function applyFollowupRule(personId) {
   } else if (lastPaidDays != null && lastPaidDays > 6) {
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
+    seedFee();
     setFollowupNote(
       `Paid visit — last paid visit was ${lastPaidDays} day(s) ago (outside the 6-day follow-up window).`
     );
   } else {
     if (b.fFollowup) b.fFollowup.value = '0';
     unlockFee();
-    if (b.fFee && (!b.fFee.value || Number(b.fFee.value) === 0)) b.fFee.value = String(DEFAULT_FEE);
+    seedFee();
     setFollowupNote('');
   }
 }
@@ -108,7 +125,7 @@ export function onFollowupChange() {
   if (b.fFollowup.value === '1') lockFee(0);
   else {
     unlockFee();
-    if (!b.fFee.value || Number(b.fFee.value) === 0) b.fFee.value = String(DEFAULT_FEE);
+    seedFee();
   }
   setFollowupNote('');
   refreshPreview();

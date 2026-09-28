@@ -28,8 +28,8 @@ version.txt     deploy sentinel (NOT precached)
 index.html -> pw.js              PWA bootstrap (registers sw.js)
 pw.js -> sw.js                   precache + sentinel update check
 sw.js sentinel = ./version.txt   HEAD validator diff decides which assets refetch
-index.html -> src/ui/app.js      boot: open DB -> auth gate -> bootAuthed(router)
-bootAuthed(router)               ONLY runs with a session: hideGate, applySessionToShell (Users tab + whoami + Logout),
+index.html -> src/ui/app.js      boot: open DB -> auth gate -> bootAuthed(router)bootAuthed settings load          db.getSettings() -> billing.setConfig (defaultFee, followupWindowDays)
+Settings button (topbar ⚙ svg)   admin-only modal (wireSettings) -> db.setSettings + setConfig + reseedFeebootAuthed(router)               ONLY runs with a session: hideGate, applySessionToShell (Users tab + whoami + Logout),
                                  backup init, storage.persist, router.activateTab, ?dev=1 tools. Re-runnable across logout/login.
 auth gate (app.js)               requireAuth() -> create-admin (0 users) | login | authed -> bootAuthed
 Logout (topbar)                  core/auth.logout() then showAuthGate -> bootAuthed
@@ -51,8 +51,9 @@ core/db.js       class DB; default export = instance (import db); rawDb() -> Dex
                  Reads of current state use the projections; history uses revisions.
 core/day.js      localDay() -> 'YYYY-MM-DD' in browser TZ
 core/time.js     timeAgo(when, {compact, fallback}) -> relative string
-core/billing.js  follow-up window + default fee; single source for form + DB + seed
-                 FOLLOWUP_WINDOW_DAYS=6, DEFAULT_FEE=300
+core/billing.js  follow-up window + default fee; single source for form + DB + seed.
+                 Live config via setConfig({defaultFee, followupWindowDays}); getters defaultFee()/followupWindowDays()/getConfig().
+                 Constants FOLLOWUP_WINDOW_DAYS=6 / DEFAULT_FEE=300 are FALLBACKS only — app.js loads meta['settings'] at boot.
                  evaluateFollowup({lastPaidDays, explicit, baseFee}) -> {followup, fee, auto}
                  isWithinFollowupWindow(days), followupDaysLeft(days), normalizeFee(fee)
 ui/app.js        boot + global buttons (backup/restore/log/test); topbar wiring; Alt+H/L/B handler; boot() wrapped in .catch (fatal toast)
@@ -167,9 +168,11 @@ schemaless — columns are whatever the code writes. Full column lists below.
       people revision (listByDate / visitsForPerson).
 
  meta  ('key')
-   key        string  PK   'singleton'
-   lastDay    'YYYY-MM-DD'|null  daily-snapshot idempotency
-   -- app-only. Never written to the CSV log.
+   key        string  PK   'singleton' | 'settings'
+   lastDay    'YYYY-MM-DD'|null  daily-snapshot idempotency (key='singleton')
+   value      { defaultFee, followupWindowDays }  (key='settings', app prefs)
+   -- 'singleton' is app-only. 'settings' IS logged (schemaNo 3) so a restore
+      carries billing policy.
 
  users  ('++id, &username, role, disabled')   [Dexie v2, added for auth] — CURRENT-STATE projection
    id           int     PK  autoincrement
@@ -204,6 +207,7 @@ DB tokenbook-backup-meta, store kv: { key: 'dirHandle', value: FileSystemDirecto
  Head block (one per schema, typed columns):
    #head|schema|schemaNo|columns
    #head|user|0|id:int|v:int|username:str|role:str|disabled:int|createdAt:epoch|revAt:epoch?
+   #head|settings|3|defaultFee:num|followupWindowDays:int|revAt:epoch?   (singleton, one line/backup)
    #head|people|1|rootId:int|v:int|name:str|mob:str|age:int?|gender:str?|weight:num?|hidden:int|createdAt:epoch|revAt:epoch?|userId:int?|userV:int?
    #head|visits|2|rootId:int|v:int|personId:int|personV:int|date:str|token:int|weight:num?|followup:int|payment:int|fee:num|refundTier:int|hidden:int|createdAt:epoch|revAt:epoch?|userId:int?|userV:int?
  userId/userV = acting user + its revision at that write (audit; nullable for pre-auth rows).
@@ -236,6 +240,7 @@ db (core/db.js default): openDb, addVisit, setVisitRefund(rootId,tier), setVisit
   exportAll, exportAllStream, listByDate, listByDateRange, listByDateRangePage, countByDateRange, totalsByDateRange, listAll, listPeople, searchPeopleByPrefix/Name/Mob,
   visitCountsForPeople, visitsForPerson, revisionsOf(entity,rootId), findVisitByDateToken,
   lastPaidVisitDaysFor, nextTokenForDate, getPerson, findPersonByNameMob,
+  getSettings, setSettings(patch),
   setJournal, setActor(fn), appendUserRevision(user,{log}), userRevisions(id),
   activityForUser(userId,{offset,limit}) -> {items,total,hasMore} (plain userId index, newest-first),
   refundAmountFor, localDay, raw (-> Dexie),

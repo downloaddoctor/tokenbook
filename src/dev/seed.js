@@ -12,7 +12,7 @@
 // Guarded by ?dev=1 at the call site (app.js). Do not import from prod pages.
 
 import { rawDb } from '../core/db.js';
-import { isWithinFollowupWindow, DEFAULT_FEE } from '../core/billing.js';
+import { isWithinFollowupWindow, defaultFee } from '../core/billing.js';
 
 const FIRST = [
   'Ramesh','Suresh','Mahesh','Rajesh','Naresh','Dinesh','Mukesh','Rakesh','Ganesh','Yogesh',
@@ -157,7 +157,7 @@ export async function seed({
       const since = lastPaidOffset == null ? null : v._offset - lastPaidOffset;
       const followup = isWithinFollowupWindow(since) ? 1 : 0;
       v.followup = followup;
-      v.fee = followup ? 0 : DEFAULT_FEE;
+      v.fee = followup ? 0 : defaultFee();
       v.refundTier = !followup && randInt(20) === 0 ? 1 + randInt(3) : 0;
       if (!followup) lastPaidOffset = v._offset;
     }

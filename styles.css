@@ -1061,6 +1061,13 @@ body.auth-locked { overflow: hidden; }
 
 /* ---------- topbar right / whoami ---------- */
 .topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  padding: 0;
+}
 .whoami {
   color: var(--muted);
   font-size: 12px;

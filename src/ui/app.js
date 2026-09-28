@@ -13,6 +13,7 @@ import { Pages } from './pages/index.js';
 import { createRouter, routeFromHash, setRouter, ADMIN_ONLY } from './router.js';
 import { toast } from './toast.js';
 import { requireAuth, currentUser, currentUserSync, isAdmin, logout } from '../core/auth.js';
+import { setConfig, getConfig } from '../core/billing.js';
 import { showAuthGate, hideGate } from './auth.js';
 
 // ---------- restore helpers ----------
@@ -37,6 +38,13 @@ function mkProgressToast() {
       active = false;
     },
   };
+}
+
+// Re-read settings into billing after a restore (the log may carry settings).
+async function reloadBillingConfig() {
+  try {
+    setConfig(await db.getSettings());
+  } catch (_) {}
 }
 
 function reportRestore(r, tail) {
@@ -108,6 +116,8 @@ async function applySessionToShell(router) {
   }
   if (navUsers) navUsers.hidden = !admin;
   if (navPrintLayout) navPrintLayout.hidden = !admin;
+  const btnSettings = document.getElementById('btn-settings');
+  if (btnSettings) btnSettings.hidden = !admin;
   // Non-admins keep ONLY Backup in the statusbar: no Restore / Log / Test, and
   // no dev Seed/Clear even with ?dev=1. #file-restore is a programmatic-only
   // picker (always hidden in markup) — never toggle it or it renders as a
@@ -133,6 +143,50 @@ async function applySessionToShell(router) {
   }
 }
 
+// Settings modal: admin edits default fee + follow-up window. Persists to the
+// meta 'settings' record and pushes the new values into billing.
+function wireSettings(router) {
+  const btn = document.getElementById('btn-settings');
+  const dlg = document.getElementById('settings-dialog');
+  const form = document.getElementById('settings-form');
+  if (!btn || !dlg || !form) return;
+
+  btn.addEventListener('click', async () => {
+    if (!isAdmin(await currentUser())) {
+      toast('Only admins can change settings.', 'err');
+      return;
+    }
+    const cfg = getConfig();
+    document.getElementById('set-fee').value = String(cfg.defaultFee);
+    document.getElementById('set-followup').value = String(cfg.followupWindowDays);
+    dlg.returnValue = '';
+    dlg.showModal();
+  });
+
+  form.addEventListener('submit', async (e) => {
+    if (e.submitter && e.submitter.value === 'cancel') return;
+    e.preventDefault();
+    const fee = Number(document.getElementById('set-fee').value);
+    const followup = Number(document.getElementById('set-followup').value);
+    if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(followup) || followup < 0) {
+      toast('Enter valid non-negative numbers.', 'err');
+      return;
+    }
+    try {
+      await db.setSettings({ defaultFee: fee, followupWindowDays: followup });
+      setConfig({ defaultFee: fee, followupWindowDays: followup });
+      toast('Settings saved.', 'ok');
+      dlg.close('saved');
+      // Apply the new default fee to the Register form (unless a saved visit is
+      // loaded for editing, which must keep ITS fee).
+      if (Pages.register && Pages.register.reseedFee) Pages.register.reseedFee();
+      router.activateTab(router.currentTab, true);
+    } catch (err) {
+      toast('Save failed: ' + err.message, 'err');
+    }
+  });
+}
+
 // Everything that runs ONLY when a session exists. Split out of boot() so
 // login/create-admin can drive the same sequence after the gate clears.
 async function bootAuthed(router) {
@@ -149,6 +203,21 @@ async function bootAuthed(router) {
         ? { userId: u.id, userV: u.v != null ? u.v : 1 }
         : { userId: null, userV: null };
     });
+  }
+
+  // Load app settings into billing (defaultFee, followupWindowDays). Runs on
+  // every bootAuthed so a settings change (or re-login) is always reflected.
+  try {
+    const s = await db.getSettings();
+    setConfig(s);
+  } catch (e) {
+    console.warn('[tokenbook] settings load failed', e);
+  }
+
+  // Settings button (admin only) + modal wiring, once.
+  if (!bootAuthed._settingsWired) {
+    bootAuthed._settingsWired = true;
+    wireSettings(router);
   }
 
   if (navigator.storage && navigator.storage.persist) {
@@ -366,6 +435,7 @@ async function bootAuthed(router) {
       const r = await backup.restoreFromFolder({ onProgress: p.update });
       p.done();
       reportRestore(r, 'from ' + r.source);
+      await reloadBillingConfig();
       router.activateTab(router.currentTab, true);
     } catch (err) {
       p.done();
@@ -383,6 +453,7 @@ async function bootAuthed(router) {
       const r = await backup.restoreFromFileObject(f, { onProgress: p.update });
       p.done();
       reportRestore(r, 'from ' + r.filename);
+      await reloadBillingConfig();
       router.activateTab(router.currentTab, true);
     } catch (err) {
       p.done();

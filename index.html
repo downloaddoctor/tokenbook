@@ -37,6 +37,13 @@
     </nav>
     <div class="topbar-right">
       <span id="whoami" class="whoami"></span>
+      <button type="button" id="btn-settings" class="ghost-btn icon-btn" title="Settings" aria-label="Settings" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
       <button type="button" id="btn-logout" class="ghost-btn">Logout</button>
     </div>
   </header>
@@ -91,7 +98,7 @@
               </select>
             </label>
             <label class="span-3up">Fee
-              <input id="f-fee" name="fee" type="number" required min="0" step="1" value="300" />
+              <input id="f-fee" name="fee" type="number" required min="0" step="1" />
             </label>
             <p id="followup-note" class="hint span-4" hidden></p>
             <div class="form-row">
@@ -307,6 +314,29 @@
       <footer class="modal-actions">
         <button value="cancel" type="submit">Cancel</button>
         <button value="restore" type="submit" class="primary">Restore</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card" id="settings-form">
+      <header class="modal-head">
+        <div>
+          <h2>Settings</h2>
+          <p class="hint">Applies to everyone on this device.</p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <label class="auth-field">Default fee (₹)
+          <input id="set-fee" type="number" min="0" step="1" required />
+        </label>
+        <label class="auth-field">Follow-up window (days)
+          <input id="set-followup" type="number" min="0" step="1" required />
+        </label>
+      </div>
+      <footer class="modal-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="save" type="submit" class="primary">Save</button>
       </footer>
     </form>
   </dialog>

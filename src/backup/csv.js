@@ -81,7 +81,24 @@ export const SCHEMA_VISITS = {
   ],
 };
 
-export const SCHEMAS = [SCHEMA_USER, SCHEMA_PEOPLE, SCHEMA_VISITS];
+// App settings (singleton): one line per backup. Not revisioned — restore
+// applies the values, overwriting current settings.
+export const SCHEMA_SETTINGS = {
+  no: 3,
+  name: 'settings',
+  cols: ['defaultFee:num', 'followupWindowDays:int', 'revAt:epoch?'],
+};
+
+export const SCHEMAS = [SCHEMA_USER, SCHEMA_PEOPLE, SCHEMA_VISITS, SCHEMA_SETTINGS];
+
+// #head schema name -> op kind used by csvToLog/replayLog. One place to extend
+// when a new entity is logged (avoids a growing ternary).
+export const KIND_BY_SCHEMA = {
+  user: 'user',
+  people: 'person',
+  visits: 'visit',
+  settings: 'settings',
+};
 
 export function schemaByNo(no) {
   return SCHEMAS.find((s) => s.no === no) || null;
@@ -190,6 +207,11 @@ export function userRevToLogLine(u) {
   return rowForLine(SCHEMA_USER, u);
 }
 
+// Encode the settings singleton line.
+export function settingsToLogLine(s) {
+  return rowForLine(SCHEMA_SETTINGS, s || {});
+}
+
 // ---- decoding ----
 
 // Parse a full log file. Returns { ops, skippedRows }.
@@ -248,8 +270,7 @@ export function csvToLog(text) {
       });
       continue;
     }
-    const kind =
-      schema.name === 'people' ? 'person' : schema.name === 'user' ? 'user' : 'visit';
+    const kind = KIND_BY_SCHEMA[schema.name] || 'visit';
     const row = { kind, lineNo, raw };
     for (let i = 0; i < schema.cols.length; i++) {
       const { key, type } = schema.cols[i];

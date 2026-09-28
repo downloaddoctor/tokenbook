@@ -3,7 +3,7 @@
 // state (DOM bag + flags) lives in register.ctx.js. Router calls mount()/unmount().
 
 import db from '../../core/db.js';
-import { DEFAULT_FEE } from '../../core/billing.js';
+import { defaultFee } from '../../core/billing.js';
 import ps from '../../print/ps.js';
 import { bindOff } from '../dom.js';
 import { toast, clearToast } from '../toast.js';
@@ -18,7 +18,9 @@ import {
   lockFee,
   unlockFee,
   onFollowupChange,
+  reseedFee,
 } from './register.billing.js';
+export { reseedFee };
 import { hideSuggests, refreshNextToken, bindAutofill } from './register.autofill.js';
 
 // DOM bag. Same object as register.ctx's bag (synced in mount()).
@@ -162,7 +164,7 @@ export function startNewBill(nextToken = true, resetDate = true) {
   b.fFollowup.value = '0';
   b.fPayment.value = '0';
   unlockFee();
-  b.fFee.value = String(DEFAULT_FEE);
+  b.fFee.value = String(defaultFee());
   setFollowupNote('');
   b.fPatientId.value = '';
   if (resetDate && b.fDate) b.fDate.value = db.localDay();
@@ -409,6 +411,11 @@ export function mount() {
   });
   b.off = off;
   refreshNextToken();
+  // Seed the fee from settings when the form opens empty (the field has no
+  // hardcoded default in markup; startNewBill seeds it, but a plain mount
+  // — e.g. first load, or after a settings change — must seed it too).
+  if (b.fFee && b.fFee.value === '') b.fFee.value = String(defaultFee());
+  refreshPreview();
   b.fName.focus();
 }
 

@@ -32,6 +32,7 @@ import {
   personRevToLogLine,
   visitRevToLogLine,
   userRevToLogLine,
+  settingsToLogLine,
 } from '../backup/csv.js';
 
 const DB_NAME = 'tokenbook';
@@ -1036,6 +1037,7 @@ class DB {
       db.visitsProj,
       db.userRevs,
       db.users,
+      db.meta,
       async () => {
       await db.people.clear();
       await db.peopleProj.clear();
@@ -1064,6 +1066,7 @@ class DB {
           if (op.kind === 'person') await this._replayPerson(op);
           else if (op.kind === 'visit') await this._replayVisit(op);
           else if (op.kind === 'user') await this._replayUser(op);
+          else if (op.kind === 'settings') await this._replaySettings(op);
           else {
             skipped++;
             skippedRows.push({ lineNo: op.lineNo, reason: 'unknown kind', raw: op.raw || '' });
@@ -1081,6 +1084,21 @@ class DB {
       return { count: restored, skipped, skippedRows };
       }
     );
+  }
+
+  // Apply a settings singleton from the log. Missing/invalid fields are
+  // ignored (keeps current settings for those keys).
+  async _replaySettings(op) {
+    const patch = {};
+    if (op.defaultFee != null && Number.isFinite(Number(op.defaultFee))) {
+      patch.defaultFee = Number(op.defaultFee);
+    }
+    if (op.followupWindowDays != null && Number.isFinite(Number(op.followupWindowDays))) {
+      patch.followupWindowDays = Number(op.followupWindowDays);
+    }
+    if (!Object.keys(patch).length) throw new Error('settings: no valid fields');
+    const cur = await this.getSettings();
+    await this._db.meta.put({ key: 'settings', value: { ...cur, ...patch } });
   }
 
   async _replayPerson(op) {
@@ -1216,6 +1234,10 @@ class DB {
       lastKey = [last.rootId, last.v];
       if (rows.length < pageSize) break;
     }
+    // Settings singleton (schemaNo 3): one line, so a restore carries policy.
+    const settings = await this.getSettings();
+    onChunk(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }) + '\n');
+    count += 1;
     return { count };
   }
 
@@ -1228,7 +1250,12 @@ class DB {
     for (const u of users) lines.push(userRevToLogLine(u));
     for (const p of people) lines.push(personRevToLogLine(p));
     for (const v of visits) lines.push(visitRevToLogLine(v));
-    return { text: lines.join('\n') + '\n', count: users.length + people.length + visits.length };
+    const settings = await this.getSettings();
+    lines.push(settingsToLogLine({ ...settings, revAt: new Date().toISOString() }));
+    return {
+      text: lines.join('\n') + '\n',
+      count: users.length + people.length + visits.length + 1,
+    };
   }
 
   refundAmountFor(tier) {
@@ -1239,6 +1266,21 @@ class DB {
 
   setJournal(fn) {
     this._journal = typeof fn === 'function' ? fn : null;
+  }
+
+  // ---------- app settings (meta key 'settings') ----------
+  // Shape: { defaultFee:number, followupWindowDays:number }. meta is NOT
+  // revisioned, NOT journaled, NOT backed up (device-local prefs).
+  async getSettings() {
+    const row = await this._db.meta.get('settings');
+    return row && row.value ? row.value : {};
+  }
+
+  async setSettings(patch) {
+    const cur = await this.getSettings();
+    const next = { ...cur, ...(patch || {}) };
+    await this._db.meta.put({ key: 'settings', value: next });
+    return next;
   }
 
   // Wire the current-actor source. fn() -> { userId, userV } | null.
