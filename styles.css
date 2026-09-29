@@ -1163,16 +1163,6 @@ tbody tr:last-child td {
 
 /* responsive */
 @media (max-width: 860px) {
-  .topbar {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 8px 12px;
-  }
-  .tabs {
-    order: 3;
-    width: 100%;
-    overflow-x: auto;
-  }
   .split,
   .settings-grid {
     grid-template-columns: 1fr;
