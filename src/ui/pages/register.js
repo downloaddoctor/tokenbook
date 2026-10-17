@@ -318,11 +318,11 @@ async function submitBill() {
         mob: rec.mob,
         age: String(rec.age),
         gender: rec.gender || '',
-        weight: rec.weight != null ? String(rec.weight) : '',
+        weight: rec.weight != null ? String(rec.weight) + ' kg' : '',
         followup: rec.followup ? 'Yes' : 'No',
         payment: rec.payment ? 'UPI' : 'Cash',
         fee: rec.fee != null ? String(rec.fee) : '',
-        date: rec.date,
+        date: String(rec.date).split('-').reverse().join('/'),
         token: String(rec.token),
       },
       () => ps.openDesigner()
@@ -333,6 +333,32 @@ async function submitBill() {
     rec.token +
     (rec.followup ? ' (free follow-up)' : ' — ₹' + (rec.fee != null ? rec.fee : '')),
     'ok'
+  );
+}
+
+// Alt+P / Reprint button: print the saved visit currently loaded in the form.
+function reprintCurrent() {
+  const flags = getFlags();
+  if (!b || testHooks.suppressPrint) return;
+  if (flags.loadedVisitId == null) {
+    toast('No saved visit loaded — nothing to print.', 'err');
+    return;
+  }
+  const w = b.fWeight.value.trim();
+  ps.print(
+    {
+      name: b.fName.value.trim().toUpperCase(),
+      mob: b.fMob.value.trim(),
+      age: b.fAge.value.trim(),
+      gender: b.fGender.value,
+      weight: w ? w + ' kg' : '',
+      followup: b.fFollowup.value === '1' ? 'Yes' : 'No',
+      payment: b.fPayment.value === '1' ? 'UPI' : 'Cash',
+      fee: b.fFee.value.trim(),
+      date: b.fDate.value.split('-').reverse().join('/'),
+      token: b.fToken.value.trim(),
+    },
+    () => ps.openDesigner()
   );
 }
 
@@ -402,6 +428,15 @@ export function mount() {
     off.on(b.fFee, 'input', () => {
       if (b.fFee.dataset.locked === '1') unlockFee();
     });
+  // Alt+P: reprint the loaded visit.
+  off.on(document, 'keydown', (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== 'p' && e.key !== 'P') return;
+    if (isDialogOpen()) return;
+    e.preventDefault();
+    reprintCurrent();
+  });
+  off.on(document.getElementById('btn-reprint'), 'click', reprintCurrent);
   // Alt+S -> Save & Print (only while this page is mounted).
   off.on(window, 'keydown', (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
