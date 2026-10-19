@@ -59,7 +59,7 @@ function loadVisitIntoForm(visit, person) {
   b.fMob.value = visit.mob || '';
   b.fAge.value = String(visit.age);
   b.fGender.value = visit.gender || (person && person.gender) || 'M';
-  b.fWeight.value = String(visit.weight);
+  b.fWeight.value = visit.weight != null ? String(visit.weight) : '';
   b.fFollowup.value = visit.followup ? '1' : '0';
   b.fPayment.value = visit.payment ? '1' : '0';
   b.fFee.value = String(visit.fee);
@@ -206,10 +206,10 @@ async function submitBill() {
   const tokenRaw = b.fToken ? b.fToken.value.trim() : '';
   const missing = [];
   if (!name) missing.push('name');
-  if (!mob) missing.push('mobile');
-  if (!Number.isFinite(age)) missing.push('age');
+  if (!/^[0-9]{10}$/.test(mob)) missing.push('mobile (10 digits)');
+  if (b.fAge.value.trim() === '' || !Number.isFinite(age)) missing.push('age');
   if (!gender) missing.push('gender');
-  if (weightRaw === '' || !Number.isFinite(Number(weightRaw))) missing.push('weight');
+  if (weightRaw !== '' && !Number.isFinite(Number(weightRaw))) missing.push('weight');
   if (!dateRaw) missing.push('date');
   if (!tokenRaw || !Number.isInteger(Number(tokenRaw))) missing.push('token');
   if (feeRaw === '' || !Number.isFinite(Number(feeRaw))) missing.push('fee');
@@ -219,7 +219,7 @@ async function submitBill() {
   }
 
   const day = dateRaw || db.localDay();
-  const weight = Number(weightRaw);
+  const weight = weightRaw === '' ? null : Number(weightRaw);
   const followup = b.fFollowup && b.fFollowup.value === '1' ? 1 : 0;
   const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
   const fee = Number(feeRaw);

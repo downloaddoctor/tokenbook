@@ -57,24 +57,24 @@
       <div class="split">
         <div class="split-left">
           <form id="patient-form" autocomplete="off">
-            <label class="span-3up">Date
+            <label class="span-3up"><span>Date <b class="req" aria-hidden="true">*</b></span>
               <input id="f-date" name="date" type="date" required />
             </label>
-            <label class="span-3up">Token
+            <label class="span-3up"><span>Token <b class="req" aria-hidden="true">*</b></span>
               <input id="f-token" name="token" type="number" required min="1" />
             </label>
             <label class="span-3up">Patient ID
               <input id="f-patient-id" name="patient-id" type="number" min="1" placeholder="Auto" autocomplete="off" />
             </label>
-            <label class="autofill-field span-4">Name
+            <label class="autofill-field span-4"><span>Name <b class="req" aria-hidden="true">*</b></span>
               <input id="f-name" name="name" type="text" required maxlength="80" autocomplete="off" />
               <ul id="name-suggest" class="suggest-list" hidden></ul>
             </label>
-            <label class="autofill-field span-4">Mobile
-              <input id="f-mob" name="mob" type="tel" required inputmode="numeric" pattern="[0-9+\- ]{6,15}"
-                maxlength="15" autocomplete="off" />
+            <label class="autofill-field span-4"><span>Mobile <b class="req" aria-hidden="true">*</b></span>
+              <input id="f-mob" name="mob" type="tel" required inputmode="numeric" pattern="[0-9]{10}" maxlength="10"
+                minlength="10" title="10 digit mobile number" autocomplete="off" />
             </label>
-            <label class="span-3up">Age
+            <label class="span-3up"><span>Age <b class="req" aria-hidden="true">*</b></span>
               <input id="f-age" name="age" type="number" required min="0" max="150" />
             </label>
             <label class="span-3up">Gender
@@ -85,7 +85,7 @@
               </select>
             </label>
             <label class="span-3up">Weight (kg)
-              <input id="f-weight" name="weight" type="number" required min="0" max="400" step="0.1" />
+              <input id="f-weight" name="weight" type="number" min="0" max="400" step="0.1" />
             </label>
             <label class="span-3up">Follow up
               <select id="f-followup" name="followup" required>
@@ -99,7 +99,7 @@
                 <option value="1">UPI / Online</option>
               </select>
             </label>
-            <label class="span-3up">Fee
+            <label class="span-3up"><span>Fee <b class="req" aria-hidden="true">*</b></span>
               <input id="f-fee" name="fee" type="number" required min="0" step="1" />
             </label>
             <p id="followup-note" class="hint span-4" hidden></p>

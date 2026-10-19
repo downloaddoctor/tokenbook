@@ -220,5 +220,8 @@ export function bindAutofill(off) {
   // user having to leave the field. revalidateIdentity debounces internally and
   // yields to an in-flight submit.
   off.on(b.fName, 'input', revalidateIdentity);
-  off.on(b.fMob, 'input', revalidateIdentity);
+  off.on(b.fMob, 'input', () => {
+    b.fMob.value = b.fMob.value.replace(/\D/g, '').slice(0, 10);
+    revalidateIdentity();
+  });
 }
