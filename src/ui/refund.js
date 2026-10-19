@@ -67,10 +67,9 @@ export function openRefundDialog(visit) {
 
     const saveBtn = dlg.querySelector('#refund-save');
     const histBtn = dlg.querySelector('#refund-history');
-    // After picking a tier, jump focus to Save (Tab/Shift+Tab then reaches Cancel).
+    // Repaint the preview; keep focus on the select (Tab reaches Save).
     const onSelChange = () => {
       paintPreview();
-      if (saveBtn) saveBtn.focus();
     };
     // "History" opens the revision timeline for this visit's root.
     const onHistory = () => {
@@ -99,21 +98,22 @@ export function openRefundDialog(visit) {
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
     showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : null));
-    // Focus the tier select — it is the dialog's primary control. Esc still
-    // closes the dialog via the keydown handler above (and natively when the
-    // select's dropdown is not open).
+    // Enter on the tier select; Tab then flows through the footer as laid out.
     sel.focus();
   });
 }
 
-// Settle an unpaid visit: Cash / UPI. Resolves 'paycash' | 'payupi' | null.
+// Settle an unpaid visit: pick Cash / UPI and Save. Resolves '0' | '1' | null.
 export function openSettleDialog(visit) {
   return new Promise((resolve) => {
     const dlg = el('settle-dialog');
     const sub = el('settle-sub');
-    if (!dlg || !sub) return resolve(null);
+    const sel = el('settle-pay');
+    if (!dlg || !sub || !sel) return resolve(null);
     sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${visit.fee != null ? visit.fee : 0}`;
-    showModal(dlg).then((v) => resolve(v === 'paycash' || v === 'payupi' ? v : null));
+    sel.value = '0';
+    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : null));
+    sel.focus();
   });
 }
 
@@ -151,7 +151,7 @@ export async function openRefundFor(visit) {
   if (visit.payment === 2) {
     const choice = await openSettleDialog(visit);
     if (choice == null) return null;
-    await db.setVisitBilling(visit.rootId, { payment: choice === 'payupi' ? 1 : 0 });
+    await db.setVisitBilling(visit.rootId, { payment: Number(choice) === 1 ? 1 : 0 });
     return 'settled';
   }
 

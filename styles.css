@@ -792,8 +792,9 @@ tbody tr.row-unpaid.row-deleted td {
 }
 .modal-actions {
   display: flex;
+  flex-direction: row-reverse;
   gap: 8px;
-  justify-content: flex-end;
+  justify-content: flex-start;
   padding: 12px 20px 16px;
   border-top: 1px solid var(--line);
 }

@@ -245,9 +245,8 @@
         </div>
       </header>
       <footer class="modal-actions">
-        <span class="spacer"></span>
-        <button value="cancel" type="submit">Cancel</button>
         <button value="remove" type="submit" class="primary" id="remove-confirm">Remove</button>
+        <button value="cancel" type="submit">Cancel</button>
       </footer>
     </form>
   </dialog>
@@ -261,12 +260,15 @@
         </div>
       </header>
       <div class="modal-body">
-        <p class="hint">This visit is unpaid. Record how it was paid.</p>
+        <label>Payment method
+          <select id="settle-pay">
+            <option value="0">Cash</option>
+            <option value="1">UPI</option>
+          </select>
+        </label>
       </div>
       <footer class="modal-actions">
-        <button value="paycash" type="submit" class="primary">Cash</button>
-        <button value="payupi" type="submit" class="primary">UPI</button>
-        <span class="spacer"></span>
+        <button value="save" type="submit" class="primary" id="settle-save">Save</button>
         <button value="cancel" type="submit">Cancel</button>
       </footer>
     </form>
@@ -289,11 +291,10 @@
         <p class="hint" id="refund-preview"></p>
       </div>
       <footer class="modal-actions">
-        <button type="button" class="ghost-btn" id="refund-history">History</button>
-        <button value="remove" type="submit" class="ghost-btn" id="refund-remove" hidden>Remove token</button>
-        <span class="spacer"></span>
-        <button value="cancel" type="submit">Cancel</button>
         <button value="save" type="submit" class="primary" id="refund-save">Save</button>
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="remove" type="submit" class="ghost-btn" id="refund-remove" hidden>Remove token</button>
+        <button type="button" class="ghost-btn" id="refund-history">History</button>
       </footer>
     </form>
   </dialog>
@@ -309,9 +310,9 @@
       </header>
       <div class="modal-body" id="pat-id-confirm-body"></div>
       <footer class="modal-actions" id="pat-id-confirm-actions">
+        <button value="update" type="submit" class="primary">Update patient</button>
         <button value="cancel" type="submit">Cancel</button>
         <button value="new" type="submit">Use as new patient</button>
-        <button value="update" type="submit" class="primary">Update patient</button>
       </footer>
     </form>
   </dialog>
@@ -382,8 +383,8 @@
         <p class="hint" id="restore-confirm-info"></p>
       </div>
       <footer class="modal-actions">
-        <button value="cancel" type="submit">Cancel</button>
         <button value="restore" type="submit" class="primary">Restore</button>
+        <button value="cancel" type="submit">Cancel</button>
       </footer>
     </form>
   </dialog>
@@ -405,8 +406,8 @@
         </label>
       </div>
       <footer class="modal-actions">
-        <button value="cancel" type="submit">Cancel</button>
         <button value="save" type="submit" class="primary">Save</button>
+        <button value="cancel" type="submit">Cancel</button>
       </footer>
     </form>
   </dialog>
@@ -438,8 +439,8 @@
         <p id="user-new-err" class="auth-error" hidden></p>
       </div>
       <footer class="modal-actions">
-        <button value="cancel" type="submit">Cancel</button>
         <button value="create" type="submit" class="primary">Create</button>
+        <button value="cancel" type="submit">Cancel</button>
       </footer>
     </form>
   </dialog>
