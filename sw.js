@@ -11,7 +11,9 @@
    itself is NOT cached (the HEAD diff must see the fresh validator). */
 
 const SHELL_CACHE = 'tokenbook-shell';
-const RUNTIME_CACHE = 'tokenbook-runtime';
+// Bump the suffix to drop old runtime entries (activate deletes unlisted tokenbook-* caches).
+// Dexie is pinned to an exact version in its URL, so cache-first is safe.
+const RUNTIME_CACHE = 'tokenbook-runtime-v1';
 const META_CACHE = 'tokenbook-meta';
 
 const SENTINEL_URL = './version.txt';
@@ -86,6 +88,17 @@ function validatorOf(res) {
   return res.headers.get('ETag') || res.headers.get('Last-Modified') || null;
 }
 
+/* Sentinel fallback for servers that send no ETag/Last-Modified: GET the body
+   and use its text as the validator (version.txt is a tiny timestamp file). */
+async function sentinelBodyValidator() {
+  try {
+    const res = await fetch(SENTINEL_URL, { cache: 'no-store' });
+    return res && res.ok ? 'body:' + (await res.text()).trim() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 /* HEAD a URL and return its validator string (no body downloaded). */
 async function headValidator(url) {
   try {
@@ -96,8 +109,8 @@ async function headValidator(url) {
   }
 }
 
-function fetchSentinelValidator() {
-  return headValidator(SENTINEL_URL);
+async function fetchSentinelValidator() {
+  return (await headValidator(SENTINEL_URL)) || (await sentinelBodyValidator());
 }
 
 async function readStored(key) {
@@ -155,6 +168,7 @@ async function mapLimit(items, limit, fn) {
    Falls back to fetching when a validator is unavailable. */
 async function refreshChangedAssets() {
   const cache = await caches.open(SHELL_CACHE);
+  let failed = false;
   // Cap parallel HEAD/fetch at 6 (browser per-host limit) so the deploy refresh
   // doesn't queue dozens of requests at once.
   await mapLimit(SHELL_ASSETS, 6, async (url) => {
@@ -167,14 +181,16 @@ async function refreshChangedAssets() {
       // no-store: bypass the HTTP cache AND avoid a conditional 304 (which has
       // res.ok === false and would silently keep the stale copy). Forces a 200.
       const res = await fetch(url, { cache: 'no-store' });
+      if (!res || !res.ok) failed = true;
       if (res && res.ok) {
         await cache.put(url, res.clone());
         await writeStored(key, remote || validatorOf(res) || '');
       }
     } catch (err) {
-      /* Keep the cached copy on failure. */
+      failed = true; // keep the cached copy; retried on the next check
     }
   });
+  return !failed;
 }
 
 /* Record per-asset validators after a bulk precache (install time). */
@@ -199,7 +215,8 @@ self.addEventListener('install', (event) => {
         if (v) await writeStoredValidator(v);
         await recordAssetValidators();
       })
-      .then(() => self.skipWaiting())
+      // No skipWaiting here: a new worker waits until the page asks (see the
+      // 'tokenbook-skip-waiting' message), so a live session is never swapped mid-use.
   );
 });
 
@@ -231,13 +248,8 @@ async function handleNavigation(request) {
   const key = url.origin + url.pathname;
   const cached = await caches.match(key);
   if (cached) {
-    fetch(request)
-      .then((fresh) => {
-        if (fresh && fresh.ok) {
-          caches.open(SHELL_CACHE).then((cache) => cache.put(key, fresh));
-        }
-      })
-      .catch(() => { });
+    // No background refresh: the shell document changes only together with its
+    // assets inside refreshChangedAssets(), so HTML and JS/CSS never mismatch.
     return cached;
   }
 
@@ -274,7 +286,13 @@ async function checkForUpdates() {
   const stored = await readStoredValidator();
   if (stored === remote) return;
 
-  await refreshChangedAssets();
+  const ok = await refreshChangedAssets();
+  if (!ok) {
+    // Some asset failed: keep the old sentinel and drop the guard so the next
+    // navigation retries only the assets that are still stale.
+    await writeLastCheck('0');
+    return;
+  }
   await writeStoredValidator(remote);
 
   // Tell every open client so a reload happens even when clientId is empty
@@ -318,6 +336,10 @@ async function handleLocal(request) {
 self.addEventListener('message', (event) => {
   // Dev / manual-test: clear the stored sentinel + asset validators, then
   // run an update check immediately (bypassing the 30s guard).
+  if (event.data && event.data.type === 'tokenbook-skip-waiting') {
+    self.skipWaiting();
+    return;
+  }
   if (!event.data || event.data.type !== 'tokenbook-force-update') return;
   event.waitUntil(
     (async () => {

@@ -15,7 +15,7 @@ scripts/ — gen-shell-assets.sh (SW shell list) + check.sh (node --check every 
 ## ENTRY-POINTS
 index.html — app shell markup; loads pw.js + src/ui/app.js as modules
 src/ui/app.js — boot: openDb → auth gate → router; wires backup/restore/log/test/settings
-pw.js — PWA registration; ?dev=1 disables SW + nukes caches; ?forceUpdate=1 bypasses the reload guard + posts a force-update message to the SW (manual test of the update path)
+pw.js — PWA registration (precached in SHELL_ASSETS); shows non-destructive 'Update ready' banner (Reload/Later), SW waits until page posts 'tokenbook-skip-waiting'; sentinel falls back to GET body when no ETag/Last-Modified; scripts/check-version.sh = CI guard (cached asset changed → version.txt must change); ?dev=1 disables SW + nukes caches; ?forceUpdate=1 bypasses the reload guard + posts a force-update message to the SW (manual test of the update path)
 sw.js — service worker; SHELL_ASSETS auto-generated between markers; message handler 'tokenbook-force-update' clears the sentinel + re-checks (dev/manual test only)
 
 ## MODULES
