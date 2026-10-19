@@ -48,9 +48,16 @@ export function openRefundDialog(visit) {
     // removed but not refunded (tier select disabled, Save hidden).
     const rmBtn = dlg.querySelector('#refund-remove');
     if (rmBtn) rmBtn.hidden = visit.date !== db.localDay();
+    // Unpaid visits can be settled (Cash/UPI) today; refund waits until paid.
+    const unpaid = visit.payment === 2;
+    const canSettle = unpaid && visit.date === db.localDay();
+    for (const id of ['#refund-paycash', '#refund-payupi']) {
+      const bt = dlg.querySelector(id);
+      if (bt) bt.hidden = !canSettle;
+    }
     const svBtn = dlg.querySelector('#refund-save');
-    sel.disabled = !!visit.followup;
-    if (svBtn) svBtn.hidden = !!visit.followup;
+    sel.disabled = !!visit.followup || unpaid;
+    if (svBtn) svBtn.hidden = !!visit.followup || unpaid;
 
     const prev = el('refund-preview');
     const paintPreview = () => {
@@ -98,7 +105,7 @@ export function openRefundDialog(visit) {
     dlg.addEventListener('keydown', onKeydown);
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
-    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : null));
+    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : v === 'paycash' || v === 'payupi' ? v : null));
     // Focus the tier select — it is the dialog's primary control. Esc still
     // closes the dialog via the keydown handler above (and natively when the
     // select's dropdown is not open).
@@ -133,6 +140,11 @@ export async function openRefundFor(visit) {
   if (choice === 'remove') {
     // Today's tokens only; soft delete (revision kept, projection hidden).
     return removeVisitFlow(visit);
+  }
+  if (choice === 'paycash' || choice === 'payupi') {
+    // Settle an unpaid visit; writes a revision via setVisitBilling.
+    await db.setVisitBilling(visit.rootId, { payment: choice === 'payupi' ? 1 : 0 });
+    return 'settled';
   }
   if (visit.followup) return null; // free follow-ups have nothing to refund
   // v3: the visit's stable key is rootId (rows come from visitsProj).

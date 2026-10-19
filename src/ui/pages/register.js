@@ -48,6 +48,17 @@ function setMsg(text, kind) {
   toast(text, kind);
 }
 
+// View-only mode: a removed token can be looked at, never edited.
+function setViewOnly(on) {
+  const flags = getFlags();
+  flags.viewOnly = !!on;
+  const keys = ['fName', 'fMob', 'fAge', 'fGender', 'fWeight', 'fFollowup', 'fPayment', 'fFee', 'fPatientId'];
+  for (const k of keys) {
+    if (b[k]) b[k].disabled = !!on;
+  }
+  if (b.saveBtn) b.saveBtn.disabled = !!on;
+}
+
 // Fill the form from a visit (edit mode). Shared by onTokenChange and editVisit.
 function loadVisitIntoForm(visit, person) {
   if (!b) return;
@@ -61,7 +72,7 @@ function loadVisitIntoForm(visit, person) {
   b.fGender.value = visit.gender || (person && person.gender) || 'M';
   b.fWeight.value = visit.weight != null ? String(visit.weight) : '';
   b.fFollowup.value = visit.followup ? '1' : '0';
-  b.fPayment.value = visit.payment ? '1' : '0';
+  b.fPayment.value = String(visit.payment || 0);
   b.fFee.value = String(visit.fee);
   if (visit.followup) lockFee(visit.fee);
   else unlockFee();
@@ -72,6 +83,16 @@ function loadVisitIntoForm(visit, person) {
         ? String(visit.personId)
         : '';
   flags.loadedVisitId = visit.rootId;
+  const locked = !!visit.hidden || visit.date !== db.localDay();
+  setViewOnly(locked);
+  if (locked) {
+    toast(
+      visit.hidden
+        ? 'Token ' + visit.token + ' was removed — view only.'
+        : "Only today's tokens can be edited — view only.",
+      'err'
+    );
+  }
   refreshPreview();
 }
 
@@ -93,6 +114,10 @@ async function refundCurrentVisit() {
   }
   const found = await db.findVisitByDateToken(b.fDate.value.trim(), Number(b.fToken.value));
   const visit = found && found.visit;
+  if (visit && visit.hidden) {
+    toast('Removed token — view only.', 'err');
+    return;
+  }
   if (!visit || visit.rootId !== flags.loadedVisitId) {
     toast('Could not reload the visit.', 'err');
     return;
@@ -103,6 +128,12 @@ async function refundCurrentVisit() {
     if (choice === 'removed') {
       toast('Token removed.', 'ok');
       startNewBill();
+      return;
+    }
+    if (choice === 'settled') {
+      toast('Payment recorded.', 'ok');
+      const paid = await db.findVisitByDateToken(visit.date, visit.token);
+      if (paid) loadVisitIntoForm(paid.visit, paid.person);
       return;
     }
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
@@ -117,6 +148,11 @@ async function refundCurrentVisit() {
 // new date. Otherwise leave the typed token alone.
 async function onDateChange() {
   const flags = getFlags();
+  // Leaving a locked (removed / past) visit by changing the date starts a fresh bill.
+  if (flags.viewOnly) {
+    startNewBill(true, false);
+    return;
+  }
   const patId = Number(b.fPatientId.value.trim()) || null;
   if (patId) applyFollowupRule(patId);
   if (flags.tokenEdited) return;
@@ -171,6 +207,7 @@ export function startNewBill(nextToken = true, resetDate = true) {
   if (resetDate && b.fDate) b.fDate.value = db.localDay();
   flags.tokenEdited = false;
   flags.loadedVisitId = null;
+  setViewOnly(false);
   hideSuggests();
   setMsg('');
   b.fName.focus();
@@ -196,6 +233,10 @@ async function onSubmit(e) {
 // `submitting` here, or the outer call would make this a no-op.
 async function submitBill() {
   const flags = getFlags();
+  if (flags.viewOnly) {
+    setMsg('Removed token — view only.', 'err');
+    return;
+  }
   setMsg('');
   const name = b.fName.value.trim().toUpperCase();
   const mob = b.fMob.value.trim();
@@ -222,7 +263,7 @@ async function submitBill() {
   const day = dateRaw || db.localDay();
   const weight = weightRaw === '' ? null : Number(weightRaw);
   const followup = b.fFollowup && b.fFollowup.value === '1' ? 1 : 0;
-  const payment = b.fPayment && b.fPayment.value === '1' ? 1 : 0;
+  const payment = b.fPayment ? Number(b.fPayment.value) || 0 : 0;
   const fee = Number(feeRaw);
 
   // Patient ID: a typed id that matches no patient is DISCARDED (this becomes
@@ -305,7 +346,7 @@ async function submitBill() {
   hideSuggests();
 
   if (b.fFollowup) b.fFollowup.value = rec.followup ? '1' : '0';
-  if (b.fPayment) b.fPayment.value = rec.payment ? '1' : '0';
+  if (b.fPayment) b.fPayment.value = String(rec.payment || 0);
   if (b.fFee && rec.fee != null) {
     b.fFee.value = String(rec.fee);
     if (rec.followup) lockFee(rec.fee);
@@ -321,7 +362,7 @@ async function submitBill() {
         gender: rec.gender || '',
         weight: rec.weight != null ? String(rec.weight) + ' kg' : '',
         followup: rec.followup ? 'Yes' : 'No',
-        payment: rec.payment ? 'UPI' : 'Cash',
+        payment: rec.payment === 2 ? 'Unpaid' : rec.payment ? 'UPI' : 'Cash',
         fee: rec.fee != null ? String(rec.fee) : '',
         date: String(rec.date).split('-').reverse().join('/'),
         token: String(rec.token),
@@ -354,7 +395,7 @@ function reprintCurrent() {
       gender: b.fGender.value,
       weight: w ? w + ' kg' : '',
       followup: b.fFollowup.value === '1' ? 'Yes' : 'No',
-      payment: b.fPayment.value === '1' ? 'UPI' : 'Cash',
+      payment: b.fPayment.value === '2' ? 'Unpaid' : b.fPayment.value === '1' ? 'UPI' : 'Cash',
       fee: b.fFee.value.trim(),
       date: b.fDate.value.split('-').reverse().join('/'),
       token: b.fToken.value.trim(),

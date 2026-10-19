@@ -107,7 +107,7 @@ function renderItem(v) {
     'Age ' + v.age,
     v.gender || '—',
     v.weight != null ? v.weight + ' kg' : '—',
-    v.payment ? 'UPI' : 'Cash',
+    v.payment === 2 ? 'Unpaid' : v.payment ? 'UPI' : 'Cash',
   ];
   if (v.refundTier) bits.push('Refund ₹' + db.refundAmountFor(v.refundTier));
   meta.textContent = bits.join(' · ');

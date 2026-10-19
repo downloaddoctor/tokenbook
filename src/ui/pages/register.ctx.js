@@ -9,6 +9,7 @@ const flags = {
   submitting: false,
   tokenEdited: false,
   loadedVisitId: null,
+  viewOnly: false,
 };
 
 // Cross-module function registry. Typed: each hook has a fixed name and

@@ -682,6 +682,15 @@ tbody tr.row-deleted td {
   opacity: 0.6;
 }
 
+/* unpaid visit (payment=2) — settles later */
+tbody tr.row-unpaid td {
+  color: #b45309;
+}
+tbody tr.row-unpaid.row-deleted td {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .row-click {
   cursor: pointer;
 }

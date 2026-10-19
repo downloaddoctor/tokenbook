@@ -129,7 +129,7 @@ export const restoreMethods = {
         token: op.token,
         weight: op.weight != null ? op.weight : null,
         followup: op.followup ? 1 : 0,
-        payment: op.payment ? 1 : 0,
+        payment: Number(op.payment) === 2 ? 2 : op.payment ? 1 : 0,
         fee: op.fee != null ? Number(op.fee) : 0,
         refundTier: normalizeRefundTier(op.refundTier),
         hidden: op.hidden ? 1 : 0,

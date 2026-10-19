@@ -130,7 +130,7 @@ export async function seed({
         date,
         age: p.age,
         weight,
-        payment: randInt(2),
+        payment: randInt(3),
       });
     }
   }

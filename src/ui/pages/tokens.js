@@ -57,12 +57,13 @@ async function refresh() {
 
   // All modes are paged now — a busy day can be hundreds of rows and
   // materializing the whole day just to render 50 is wasteful.
-  const total = from ? await db.countByDateRange(from, to, s.showDeleted) : 0;
+  const total = from ? await db.countByDateRange(from, to, s.showDeleted, s.unpaidOnly) : 0;
   const rows = from
     ? await db.listByDateRangePage(from, to, {
       offset: s.offset,
       limit: PAGE,
       includeHidden: s.showDeleted,
+      unpaidOnly: s.unpaidOnly,
     })
     : [];
   const pages = Math.max(1, Math.ceil(total / PAGE));
@@ -80,6 +81,7 @@ async function refresh() {
   let freeCount = 0;
   let cashTotal = 0;
   let upiTotal = 0;
+  let pendingTotal = 0;
   // Aggregate over the WHOLE range (not just the rendered page). Every mode
   // is paged now, so totals always come from totalsByDateRange.
   let summaryTotal = total;
@@ -91,6 +93,7 @@ async function refresh() {
     freeCount = t.freeCount;
     cashTotal = t.cashTotal;
     upiTotal = t.upiTotal;
+    pendingTotal = t.pendingTotal;
     summaryTotal = t.total;
   }
 
@@ -100,7 +103,7 @@ async function refresh() {
   for (const r of rows) {
     rowCache.set(r.rootId, r);
     const tr = document.createElement('tr');
-    tr.className = r.hidden ? 'row-click row-deleted' : 'row-click';
+    tr.className = r.hidden ? 'row-click row-deleted' : r.payment === 2 ? 'row-click row-unpaid' : 'row-click';
     tr.dataset.id = String(r.rootId);
     // a11y: row is an interactive control. tabindex is managed by listNav.
     tr.setAttribute('role', 'button');
@@ -118,7 +121,7 @@ async function refresh() {
       r.gender || '',
       r.weight != null ? r.weight : '',
       r.followup ? 'Yes' : 'No',
-      r.payment ? 'UPI' : 'Cash',
+      r.payment === 2 ? 'Unpaid' : r.payment ? 'UPI' : 'Cash',
       r.fee != null ? r.fee : '',
       refundLabel(r.refundTier),
       new Date(r.updatedAt || r.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -170,6 +173,7 @@ async function refresh() {
           stat('Net', '₹' + collected, 'accent'),
           stat('Cash', '₹' + cashTotal, 'ok'),
           stat('UPI', '₹' + upiTotal, 'warn'),
+          stat('Pending', '₹' + pendingTotal, pendingTotal > 0 ? 'err' : ''),
         ),
       );
       s.summary.hidden = s.summaryHidden === true;
@@ -208,6 +212,11 @@ async function activateRow(visitId) {
       refresh();
       return;
     }
+    if (choice === 'settled') {
+      toast('Payment recorded.', 'ok');
+      refresh();
+      return;
+    }
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
     refresh();
   } catch (err) {
@@ -233,6 +242,8 @@ export function mount() {
     summaryHidden: true,
     deletedBtn: document.getElementById('tokens-deleted-btn'),
     showDeleted: false,
+    unpaidBtn: document.getElementById('tokens-unpaid-btn'),
+    unpaidOnly: false,
     pager: document.getElementById('tokens-pager'),
     prevBtn: document.getElementById('tokens-pg-prev'),
     nextBtn: document.getElementById('tokens-pg-next'),
@@ -273,6 +284,14 @@ export function mount() {
     s.offset = 0;
     refresh();
   });
+  if (s.unpaidBtn) {
+    off.on(s.unpaidBtn, 'click', () => {
+      s.unpaidOnly = !s.unpaidOnly;
+      s.unpaidBtn.classList.toggle('active', s.unpaidOnly);
+      s.offset = 0;
+      refresh();
+    });
+  }
   if (s.summaryBtn) s.summaryBtn.textContent = s.summaryHidden ? 'Show summary' : 'Hide summary';
   off.on(s.prevBtn, 'click', () => {
     s.offset = Math.max(0, s.offset - PAGE);

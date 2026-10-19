@@ -90,7 +90,7 @@ const LABELS = {
 function fmt(key, val, entity) {
   if (key === 'hidden') return val ? 'hidden' : 'active';
   if (key === 'followup') return val ? 'free follow-up' : 'paid';
-  if (key === 'payment') return val ? 'UPI' : 'Cash';
+  if (key === 'payment') return val === 2 ? 'Unpaid' : val ? 'UPI' : 'Cash';
   if (key === 'refundTier') return val ? '₹' + Number(val) * 100 : 'none';
   if (key === 'fee') return '₹' + (val == null ? 0 : val);
   if (key === 'personId') return '#' + val;

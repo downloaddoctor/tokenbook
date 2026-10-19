@@ -198,7 +198,8 @@ function rowForLine(schema, row) {
     if (type === 'num') v = v == null || v === '' ? '' : Number(v);
     if (key === 'refundTier') v = normalizeRefundTier(v);
     if (key === 'hidden') v = v ? 1 : 0;
-    if (key === 'followup' || key === 'payment') v = v ? 1 : 0;
+    if (key === 'followup') v = v ? 1 : 0;
+    if (key === 'payment') v = v === 2 || v === '2' ? 2 : v ? 1 : 0;
     values.push(csvEscape(encVal(type, v)));
   }
   return schema.no + CSV_DELIM + values.join(CSV_DELIM);

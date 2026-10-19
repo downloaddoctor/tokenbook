@@ -385,7 +385,7 @@ class DB {
       token: cur.token,
       weight: cur.weight != null ? cur.weight : null,
       followup: cur.followup ? 1 : 0,
-      payment: cur.payment ? 1 : 0,
+      payment: cur.payment === 2 ? 2 : cur.payment ? 1 : 0,
       fee: Number(cur.fee) || 0,
       refundTier: normalizeRefundTier(cur.refundTier),
       hidden: cur.hidden ? 1 : 0,
@@ -528,12 +528,16 @@ class DB {
   }
 
   // Count of live visits in [from, to] (inclusive) — for pager math.
-  async countByDateRange(from, to, includeHidden = false) {
+  async countByDateRange(from, to, includeHidden = false, unpaidOnly = false) {
     const rows = await this._db.visitsProj
       .where('[date+token]')
       .between([from, Dexie.minKey], [to, Dexie.maxKey])
       .toArray();
-    return rows.reduce((n, r) => n + (r.hidden && !includeHidden ? 0 : 1), 0);
+    return rows.reduce((n, r) => {
+      if (r.hidden && !includeHidden) return n;
+      if (unpaidOnly && r.payment !== 2) return n;
+      return n + 1;
+    }, 0);
   }
 
   // Aggregate money/visit totals for [from, to] without materializing identity
@@ -550,6 +554,7 @@ class DB {
     let freeCount = 0;
     let cashTotal = 0;
     let upiTotal = 0;
+    let pendingTotal = 0;
     for (const r of live) {
       const fee = Number(r.fee) || 0;
       const refund = refundAmountFor(r.refundTier);
@@ -557,24 +562,27 @@ class DB {
       if (r.followup) freeCount++;
       else {
         paidCount++;
-        collected += net;
         refunded += refund;
-        if (r.payment) upiTotal += net;
-        else cashTotal += net;
+        if (r.payment === 2) pendingTotal += net;
+        else {
+          collected += net;
+          if (r.payment) upiTotal += net;
+          else cashTotal += net;
+        }
       }
     }
-    return { total: live.length, collected, refunded, paidCount, freeCount, cashTotal, upiTotal };
+    return { total: live.length, collected, refunded, paidCount, freeCount, cashTotal, upiTotal, pendingTotal };
   }
 
   // Paged range read in issue order, identity-joined. For long ranges (a
   // month can be hundreds of rows) so the Tokens table stays responsive.
-  async listByDateRangePage(from, to, { offset = 0, limit = 50, includeHidden = false } = {}) {
+  async listByDateRangePage(from, to, { offset = 0, limit = 50, includeHidden = false, unpaidOnly = false } = {}) {
     const rows = await this._db.visitsProj
       .where('[date+token]')
       .between([from, Dexie.minKey], [to, Dexie.maxKey])
       .toArray();
     const live = rows
-      .filter((r) => includeHidden || !r.hidden)
+      .filter((r) => (includeHidden || !r.hidden) && (!unpaidOnly || r.payment === 2))
       .sort((a, b) => a.date.localeCompare(b.date) || a.token - b.token)
       .slice(offset, offset + limit);
     const ids = Array.from(new Set(live.map((r) => r.personId).filter((x) => x != null)));
@@ -765,7 +773,7 @@ class DB {
     gender = gender == null ? null : String(gender).trim() || null;
     weight = weight == null || weight === '' ? null : Number(weight);
     if (weight != null && !Number.isFinite(weight)) weight = null;
-    payment = payment === 0 || payment === 1 ? payment : payment === '1' ? 1 : 0;
+    payment = payment === 0 || payment === 1 || payment === 2 ? payment : payment === '1' ? 1 : payment === '2' ? 2 : 0;
     followup = followup === 0 || followup === 1 ? followup : followup == null ? null : Number(followup) ? 1 : 0;
     refundTier = normalizeRefundTier(refundTier);
     token = Number(token);
@@ -872,7 +880,7 @@ class DB {
         currentRev.token === token &&
         (currentRev.weight ?? null) === (weight ?? null) &&
         (currentRev.followup ? 1 : 0) === (followup ? 1 : 0) &&
-        (currentRev.payment ? 1 : 0) === (payment ? 1 : 0) &&
+        (currentRev.payment || 0) === payment &&
         Number(currentRev.fee) === Number(fee) &&
         normalizeRefundTier(currentRev.refundTier) === normalizeRefundTier(refundTier) &&
         (currentRev.hidden ? 1 : 0) === 0
@@ -924,7 +932,7 @@ class DB {
       const cur = await this._currentVisit(rootId);
       if (!cur) throw new Error('Visit not found: ' + rootId);
       const nextFollowup = followup != null ? (followup ? 1 : 0) : cur.followup;
-      const nextPayment = payment != null ? (payment ? 1 : 0) : cur.payment;
+      const nextPayment = payment != null ? (Number(payment) === 2 ? 2 : Number(payment) ? 1 : 0) : cur.payment;
       const nextFee = fee != null ? Number(fee) : cur.fee;
       // No-op: nothing changed -> do not append a revision.
       if (

@@ -97,6 +97,7 @@
               <select id="f-payment" name="payment" required>
                 <option value="0">Offline / Cash</option>
                 <option value="1">UPI / Online</option>
+                <option value="2">Unpaid — pays later</option>
               </select>
             </label>
             <label class="span-3up"><span>Fee <b class="req" aria-hidden="true">*</b></span>
@@ -146,6 +147,9 @@
         </button>
         <button id="tokens-deleted-btn" type="button" class="ghost-btn" title="Show removed tokens mixed in the list">
           Show deleted
+        </button>
+        <button id="tokens-unpaid-btn" type="button" class="ghost-btn" title="Show only unpaid (pays later) visits">
+          Unpaid only
         </button>
       </div>
       <div id="tokens-summary" class="summary-grid" hidden></div>
@@ -267,6 +271,8 @@
       <footer class="modal-actions">
         <button type="button" class="ghost-btn" id="refund-history">History</button>
         <button value="remove" type="submit" class="ghost-btn" id="refund-remove" hidden>Remove token</button>
+        <button value="paycash" type="submit" class="ghost-btn" id="refund-paycash" hidden>Paid: Cash</button>
+        <button value="payupi" type="submit" class="ghost-btn" id="refund-payupi" hidden>Paid: UPI</button>
         <span class="spacer"></span>
         <button value="cancel" type="submit">Cancel</button>
         <button value="save" type="submit" class="primary" id="refund-save">Save</button>
