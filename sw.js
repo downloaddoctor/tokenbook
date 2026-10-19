@@ -11,9 +11,9 @@
    itself is NOT cached (the HEAD diff must see the fresh validator). */
 
 const SHELL_CACHE = 'tokenbook-shell';
-// Bump the suffix to drop old runtime entries (activate deletes unlisted tokenbook-* caches).
+// Never rename: activate deletes unlisted tokenbook-* caches, forcing a refetch of Dexie/fonts.
 // Dexie is pinned to an exact version in its URL, so cache-first is safe.
-const RUNTIME_CACHE = 'tokenbook-runtime-v1';
+const RUNTIME_CACHE = 'tokenbook-runtime';
 const META_CACHE = 'tokenbook-meta';
 
 const SENTINEL_URL = './version.txt';
@@ -203,20 +203,48 @@ async function recordAssetValidators() {
   );
 }
 
+const DEXIE_URL = 'https://unpkg.com/dexie@4.0.11/dist/modern/dexie.mjs';
+const FONTS_CSS_URL =
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap';
+
+/* Cache the Google Fonts stylesheet and every font file it references, so the
+   app is fully offline after the first install. Must match the <link> in index.html. */
+async function precacheFonts(cache) {
+  const res = await fetch(FONTS_CSS_URL);
+  if (!res || !res.ok) return;
+  const css = await res.clone().text();
+  await cache.put(FONTS_CSS_URL, res);
+  const urls = Array.from(new Set(css.match(/https:\/\/fonts\.gstatic\.com\/[^)'"\s]+/g) || []));
+  await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const f = await fetch(u);
+        if (f && f.ok) await cache.put(u, f);
+      } catch (_) { }
+    })
+  );
+}
+
 /* ---------- Lifecycle ---------- */
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS.map((u) => new Request(u, { cache: 'no-store' }))))
+      .then((cache) => cache.addAll(SHELL_ASSETS.map((u) => new Request(u, { cache: 'no-cache' }))))
       .then(async () => {
         const v = await fetchSentinelValidator();
         if (v) await writeStoredValidator(v);
         await recordAssetValidators();
+        // Best-effort: precache pinned Dexie + Inter fonts so the first offline boot works.
+        try {
+          const rc = await caches.open(RUNTIME_CACHE);
+          await precacheFonts(rc).catch(() => { });
+          await rc.add(DEXIE_URL);
+        } catch (_) { }
       })
-      // No skipWaiting here: a new worker waits until the page asks (see the
-      // 'tokenbook-skip-waiting' message), so a live session is never swapped mid-use.
+    // No skipWaiting here: a new worker waits until the page asks (see the
+    // 'tokenbook-skip-waiting' message), so a live session is never swapped mid-use.
   );
 });
 
@@ -366,5 +394,9 @@ self.addEventListener('fetch', (event) => {
 
   if (url.origin === self.location.origin) {
     event.respondWith(handleLocal(request));
+    return;
+  }
+  if (isRuntimeRequest(url)) {
+    event.respondWith(handleRuntime(request));
   }
 });
