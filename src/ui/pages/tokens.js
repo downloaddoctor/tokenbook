@@ -222,7 +222,7 @@ export function mount() {
     tbody: document.querySelector('#tokens-table tbody'),
     empty: document.getElementById('tokens-empty'),
     summary: document.getElementById('tokens-summary'),
-    summaryHidden: false,
+    summaryHidden: true,
     pager: document.getElementById('tokens-pager'),
     prevBtn: document.getElementById('tokens-pg-prev'),
     nextBtn: document.getElementById('tokens-pg-next'),
@@ -257,7 +257,7 @@ export function mount() {
     reload();
   });
   off.on(s.summaryBtn, 'click', toggleSummary);
-  if (s.summaryBtn) s.summaryBtn.textContent = 'Hide summary';
+  if (s.summaryBtn) s.summaryBtn.textContent = s.summaryHidden ? 'Show summary' : 'Hide summary';
   off.on(s.prevBtn, 'click', () => {
     s.offset = Math.max(0, s.offset - PAGE);
     refresh();
