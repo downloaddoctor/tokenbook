@@ -698,7 +698,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
       rep.check('sw: controller present', true, controller.state);
       const got = await new Promise((resolve) => {
         const onMsg = (ev) => {
-          if (ev.data && ev.data.type === 'tokenbook-update-ready') {
+          if (ev.data && ev.data.type === 'tokenbook-update-available') {
             navigator.serviceWorker.removeEventListener('message', onMsg);
             resolve(true);
           }
@@ -712,7 +712,7 @@ export async function runSelfTest({ onProgress, confirmReplay, router } = {}) {
           resolve(false);
         }, 4000);
       });
-      rep.check('sw: force-update round-trip', got, got ? '' : 'no update-ready within 4s');
+      rep.check('sw: force-update round-trip', got, got ? '' : 'no update-available within 4s');
     }
   } catch (e) {
     rep.check('sw: stage completed', false, e && e.message ? e.message : String(e));

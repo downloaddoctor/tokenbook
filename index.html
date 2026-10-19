@@ -450,6 +450,7 @@
       <span id="ps-status" class="status">paperstamp: idle</span>
       <span id="backup-status" class="status">backup: idle</span>
       <span id="work-status" class="status work" hidden></span>
+      <button id="update-status" class="status" type="button" hidden>update available</button>
     </div>
     <div class="statusbar-right">
       <input id="file-restore" type="file" accept=".csv,text/csv" hidden />
@@ -461,6 +462,25 @@
       <button id="btn-test" type="button" title="Self-test: add / update / edit / refund + log">Test</button>
     </div>
   </footer>
+
+  <dialog id="update-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Update available</h2>
+          <p class="hint">A new version of TokenBook is available.</p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <p>Apply the update now? The app will reload once. Your data is not affected.</p>
+        <p class="hint" id="update-msg" hidden></p>
+      </div>
+      <footer class="modal-actions">
+        <button value="now" type="submit" class="primary">Update now</button>
+        <button value="later" type="submit">Later</button>
+      </footer>
+    </form>
+  </dialog>
 
   <dialog id="log-dialog" class="modal-dialog">
     <form method="dialog" class="modal-card">

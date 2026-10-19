@@ -253,6 +253,24 @@ button.primary .kbd {
   background: var(--hover);
   border-color: var(--line);
 }
+#update-status.status {
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+#update-status.status::before {
+  background: var(--accent);
+}
+#update-status.status:hover {
+  background: none;
+  filter: brightness(1.2);
+}
 
 main {
   /* The one scroll container: a fixed pane between the topbar and statusbar.

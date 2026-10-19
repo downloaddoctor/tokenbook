@@ -516,6 +516,31 @@ function showTabBlockedScreen(onRetry) {
   const btnTest = document.getElementById('btn-test');
   const fileRestore = document.getElementById('file-restore');
 
+  // Update-consent flow (same as labtestbook): pw.js shows #update-status when the
+  // SW detects a new deploy; clicking it (or 'tb:update-prompt') opens this dialog.
+  // Nothing is applied until the user accepts. Back up first: folder if set, else CSV download.
+  const openUpdate = async () => {
+    const dlg = document.getElementById('update-dialog');
+    if (!dlg || dlg.open) return;
+    const msg = document.getElementById('update-msg');
+    if (msg) msg.hidden = true;
+    if ((await showModal(dlg)) !== 'now') return;
+    try {
+      if (backup.state().hasFolder) await backup.pickOrBackup();
+      else await backup.downloadCsv();
+    } catch (_) {
+      // Folder backup failed: fall back to a CSV download. Never block the update.
+      try { await backup.downloadCsv(); } catch (__) { /* best-effort */ }
+    }
+    if (window.__tbUpdate && window.__tbUpdate.applyNow) window.__tbUpdate.applyNow();
+    toast('Updating…', 'warn');
+  };
+  document.getElementById('update-status')?.addEventListener('click', openUpdate);
+  window.addEventListener('tb:update-prompt', openUpdate);
+  window.addEventListener('tb:update-failed', () =>
+    toast('Update failed (network?). Try again from the status bar.', 'err')
+  );
+
   const router = createRouter({
     pages: Pages,
     // Admin-only routes (printLayout, users) refuse to mount for non-admins,
