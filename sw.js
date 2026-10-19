@@ -332,8 +332,18 @@ async function notifyClients(type) {
 /* User accepted the prompt: refetch changed assets, then record the sentinel.
    If any asset fails the sentinel stays pending so the user can retry. */
 async function applyUpdate() {
-  const pending = await readStored(PENDING_KEY);
-  if (!pending) return false;
+  let pending = await readStored(PENDING_KEY);
+  if (!pending) {
+    // The page may still show 'update available' after the SW lost its marker
+    // (e.g. a new worker install recorded the sentinel). Re-check instead of doing nothing.
+    const remote = await fetchSentinelValidator();
+    const stored = await readStoredValidator();
+    if (remote && remote !== stored) pending = remote;
+    else {
+      await notifyClients('tokenbook-update-none');
+      return false;
+    }
+  }
   const ok = await refreshChangedAssets();
   if (!ok) {
     await notifyClients('tokenbook-update-failed');
@@ -369,17 +379,37 @@ async function handleRuntime(request) {
 async function handleLocal(request) {
   const cached = await caches.match(request);
   if (cached) return cached;
-  const fresh = await fetch(request);
-  if (fresh && fresh.ok) {
-    const cache = await caches.open(RUNTIME_CACHE);
-    cache.put(request, fresh.clone());
+  const sentinel = new URL(request.url).pathname.endsWith('/version.txt');
+  const alt = sentinel ? null : await caches.match(request, { ignoreSearch: true });
+  if (alt) return alt;
+  try {
+    const fresh = await fetch(request);
+    if (!sentinel && fresh && fresh.ok) {
+      const cache = await caches.open(RUNTIME_CACHE);
+      cache.put(request, fresh.clone());
+    }
+    return fresh;
+  } catch (err) {
+    // Offline and not cached: answer cleanly instead of an uncaught rejection.
+    return new Response('Offline', { status: 503, statusText: 'Offline' });
   }
-  return fresh;
 }
 
 self.addEventListener('message', (event) => {
   // Dev / manual-test: clear the stored sentinel + asset validators, then
   // run an update check immediately (bypassing the 30s guard).
+  if (event.data && event.data.type === 'tokenbook-check-update') {
+    event.waitUntil(
+      (async () => {
+        const remote = await fetchSentinelValidator();
+        if (!remote) return; // offline: keep the indicator as is
+        await writeLastCheck('0');
+        await checkForUpdates();
+        if (!(await readStored(PENDING_KEY))) await notifyClients('tokenbook-update-none');
+      })()
+    );
+    return;
+  }
   if (event.data && event.data.type === 'tokenbook-apply-update') {
     event.waitUntil(applyUpdate());
     return;

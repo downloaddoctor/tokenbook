@@ -537,6 +537,7 @@ function showTabBlockedScreen(onRetry) {
   };
   document.getElementById('update-status')?.addEventListener('click', openUpdate);
   window.addEventListener('tb:update-prompt', openUpdate);
+  window.addEventListener('tb:update-none', () => toast('Already up to date.', 'ok'));
   window.addEventListener('tb:update-failed', () =>
     toast('Update failed (network?). Try again from the status bar.', 'err')
   );

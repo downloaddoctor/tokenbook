@@ -60,8 +60,10 @@
     var c = navigator.serviceWorker.controller;
     if (c) fn(c);
     else
-      navigator.serviceWorker.ready.then(function () {
-        if (navigator.serviceWorker.controller) fn(navigator.serviceWorker.controller);
+      navigator.serviceWorker.ready.then(function (reg) {
+        // A hard reload (Ctrl+Shift+R) leaves the page uncontrolled: fall back to the active worker.
+        var w = navigator.serviceWorker.controller || (reg && reg.active);
+        if (w) fn(w);
       });
   }
 
@@ -75,7 +77,13 @@
     navigator.serviceWorker
       .register('./sw.js')
       .then(function () {
-        if (readPending()) showIndicator();
+        if (readPending()) {
+          showIndicator();
+          // Verify the stale flag against the SW; it clears itself when nothing is pending.
+          withController(function (c) {
+            c.postMessage({ type: 'tokenbook-check-update' });
+          });
+        }
         if (!FORCE_UPDATE) return;
         withController(function (c) {
           c.postMessage({ type: 'tokenbook-force-update' });
@@ -94,6 +102,12 @@
     if (d.type === 'tokenbook-update-available') {
       setPending(true);
       showIndicator();
+      return;
+    }
+    if (d.type === 'tokenbook-update-none') {
+      setPending(false);
+      hideIndicator();
+      window.dispatchEvent(new CustomEvent('tb:update-none'));
       return;
     }
     if (d.type === 'tokenbook-update-failed') {
