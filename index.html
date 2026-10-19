@@ -144,6 +144,9 @@
           title="Hide/show the totals panel">
           Show summary
         </button>
+        <button id="tokens-deleted-btn" type="button" class="ghost-btn" title="Show removed tokens mixed in the list">
+          Show deleted
+        </button>
       </div>
       <div id="tokens-summary" class="summary-grid" hidden></div>
       <table id="tokens-table">
@@ -171,7 +174,7 @@
         <span id="tokens-pg-info" class="hint"></span>
         <button id="tokens-pg-next" type="button">Next</button>
       </div>
-      <p class="hint">Click a row to set or change the refund.</p>
+      <p class="hint">Click a row to set a refund or remove today's token.</p>
     </section>
 
     <section class="page" id="page-patients" hidden>
@@ -229,6 +232,22 @@
   </main>
 
 
+  <dialog id="remove-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Remove token</h2>
+          <p class="hint" id="remove-sub"></p>
+        </div>
+      </header>
+      <footer class="modal-actions">
+        <span class="spacer"></span>
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="remove" type="submit" class="primary" id="remove-confirm">Remove</button>
+      </footer>
+    </form>
+  </dialog>
+
   <dialog id="refund-dialog" class="modal-dialog">
     <form method="dialog" class="modal-card">
       <header class="modal-head">
@@ -247,6 +266,7 @@
       </div>
       <footer class="modal-actions">
         <button type="button" class="ghost-btn" id="refund-history">History</button>
+        <button value="remove" type="submit" class="ghost-btn" id="refund-remove" hidden>Remove token</button>
         <span class="spacer"></span>
         <button value="cancel" type="submit">Cancel</button>
         <button value="save" type="submit" class="primary" id="refund-save">Save</button>

@@ -528,12 +528,12 @@ class DB {
   }
 
   // Count of live visits in [from, to] (inclusive) — for pager math.
-  async countByDateRange(from, to) {
+  async countByDateRange(from, to, includeHidden = false) {
     const rows = await this._db.visitsProj
       .where('[date+token]')
       .between([from, Dexie.minKey], [to, Dexie.maxKey])
       .toArray();
-    return rows.reduce((n, r) => n + (r.hidden ? 0 : 1), 0);
+    return rows.reduce((n, r) => n + (r.hidden && !includeHidden ? 0 : 1), 0);
   }
 
   // Aggregate money/visit totals for [from, to] without materializing identity
@@ -568,13 +568,13 @@ class DB {
 
   // Paged range read in issue order, identity-joined. For long ranges (a
   // month can be hundreds of rows) so the Tokens table stays responsive.
-  async listByDateRangePage(from, to, { offset = 0, limit = 50 } = {}) {
+  async listByDateRangePage(from, to, { offset = 0, limit = 50, includeHidden = false } = {}) {
     const rows = await this._db.visitsProj
       .where('[date+token]')
       .between([from, Dexie.minKey], [to, Dexie.maxKey])
       .toArray();
     const live = rows
-      .filter((r) => !r.hidden)
+      .filter((r) => includeHidden || !r.hidden)
       .sort((a, b) => a.date.localeCompare(b.date) || a.token - b.token)
       .slice(offset, offset + limit);
     const ids = Array.from(new Set(live.map((r) => r.personId).filter((x) => x != null)));
@@ -958,7 +958,7 @@ class DB {
   async setVisitHidden(rootId, hidden) {
     const h = hidden ? 1 : 0;
     const db = this._db;
-    return db.transaction('rw', db.visits, db.visitsProj, db.peopleProj, async () => {
+    return db.transaction('rw', db.people, db.peopleProj, db.visits, db.visitsProj, async () => {
       const cur = await this._currentVisit(rootId);
       if (!cur) throw new Error('Visit not found: ' + rootId);
       // No-op: already in the requested visibility state.

@@ -97,13 +97,14 @@ async function refundCurrentVisit() {
     toast('Could not reload the visit.', 'err');
     return;
   }
-  if (visit.followup) {
-    toast('Free follow-up visit — no refund.', 'err');
-    return;
-  }
   try {
     const choice = await openRefundFor(visit);
     if (choice == null) return;
+    if (choice === 'removed') {
+      toast('Token removed.', 'ok');
+      startNewBill();
+      return;
+    }
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
     const refound = await db.findVisitByDateToken(visit.date, visit.token);
     if (refound) loadVisitIntoForm(refound.visit, refound.person);

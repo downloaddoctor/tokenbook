@@ -44,6 +44,13 @@ export function openRefundDialog(visit) {
     const baseFee = visit.fee != null ? Number(visit.fee) : 0;
     sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${baseFee}`;
     sel.value = String(visit.refundTier || '0');
+    // Remove is offered for today's tokens only. Free follow-ups can be
+    // removed but not refunded (tier select disabled, Save hidden).
+    const rmBtn = dlg.querySelector('#refund-remove');
+    if (rmBtn) rmBtn.hidden = visit.date !== db.localDay();
+    const svBtn = dlg.querySelector('#refund-save');
+    sel.disabled = !!visit.followup;
+    if (svBtn) svBtn.hidden = !!visit.followup;
 
     const prev = el('refund-preview');
     const paintPreview = () => {
@@ -91,12 +98,25 @@ export function openRefundDialog(visit) {
     dlg.addEventListener('keydown', onKeydown);
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
-    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : null));
+    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : null));
     // Focus the tier select — it is the dialog's primary control. Esc still
     // closes the dialog via the keydown handler above (and natively when the
     // select's dropdown is not open).
     sel.focus();
   });
+}
+
+// Confirm-and-remove for today's token (soft delete). Returns 'removed' or null.
+export async function removeVisitFlow(visit) {
+  if (!visit || visit.hidden || visit.date !== db.localDay()) return null;
+  const dlg = el('remove-dialog');
+  const sub = el('remove-sub');
+  if (!dlg || !sub) return null;
+  sub.textContent = `Token ${visit.token} · ${visit.name} · ${visit.mob}`;
+  const v = await showModal(dlg);
+  if (v !== 'remove') return null;
+  await db.hideVisit(visit.rootId);
+  return 'removed';
 }
 
 export function refundLabel(tier) {
@@ -108,9 +128,13 @@ export function refundLabel(tier) {
 // if cancelled/unchanged. Callers only need to refresh their own view.
 export async function openRefundFor(visit) {
   if (!visit) return null;
-  if (visit.followup) return null; // free follow-ups have nothing to refund
   const choice = await openRefundDialog(visit);
   if (choice == null) return null;
+  if (choice === 'remove') {
+    // Today's tokens only; soft delete (revision kept, projection hidden).
+    return removeVisitFlow(visit);
+  }
+  if (visit.followup) return null; // free follow-ups have nothing to refund
   // v3: the visit's stable key is rootId (rows come from visitsProj).
   await db.setVisitRefund(visit.rootId, choice);
   return choice;

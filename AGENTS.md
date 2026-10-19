@@ -42,13 +42,13 @@ ui/pages/register.ctx.js — shared DOM bag + flags + hook registry (breaks circ
 ui/pages/register.billing.js — fee preview, follow-up rule, fee lock
 ui/pages/register.autofill.js — name/mob suggest, token/date change, identity revalidation
 ui/pages/register.dialogs.js — identity-change + reassign prompts
-ui/pages/tokens.js — day/month/range list; row → refund
+ui/pages/tokens.js — day/month/range list; row → refund/remove; Del removes today's token; Show deleted toggle (includeHidden)
 ui/pages/patients.js — unique patient registry; row → history modal
 ui/pages/printLayout.js — paperstamp designer host
 ui/pages/users.js — admin user management
 ui/history.js — patient visit timeline modal; Enter → edit in Register
 ui/revisions.js — revision timeline modal; diff engine; user activity timeline
-ui/refund.js — refund dialog; openRefundFor(visit) persists
+ui/refund.js — refund dialog + remove-token flow; openRefundFor(visit) persists; removeVisitFlow(visit) → db.hideVisit
 ui/listNav.js — shared keyboard list/table navigation factory
 ui/toast.js — bottom-left auto-dismiss toast; keeps a session ring of recent messages (toastHistory()) shown in the Log dialog
 ui/dom.js — tiny DOM helpers (el, bindOff, showModal, highlightRow, ...)

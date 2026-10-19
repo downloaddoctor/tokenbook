@@ -675,6 +675,13 @@ tbody tr.active:hover {
   background: #fafbfc;
   z-index: 1;
 }
+/* removed token shown in the Tokens list (Show deleted) */
+tbody tr.row-deleted td {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
 .row-click {
   cursor: pointer;
 }

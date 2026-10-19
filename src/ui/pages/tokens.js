@@ -4,7 +4,7 @@ import db from '../../core/db.js';
 import { bindOff, isInteractiveTarget, isDialogOpen } from '../dom.js';
 import { createListNav } from '../listNav.js';
 import { toast } from '../toast.js';
-import { openRefundFor, refundLabel } from '../refund.js';
+import { openRefundFor, refundLabel, removeVisitFlow } from '../refund.js';
 
 const PAGE = 50;
 
@@ -57,9 +57,13 @@ async function refresh() {
 
   // All modes are paged now — a busy day can be hundreds of rows and
   // materializing the whole day just to render 50 is wasteful.
-  const total = from ? await db.countByDateRange(from, to) : 0;
+  const total = from ? await db.countByDateRange(from, to, s.showDeleted) : 0;
   const rows = from
-    ? await db.listByDateRangePage(from, to, { offset: s.offset, limit: PAGE })
+    ? await db.listByDateRangePage(from, to, {
+      offset: s.offset,
+      limit: PAGE,
+      includeHidden: s.showDeleted,
+    })
     : [];
   const pages = Math.max(1, Math.ceil(total / PAGE));
   const page = Math.floor(s.offset / PAGE) + 1;
@@ -96,7 +100,7 @@ async function refresh() {
   for (const r of rows) {
     rowCache.set(r.rootId, r);
     const tr = document.createElement('tr');
-    tr.className = 'row-click';
+    tr.className = r.hidden ? 'row-click row-deleted' : 'row-click';
     tr.dataset.id = String(r.rootId);
     // a11y: row is an interactive control. tabindex is managed by listNav.
     tr.setAttribute('role', 'button');
@@ -126,7 +130,7 @@ async function refresh() {
     }
     s.tbody.appendChild(tr);
   }
-  s.empty.hidden = summaryTotal > 0;
+  s.empty.hidden = (s.showDeleted ? total : summaryTotal) > 0;
   if (nav) nav.refresh();
   if (s.dateHead) s.dateHead.hidden = s.mode === 'day';
 
@@ -192,14 +196,18 @@ async function onRowClick(e) {
 async function activateRow(visitId) {
   const visit = rowCache.get(visitId);
   if (!visit) return;
-  // Follow-up visits were free — nothing to refund.
-  if (visit.followup) {
-    toast('Free follow-up visit — no refund.', 'err');
+  if (visit.hidden) {
+    toast('This token was removed.', 'err');
     return;
   }
   try {
     const choice = await openRefundFor(visit);
     if (choice == null) return;
+    if (choice === 'removed') {
+      toast('Token removed.', 'ok');
+      refresh();
+      return;
+    }
     toast(choice === '0' ? 'Refund cleared.' : `Refund set: ${refundLabel(choice)}.`, 'ok');
     refresh();
   } catch (err) {
@@ -223,6 +231,8 @@ export function mount() {
     empty: document.getElementById('tokens-empty'),
     summary: document.getElementById('tokens-summary'),
     summaryHidden: true,
+    deletedBtn: document.getElementById('tokens-deleted-btn'),
+    showDeleted: false,
     pager: document.getElementById('tokens-pager'),
     prevBtn: document.getElementById('tokens-pg-prev'),
     nextBtn: document.getElementById('tokens-pg-next'),
@@ -257,6 +267,12 @@ export function mount() {
     reload();
   });
   off.on(s.summaryBtn, 'click', toggleSummary);
+  off.on(s.deletedBtn, 'click', () => {
+    s.showDeleted = !s.showDeleted;
+    s.deletedBtn.textContent = s.showDeleted ? 'Hide deleted' : 'Show deleted';
+    s.offset = 0;
+    refresh();
+  });
   if (s.summaryBtn) s.summaryBtn.textContent = s.summaryHidden ? 'Show summary' : 'Hide summary';
   off.on(s.prevBtn, 'click', () => {
     s.offset = Math.max(0, s.offset - PAGE);
@@ -289,6 +305,33 @@ export function mount() {
     },
   });
   off.on(document, 'keydown', (e) => nav.keydown(e));
+  // Del on the highlighted row opens the remove-confirmation dialog.
+  off.on(document, 'keydown', async (e) => {
+    if (e.key !== 'Delete' || isInteractiveTarget(e.target) || isDialogOpen()) return;
+    const tr =
+      s.tbody.querySelector('tr.active') ||
+      (e.target && e.target.closest ? e.target.closest('#tokens-table tbody tr') : null);
+    if (!tr || !tr.dataset.id) return;
+    e.preventDefault();
+    const visit = rowCache.get(Number(tr.dataset.id));
+    if (!visit) return;
+    if (visit.hidden) {
+      toast('This token was already removed.', 'err');
+      return;
+    }
+    if (visit.date !== db.localDay()) {
+      toast("Only today's tokens can be removed.", 'err');
+      return;
+    }
+    try {
+      if ((await removeVisitFlow(visit)) === 'removed') {
+        toast('Token removed.', 'ok');
+        refresh();
+      }
+    } catch (err) {
+      toast('Remove failed: ' + err.message, 'err');
+    }
+  });
   s.off = off;
   refresh();
 }
