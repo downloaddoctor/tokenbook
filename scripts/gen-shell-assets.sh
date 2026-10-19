@@ -19,7 +19,7 @@ BODY="${SW}.body.$$"
 # --- collect the asset list (tracked files only) ---
 
 # Root shell files, fixed order, only if tracked.
-ROOT=$(git ls-files index.html styles.css favicon.svg manifest.webmanifest 2>/dev/null || true)
+ROOT=$(git ls-files index.html styles.css favicon.svg manifest.webmanifest pw.js 2>/dev/null || true)
 
 # All tracked JS under src/, excluding dev-only modules (never precached).
 SRC=$(git ls-files 'src/**/*.js' 'src/*.js' 2>/dev/null \

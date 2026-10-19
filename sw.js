@@ -29,6 +29,7 @@ const SHELL_ASSETS = [
   './favicon.svg',
   './index.html',
   './manifest.webmanifest',
+  './pw.js',
   './styles.css',
   './src/backup/backup.js',
   './src/backup/csv.js',
@@ -163,7 +164,9 @@ async function refreshChangedAssets() {
     /* No stored value (fresh) or a different value => refetch. */
     if (remote && stored && remote === stored) return;
     try {
-      const res = await fetch(url, { cache: 'reload' });
+      // no-store: bypass the HTTP cache AND avoid a conditional 304 (which has
+      // res.ok === false and would silently keep the stale copy). Forces a 200.
+      const res = await fetch(url, { cache: 'no-store' });
       if (res && res.ok) {
         await cache.put(url, res.clone());
         await writeStored(key, remote || validatorOf(res) || '');
@@ -190,7 +193,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
+      .then((cache) => cache.addAll(SHELL_ASSETS.map((u) => new Request(u, { cache: 'no-store' }))))
       .then(async () => {
         const v = await fetchSentinelValidator();
         if (v) await writeStoredValidator(v);
@@ -255,7 +258,7 @@ async function handleNavigation(request) {
    navigation response. Skips if the last check was under CHECK_GUARD_MS ago.
    Otherwise HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
    refetches changed ones, then tells the requesting client to reload. */
-async function checkForUpdates(clientId) {
+async function checkForUpdates() {
   const lastCheck = Number(await readLastCheck()) || 0;
   if (Date.now() - lastCheck < CHECK_GUARD_MS) return;
   await writeLastCheck(String(Date.now()));
@@ -274,9 +277,10 @@ async function checkForUpdates(clientId) {
   await refreshChangedAssets();
   await writeStoredValidator(remote);
 
-  if (!clientId) return;
-  const client = await self.clients.get(clientId);
-  if (client) client.postMessage({ type: 'tokenbook-update-ready' });
+  // Tell every open client so a reload happens even when clientId is empty
+  // (first load after a SW change / uncontrolled navigation).
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const c of all) c.postMessage({ type: 'tokenbook-update-ready' });
 }
 
 function isRuntimeRequest(url) {
@@ -321,7 +325,7 @@ self.addEventListener('message', (event) => {
         await writeStoredValidator('');
         await writeLastCheck('0');
       } catch (_) { }
-      await checkForUpdates(event.source && event.source.id ? event.source.id : null);
+      await checkForUpdates();
     })()
   );
 });
@@ -334,7 +338,7 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(handleNavigation(request));
-    event.waitUntil(checkForUpdates(event.clientId));
+    event.waitUntil(checkForUpdates());
     return;
   }
 
