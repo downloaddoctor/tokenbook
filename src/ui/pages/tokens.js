@@ -5,6 +5,8 @@ import { bindOff, isInteractiveTarget, isDialogOpen } from '../dom.js';
 import { createListNav } from '../listNav.js';
 import { toast } from '../toast.js';
 import { openRefundFor, refundLabel, removeVisitFlow } from '../refund.js';
+import { getRouter } from '../router.js';
+import { editVisit } from './register.js';
 
 const PAGE = 50;
 
@@ -200,8 +202,11 @@ async function onRowClick(e) {
 async function activateRow(visitId) {
   const visit = rowCache.get(visitId);
   if (!visit) return;
-  if (visit.hidden) {
-    toast('This token was removed.', 'err');
+  // Removed or non-today rows are view-only: show them locked in Register.
+  if (visit.hidden || visit.date !== db.localDay()) {
+    const router = getRouter();
+    if (router) router.activateTab('register');
+    await editVisit(visit);
     return;
   }
   try {

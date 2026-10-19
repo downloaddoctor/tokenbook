@@ -252,6 +252,26 @@
     </form>
   </dialog>
 
+  <dialog id="settle-dialog" class="modal-dialog">
+    <form method="dialog" class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2>Settle payment</h2>
+          <p class="hint" id="settle-sub"></p>
+        </div>
+      </header>
+      <div class="modal-body">
+        <p class="hint">This visit is unpaid. Record how it was paid.</p>
+      </div>
+      <footer class="modal-actions">
+        <button value="paycash" type="submit" class="primary">Cash</button>
+        <button value="payupi" type="submit" class="primary">UPI</button>
+        <span class="spacer"></span>
+        <button value="cancel" type="submit">Cancel</button>
+      </footer>
+    </form>
+  </dialog>
+
   <dialog id="refund-dialog" class="modal-dialog">
     <form method="dialog" class="modal-card">
       <header class="modal-head">
@@ -271,14 +291,13 @@
       <footer class="modal-actions">
         <button type="button" class="ghost-btn" id="refund-history">History</button>
         <button value="remove" type="submit" class="ghost-btn" id="refund-remove" hidden>Remove token</button>
-        <button value="paycash" type="submit" class="ghost-btn" id="refund-paycash" hidden>Paid: Cash</button>
-        <button value="payupi" type="submit" class="ghost-btn" id="refund-payupi" hidden>Paid: UPI</button>
         <span class="spacer"></span>
         <button value="cancel" type="submit">Cancel</button>
         <button value="save" type="submit" class="primary" id="refund-save">Save</button>
       </footer>
     </form>
   </dialog>
+
 
   <dialog id="pat-id-confirm" class="modal-dialog">
     <form method="dialog" class="modal-card">

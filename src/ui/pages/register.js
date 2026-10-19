@@ -118,6 +118,10 @@ async function refundCurrentVisit() {
     toast('Removed token — view only.', 'err');
     return;
   }
+  if (visit && visit.date !== db.localDay()) {
+    toast("Only today's tokens can be changed — view only.", 'err');
+    return;
+  }
   if (!visit || visit.rootId !== flags.loadedVisitId) {
     toast('Could not reload the visit.', 'err');
     return;

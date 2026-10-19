@@ -47,17 +47,10 @@ export function openRefundDialog(visit) {
     // Remove is offered for today's tokens only. Free follow-ups can be
     // removed but not refunded (tier select disabled, Save hidden).
     const rmBtn = dlg.querySelector('#refund-remove');
-    if (rmBtn) rmBtn.hidden = visit.date !== db.localDay();
-    // Unpaid visits can be settled (Cash/UPI) today; refund waits until paid.
-    const unpaid = visit.payment === 2;
-    const canSettle = unpaid && visit.date === db.localDay();
-    for (const id of ['#refund-paycash', '#refund-payupi']) {
-      const bt = dlg.querySelector(id);
-      if (bt) bt.hidden = !canSettle;
-    }
+    if (rmBtn) rmBtn.hidden = visit.date !== db.localDay() || visit.followup;
     const svBtn = dlg.querySelector('#refund-save');
-    sel.disabled = !!visit.followup || unpaid;
-    if (svBtn) svBtn.hidden = !!visit.followup || unpaid;
+    sel.disabled = !!visit.followup;
+    if (svBtn) svBtn.hidden = !!visit.followup;
 
     const prev = el('refund-preview');
     const paintPreview = () => {
@@ -105,11 +98,22 @@ export function openRefundDialog(visit) {
     dlg.addEventListener('keydown', onKeydown);
     sel.addEventListener('change', onSelChange);
     if (histBtn) histBtn.addEventListener('click', onHistory);
-    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : v === 'paycash' || v === 'payupi' ? v : null));
+    showModal(dlg).then((v) => resolve(v === 'save' ? sel.value : v === 'remove' ? 'remove' : null));
     // Focus the tier select — it is the dialog's primary control. Esc still
     // closes the dialog via the keydown handler above (and natively when the
     // select's dropdown is not open).
     sel.focus();
+  });
+}
+
+// Settle an unpaid visit: Cash / UPI. Resolves 'paycash' | 'payupi' | null.
+export function openSettleDialog(visit) {
+  return new Promise((resolve) => {
+    const dlg = el('settle-dialog');
+    const sub = el('settle-sub');
+    if (!dlg || !sub) return resolve(null);
+    sub.textContent = `Token ${visit.token} · ${visit.name} · Fee ₹${visit.fee != null ? visit.fee : 0}`;
+    showModal(dlg).then((v) => resolve(v === 'paycash' || v === 'payupi' ? v : null));
   });
 }
 
@@ -133,21 +137,33 @@ export function refundLabel(tier) {
 
 // Show the dialog AND persist the choice. Returns the new tier (string) or null
 // if cancelled/unchanged. Callers only need to refresh their own view.
+// Route the visit to exactly one dialog by state:
+//  - non-today / removed -> nothing (caller shows view-only)
+//  - unpaid today        -> settle dialog (Cash/UPI)
+//  - free follow-up today-> remove only
+//  - paid today          -> refund dialog (tier + optional Remove)
 export async function openRefundFor(visit) {
   if (!visit) return null;
-  const choice = await openRefundDialog(visit);
-  if (choice == null) return null;
-  if (choice === 'remove') {
-    // Today's tokens only; soft delete (revision kept, projection hidden).
-    return removeVisitFlow(visit);
-  }
-  if (choice === 'paycash' || choice === 'payupi') {
-    // Settle an unpaid visit; writes a revision via setVisitBilling.
+  const isToday = visit.date === db.localDay();
+  if (visit.hidden || !isToday) return null;
+
+  // Unpaid: settle first, no refund until paid.
+  if (visit.payment === 2) {
+    const choice = await openSettleDialog(visit);
+    if (choice == null) return null;
     await db.setVisitBilling(visit.rootId, { payment: choice === 'payupi' ? 1 : 0 });
     return 'settled';
   }
-  if (visit.followup) return null; // free follow-ups have nothing to refund
-  // v3: the visit's stable key is rootId (rows come from visitsProj).
+
+  // Free follow-up: nothing to refund, only remove is offered.
+  if (visit.followup) {
+    return removeVisitFlow(visit);
+  }
+
+  // Paid: refund tier dialog (with an optional Remove button).
+  const choice = await openRefundDialog(visit);
+  if (choice == null) return null;
+  if (choice === 'remove') return removeVisitFlow(visit);
   await db.setVisitRefund(visit.rootId, choice);
   return choice;
 }
