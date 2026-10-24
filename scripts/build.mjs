@@ -57,7 +57,6 @@ const shell = ['./', './index.html', './app.js', './styles.css', './pw.js', './f
 const list = 'const SHELL_ASSETS = [\n' + shell.map((f) => "  '" + f + "',").join('\n') + '\n];\n';
 sw = sw.slice(0, a + BEGIN.length) + '\n' + list + sw.slice(b);
 /* No version.txt in dist: the built sw.js is the sentinel. Its build stamp changes every build (git untouched), so its validator changes on each deploy. */
-sw = swap(sw, "const SENTINEL_URL = './version.txt';", "const SENTINEL_URL = './sw.js';");
 sw = '/* build ' + new Date().toISOString() + ' */\n' + sw;
 await writeFile(path.join(dist, 'sw.js'), sw);
 

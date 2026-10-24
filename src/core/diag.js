@@ -68,12 +68,6 @@ export async function snapshot({ db, backup, appVersion } = {}) {
   lines.push('url: ' + location.href);
   if (appVersion != null) lines.push('app: v' + appVersion);
 
-  // App shell / version.txt sentinel (best-effort).
-  try {
-    const r = await fetch('./version.txt', { cache: 'no-store' });
-    if (r.ok) lines.push('version.txt: ' + (await r.text()).trim());
-  } catch (_) {}
-
   if (db && typeof db.countAll === 'function') {
     try {
       lines.push('db: visits=' + (await db.countAll()) + ' people=' + (await db.countPeople()));
@@ -101,7 +95,7 @@ export async function snapshot({ db, backup, appVersion } = {}) {
       lines.push(
         'storage: usage=' + (e.usage || 0) + ' quota=' + (e.quota || 0)
       );
-    } catch (_) {}
+    } catch (_) { }
   }
 
   const rec = recent();

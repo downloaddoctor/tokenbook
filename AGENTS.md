@@ -9,8 +9,7 @@ src/
  ui/ — shell, router, pages, reusable modals
  print/ — paperstamp integration + default layout
  dev/ — dev-only seed + self-test (never precached)
-scripts/ — gen-shell-assets.sh (SW shell list) + check.sh (node --check every tracked JS; run by pre-commit, warn-only)
-.githooks/ — pre-commit (asset list + version bump)
+scripts/ — build.mjs (GitHub Pages bundle only)
 
 ## ENTRY-POINTS
 index.html — app shell markup; loads pw.js + src/ui/app.js as modules
@@ -105,8 +104,7 @@ Dev: none (no bundler, no test runner)
 ## CONFIG
 .gitattributes: text=auto eol=lf
 .prettierrc: singleQuote, semi, LF, printWidth 100
-.githooks/pre-commit: regenerates sw.js SHELL_ASSETS + bumps version.txt sentinel when cached assets staged
-Enable once: git config core.hooksPath .githooks
+No git hooks, no version.txt: the sw.js file is the deploy sentinel (build stamps line 1).
 
 ## BUILD
 Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (SHELL_ASSETS rewritten for the bundle; SENTINEL_URL = ./sw.js; a build-time timestamp comment on line 1 makes each deploy change it, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
@@ -125,8 +123,8 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 - Backup log is append-only: never rewrite the file body (archive before full rewrite).
 - Restore does NOT touch the `users` projection (passwords live there).
 - Log carries NO secrets (SCHEMA_USER excludes salt/hash/sessionToken).
-- sw.js SHELL_ASSETS between markers is auto-generated — do not hand-edit.
-- version.txt is the deploy sentinel; must change on every deploy touching a cached asset.
+- sw.js SHELL_ASSETS lists the Pages bundle files (hand-maintained; must match scripts/build.mjs output). The service worker only runs on the built site; local dev uses ?dev=1.
+- sw.js itself is the deploy sentinel; the build stamps line 1 so every deploy changes it.
 - src/dev/ is dev-only and never precached.
 - Blob downloads (downloadText in backup/backup.js) MUST NOT revoke the object URL on the calling tick — revoke only on beforeunload. An early revoke races the download and produces a 0-byte / extension-less file. Download filenames use '_' (not 'T') between date and time for Windows safety.
 - Session token lives in localStorage ('tokenbook-session'), so any XSS on the origin = full session takeover. Accepted for the offline single-origin clinic app. Do NOT add third-party scripts to index.html without revisiting this — a compromised CDN would defeat the token model.
@@ -136,5 +134,5 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 ADRs live in docs/adr/ (0001 revisions+projections, 0002 single write path, 0003 CSV log format, 0004 single-tab guard).
 New entity → add SCHEMA_* in backup/csv.js + KIND_BY_SCHEMA entry + replay handler in db.js + revision/projection stores.
 New route → ROUTES + PAGE_ID in ui/router.js + page section in index.html + Pages entry.
-New shell asset → tracked file matching CACHED regex in .githooks/pre-commit (hook regenerates sw.js).
+New shell asset → copy/bundle it in scripts/build.mjs and add it to SHELL_ASSETS in sw.js.
 Once real data ships: schema bumps MUST be append-only version(N+1) — never renumber a released schema.

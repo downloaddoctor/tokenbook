@@ -16,7 +16,7 @@ const SHELL_CACHE = 'tokenbook-shell';
 const RUNTIME_CACHE = 'tokenbook-runtime';
 const META_CACHE = 'tokenbook-meta';
 
-const SENTINEL_URL = './version.txt';
+const SENTINEL_URL = './sw.js';
 const SENTINEL_KEY = 'https://tokenbook.local/__sentinel__';
 const ASSET_VAL_PREFIX = 'https://tokenbook.local/__val__/';
 const LAST_CHECK_KEY = 'https://tokenbook.local/__lastcheck__';
@@ -29,46 +29,12 @@ const PENDING_KEY = 'https://tokenbook.local/__pending__';
 /* SHELL_ASSETS:BEGIN */
 const SHELL_ASSETS = [
   './',
-  './favicon.svg',
   './index.html',
-  './manifest.webmanifest',
-  './pw.js',
+  './app.js',
   './styles.css',
-  './src/backup/backup.js',
-  './src/backup/csv.js',
-  './src/backup/meta.js',
-  './src/core/auth.js',
-  './src/core/billing.js',
-  './src/core/day.js',
-  './src/core/db.export.js',
-  './src/core/db.journal.js',
-  './src/core/db.js',
-  './src/core/db.restore.js',
-  './src/core/diag.js',
-  './src/core/tabLock.js',
-  './src/core/time.js',
-  './src/core/version.js',
-  './src/print/defaultLayout.js',
-  './src/print/ps.js',
-  './src/ui/app.js',
-  './src/ui/auth.js',
-  './src/ui/dom.js',
-  './src/ui/history.js',
-  './src/ui/listNav.js',
-  './src/ui/pages/index.js',
-  './src/ui/pages/patients.js',
-  './src/ui/pages/printLayout.js',
-  './src/ui/pages/register.autofill.js',
-  './src/ui/pages/register.billing.js',
-  './src/ui/pages/register.ctx.js',
-  './src/ui/pages/register.dialogs.js',
-  './src/ui/pages/register.js',
-  './src/ui/pages/tokens.js',
-  './src/ui/pages/users.js',
-  './src/ui/refund.js',
-  './src/ui/revisions.js',
-  './src/ui/router.js',
-  './src/ui/toast.js',
+  './pw.js',
+  './favicon.svg',
+  './manifest.webmanifest',
 ];
 /* SHELL_ASSETS:END */
 
