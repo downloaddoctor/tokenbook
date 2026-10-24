@@ -2,6 +2,7 @@ import { build, transform } from 'esbuild';
 import { readFile, writeFile, mkdir, rm, cp } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 /* GitHub Pages bundle only. Local dev serves the repo root as-is (no build).
    dist/ = index.html + app.js (every local module in one file) + styles.css
@@ -48,8 +49,14 @@ await writeFile(path.join(dist, 'index.html'), page);
 
 /* sw.js: copied as-is with a build stamp on line 1. */
 let sw = await readFile(path.join(root, 'sw.js'), 'utf8');
-/* No version.txt in dist: the built sw.js is the sentinel. Its build stamp changes every build (git untouched), so its validator changes on each deploy. */
-sw = '/* build ' + new Date().toISOString() + ' */\n' + sw;
+/* Stamp = content hash of every cached file + the worker itself: it changes only when a deploy really changes something. */
+const hasher = createHash('sha256').update(sw);
+for (const p of [path.join(dist, 'index.html'), path.join(dist, 'app.js'), path.join(dist, 'styles.css'), path.join(root, 'pw.js'), path.join(root, 'manifest.webmanifest'), path.join(root, 'favicon.svg')]) {
+  hasher.update(await readFile(p));
+}
+const hash = hasher.digest('hex').slice(0, 16);
+/* No version.txt in dist: the built sw.js is the sentinel. Its build stamp is a content hash (git untouched), so its validator changes only when a deploy changes a cached file. */
+sw = '/* build ' + hash + ' */\n' + sw;
 await writeFile(path.join(dist, 'sw.js'), sw);
 
 for (const f of ['pw.js', 'manifest.webmanifest', 'favicon.svg']) {

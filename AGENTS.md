@@ -107,7 +107,7 @@ Dev: none (no bundler, no test runner)
 No git hooks, no version.txt: the sw.js file is the deploy sentinel (build stamps line 1).
 
 ## BUILD
-Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (copied as-is; SENTINEL_URL = ./sw.js; a build-time timestamp comment on line 1 makes each deploy change it, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
+Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (copied as-is; SENTINEL_URL = ./sw.js; line 1 is a build comment holding a content hash of index.html, app.js, styles.css, pw.js, manifest, favicon and sw.js, so the sentinel changes only when a deploy really changes something, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
 
 ## TESTING
 ?dev=1 (admin) → Test button runs src/dev/selftest.js against isolated DB 'tokenbook-devtest' + isolated log. Seed button generates realistic history.
@@ -124,7 +124,7 @@ Self-test must remain idempotent — it pre-cleans fixed identities and test-day
 - Restore does NOT touch the `users` projection (passwords live there).
 - Log carries NO secrets (SCHEMA_USER excludes salt/hash/sessionToken).
 - sw.js SHELL_ASSETS lists the Pages bundle files (hand-maintained; must match scripts/build.mjs output). The service worker only runs on the built site; local dev uses ?dev=1.
-- sw.js itself is the deploy sentinel; the build stamps line 1 so every deploy changes it.
+- sw.js itself is the deploy sentinel; the build stamps line 1 with a content hash, so it changes only when a cached file changes.
 - src/dev/ is dev-only and never precached.
 - Blob downloads (downloadText in backup/backup.js) MUST NOT revoke the object URL on the calling tick — revoke only on beforeunload. An early revoke races the download and produces a 0-byte / extension-less file. Download filenames use '_' (not 'T') between date and time for Windows safety.
 - Session token lives in localStorage ('tokenbook-session'), so any XSS on the origin = full session takeover. Accepted for the offline single-origin clinic app. Do NOT add third-party scripts to index.html without revisiting this — a compromised CDN would defeat the token model.
