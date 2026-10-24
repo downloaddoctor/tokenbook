@@ -19,8 +19,6 @@ const META_CACHE = 'tokenbook-meta';
 const SENTINEL_URL = './sw.js';
 const SENTINEL_KEY = 'https://tokenbook.local/__sentinel__';
 const ASSET_VAL_PREFIX = 'https://tokenbook.local/__val__/';
-const LAST_CHECK_KEY = 'https://tokenbook.local/__lastcheck__';
-const CHECK_GUARD_MS = 30000;
 const PENDING_KEY = 'https://tokenbook.local/__pending__';
 
 /* App-shell assets of the built Pages bundle (relative to SW scope). Keep in sync with scripts/build.mjs output. */
@@ -100,14 +98,6 @@ function readStoredValidator() {
 
 function writeStoredValidator(value) {
   return writeStored(SENTINEL_KEY, value);
-}
-
-function readLastCheck() {
-  return readStored(LAST_CHECK_KEY);
-}
-
-function writeLastCheck(value) {
-  return writeStored(LAST_CHECK_KEY, value);
 }
 
 function assetValKey(url) {
@@ -194,8 +184,14 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS.map((u) => new Request(u, { cache: 'no-cache' }))))
-      .then(async () => {
+      .then(async (cache) => {
+        // Update install: keep the cached version until the user consents (applyUpdate).
+        if ((await cache.keys()).length) return false;
+        await cache.addAll(SHELL_ASSETS.map((u) => new Request(u, { cache: 'no-cache' })));
+        return true;
+      })
+      .then(async (fresh) => {
+        if (!fresh) return;
         const v = await fetchSentinelValidator();
         if (v) await writeStoredValidator(v);
         await recordAssetValidators();
@@ -262,10 +258,6 @@ async function handleNavigation(request) {
    Otherwise HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
    refetches changed ones, then tells the requesting client to reload. */
 async function checkForUpdates() {
-  const lastCheck = Number(await readLastCheck()) || 0;
-  if (Date.now() - lastCheck < CHECK_GUARD_MS) return;
-  await writeLastCheck(String(Date.now()));
-
   let remote;
   try {
     remote = await fetchSentinelValidator();
@@ -365,7 +357,6 @@ self.addEventListener('message', (event) => {
       (async () => {
         const remote = await fetchSentinelValidator();
         if (!remote) return; // offline: keep the indicator as is
-        await writeLastCheck('0');
         await checkForUpdates();
         if (!(await readStored(PENDING_KEY))) await notifyClients('tokenbook-update-none');
       })()
@@ -376,16 +367,6 @@ self.addEventListener('message', (event) => {
     event.waitUntil(applyUpdate());
     return;
   }
-  if (!event.data || event.data.type !== 'tokenbook-force-update') return;
-  event.waitUntil(
-    (async () => {
-      try {
-        await writeStoredValidator('');
-        await writeLastCheck('0');
-      } catch (_) { }
-      await checkForUpdates();
-    })()
-  );
 });
 
 self.addEventListener('fetch', (event) => {

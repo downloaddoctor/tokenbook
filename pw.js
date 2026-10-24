@@ -10,7 +10,6 @@
   if (!('serviceWorker' in navigator)) return;
 
   var DEV = /[?&]dev=1(?:&|$)/.test(window.location.search);
-  var FORCE_UPDATE = /[?&]forceUpdate=1(?:&|$)/.test(window.location.search);
   if (DEV) {
     if (window.console && console.info) console.info('[tokenbook] dev mode: SW disabled');
     navigator.serviceWorker.getRegistrations().then(function (regs) {
@@ -84,10 +83,6 @@
             c.postMessage({ type: 'tokenbook-check-update' });
           });
         }
-        if (!FORCE_UPDATE) return;
-        withController(function (c) {
-          c.postMessage({ type: 'tokenbook-force-update' });
-        });
       })
       .catch(function (err) {
         if (window.console && console.warn) {
