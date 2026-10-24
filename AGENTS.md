@@ -15,7 +15,7 @@ scripts/ — build.mjs (GitHub Pages bundle only)
 index.html — app shell markup; loads pw.js + src/ui/app.js as modules
 src/ui/app.js — boot: openDb → auth gate → router; wires backup/restore/log/test/settings
 pw.js — PWA registration (precached in SHELL_ASSETS); update-consent UX like labtestbook: SW posts 'tokenbook-update-available' → #update-status in statusbar → #update-dialog (Update now/Later, backs up first: folder if set, else CSV download) → page posts 'tokenbook-apply-update' → SW refetches changed assets → 'tokenbook-update-applied' → reload; nothing applies without consent; sentinel falls back to GET body when no ETag/Last-Modified; scripts/check-version.sh = CI guard (cached asset changed → version.txt must change); ?dev=1 disables SW + nukes caches; ?forceUpdate=1 bypasses the reload guard + posts a force-update message to the SW (manual test of the update path)
-sw.js — service worker; SHELL_ASSETS auto-generated between markers; message handler 'tokenbook-force-update' clears the sentinel + re-checks (dev/manual test only)
+sw.js — service worker; SHELL_ASSETS = hand-maintained list of the Pages bundle files; message handler 'tokenbook-force-update' clears the sentinel + re-checks (dev/manual test only)
 
 ## MODULES
 core/tabLock.js — single-tab guard via Web Locks API (acquireTabLock); first tab wins, later tabs blocked
@@ -107,7 +107,7 @@ Dev: none (no bundler, no test runner)
 No git hooks, no version.txt: the sw.js file is the deploy sentinel (build stamps line 1).
 
 ## BUILD
-Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (SHELL_ASSETS rewritten for the bundle; SENTINEL_URL = ./sw.js; a build-time timestamp comment on line 1 makes each deploy change it, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
+Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (copied as-is; SENTINEL_URL = ./sw.js; a build-time timestamp comment on line 1 makes each deploy change it, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
 
 ## TESTING
 ?dev=1 (admin) → Test button runs src/dev/selftest.js against isolated DB 'tokenbook-devtest' + isolated log. Seed button generates realistic history.

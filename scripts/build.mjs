@@ -46,16 +46,8 @@ let page = await readFile(path.join(root, 'index.html'), 'utf8');
 page = swap(page, '<script type="module" src="src/ui/app.js"></script>', '<script type="module" src="app.js"></script>');
 await writeFile(path.join(dist, 'index.html'), page);
 
-/* sw.js: same worker, only the SHELL_ASSETS list is rewritten for the bundle. */
+/* sw.js: copied as-is with a build stamp on line 1. */
 let sw = await readFile(path.join(root, 'sw.js'), 'utf8');
-const BEGIN = '/* SHELL_ASSETS:BEGIN */';
-const END = '/* SHELL_ASSETS:END */';
-const a = sw.indexOf(BEGIN);
-const b = sw.indexOf(END);
-if (a < 0 || b < a) throw new Error('build: SHELL_ASSETS markers not found in sw.js');
-const shell = ['./', './index.html', './app.js', './styles.css', './pw.js', './favicon.svg', './manifest.webmanifest'];
-const list = 'const SHELL_ASSETS = [\n' + shell.map((f) => "  '" + f + "',").join('\n') + '\n];\n';
-sw = sw.slice(0, a + BEGIN.length) + '\n' + list + sw.slice(b);
 /* No version.txt in dist: the built sw.js is the sentinel. Its build stamp changes every build (git untouched), so its validator changes on each deploy. */
 sw = '/* build ' + new Date().toISOString() + ' */\n' + sw;
 await writeFile(path.join(dist, 'sw.js'), sw);
