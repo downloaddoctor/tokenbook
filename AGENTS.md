@@ -89,7 +89,7 @@ NOT in the log: peopleProj/visitsProj (rebuilt on restore), meta (device-local),
 Unknown schemaNo → row skipped (forward-compatible).
 
 ## ENV
-No package.json. Dexie loaded from unpkg (runtime-cached). Google Fonts (Inter). paperstamp SDK from downloaddoctor.github.io (own SW — NOT in RUNTIME_HOSTS).
+package.json only for the Pages build (esbuild dev dep). Dexie loaded from unpkg (runtime-cached). Google Fonts (Inter). paperstamp SDK from downloaddoctor.github.io (own SW — NOT in RUNTIME_HOSTS).
 ?dev=1 → Seed/Clear buttons + self-test (admin only).
 
 ## RUNTIME-GRAPH
@@ -109,7 +109,7 @@ Dev: none (no bundler, no test runner)
 Enable once: git config core.hooksPath .githooks
 
 ## BUILD
-None. Files served as-is. Local: npx http-server -c-1 or python -m http.server 8080.
+Local dev: no build, files served as-is (npx http-server -c-1 or python -m http.server 8080). GitHub Pages only: scripts/build.mjs (esbuild, pnpm build) → dist/ = index.html + app.js (all local modules incl. dynamic imports in one ESM file) + styles.css + pw.js + sw.js (SHELL_ASSETS rewritten for the bundle; SENTINEL_URL = ./sw.js; a build-time timestamp comment on line 1 makes each deploy change it, git untouched; no version.txt in dist) + manifest + favicon; CDN files (Dexie unpkg, fonts, paperstamp sdk) stay external; .github/workflows/pages.yml runs npm ci + npm run build; dist/ never committed; pnpm locally, npm in CI, package-lock.json committed.
 
 ## TESTING
 ?dev=1 (admin) → Test button runs src/dev/selftest.js against isolated DB 'tokenbook-devtest' + isolated log. Seed button generates realistic history.

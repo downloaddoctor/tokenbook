@@ -1,0 +1,13 @@
+{
+  "name": "tokenbook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline-first clinic token register. No build for local dev; build only produces the GitHub Pages bundle.",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "license": "MIT"
+}
