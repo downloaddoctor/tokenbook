@@ -1,14 +1,9 @@
 /* TokenBook service worker — offline app shell.
 
-   Static site, no build step.
-
-   Invalidation: version.txt is the deploy sentinel and must be bumped on every
-   deploy that changes a cached asset. On each page reload we HEAD ./version.txt;
-   if its validator (ETag/Last-Modified) differs from the stored one, each shell
-   asset is HEAD-checked and only the changed ones are re-fetched. If the
-   sentinel is unchanged, everything is served from cache. version.txt is trusted
-   fully — a missed bump means a stale file until the next bump. version.txt
-   itself is NOT cached (the HEAD diff must see the fresh validator). */
+   Invalidation: sw.js itself is the deploy sentinel (the build stamps its first
+   line). On each navigation we HEAD ./sw.js; if its validator differs from the
+   stored one, the app shows 'update available'. Assets are re-fetched only after
+   the user accepts (applyUpdate); a new worker never swaps the cache on its own. */
 
 const SHELL_CACHE = 'tokenbook-shell';
 // Never rename: activate deletes unlisted tokenbook-* caches, forcing a refetch of Dexie/fonts.
@@ -254,9 +249,8 @@ async function handleNavigation(request) {
 }
 
 /* Background update check, run via event.waitUntil so it never delays the
-   navigation response. Skips if the last check was under CHECK_GUARD_MS ago.
-   Otherwise HEADs the version.txt sentinel; if changed, HEAD-diffs shell assets,
-   refetches changed ones, then tells the requesting client to reload. */
+   navigation response. HEADs the sw.js sentinel; if changed, marks the update
+   pending and tells every client. Nothing is refetched until the user accepts. */
 async function checkForUpdates() {
   let remote;
   try {
@@ -333,7 +327,7 @@ async function handleRuntime(request) {
 async function handleLocal(request) {
   const cached = await caches.match(request);
   if (cached) return cached;
-  const sentinel = new URL(request.url).pathname.endsWith('/version.txt');
+  const sentinel = new URL(request.url).pathname.endsWith('/sw.js');
   const alt = sentinel ? null : await caches.match(request, { ignoreSearch: true });
   if (alt) return alt;
   try {
