@@ -9,6 +9,20 @@
 
   if (!('serviceWorker' in navigator)) return;
 
+  /* One-time cleanup: unregister the retired paperstamp service worker (scope /paperstamp/) left in old browsers on this origin, and drop its caches. */
+  navigator.serviceWorker.getRegistrations().then(function (regs) {
+    regs.forEach(function (r) {
+      if (/\/paperstamp\//.test(r.scope)) r.unregister();
+    });
+  });
+  if (window.caches && caches.keys) {
+    caches.keys().then(function (names) {
+      names.forEach(function (n) {
+        if (/^paperstamp-/.test(n)) caches.delete(n);
+      });
+    });
+  }
+
   var DEV = /[?&]dev=1(?:&|$)/.test(window.location.search);
   if (DEV) {
     if (window.console && console.info) console.info('[tokenbook] dev mode: SW disabled');
